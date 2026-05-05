@@ -3,7 +3,7 @@
 ## 測試執行指令
 
 ```bash
-cd /Users/eden.lai/Downloads/qa_test/test/kkday-QA-automation
+cd <framework_path>   # 由 SKILL.md Step 0 偵測，常見位置 ~/Downloads/qa_test/test/kkday-QA-automation 或 ~/kkday-QA-automation
 source venv/bin/activate && cd QATest/src && python -m qatest run --caseid <CASE_ID> --platform <PLATFORM>
 ```
 

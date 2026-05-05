@@ -1,6 +1,6 @@
 # 專案路徑對應
 
-QA Automation repo: `/Users/eden.lai/Downloads/qa_test/test/kkday-QA-automation`
+QA Automation repo: `<framework_path>`（由 SKILL.md Step 0 偵測，常見位置 `~/Downloads/qa_test/test/kkday-QA-automation` 或 `~/kkday-QA-automation`）
 
 ## 目錄結構
 
