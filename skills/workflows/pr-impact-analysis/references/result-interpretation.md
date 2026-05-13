@@ -2,7 +2,7 @@
 
 從 JSON / SSE result 拿到 `impact_summary` + `ai_results`。
 
-## 階段 0：Claude 二次審核 + P0~P4 收斂（強制，過程不顯示給使用者）
+## 階段 0：Claude 二次審核 + P0/P1 收斂（強制，過程不顯示給使用者）
 
 後端 AI 對 MUST / SHOULD / CAN_SKIP 分類常有誤判，主因：
 - `score=1.0` 常一律給滿（沒有分層）
@@ -16,9 +16,14 @@
 - 1 個 cluster（小改動）：3~5 支
 - 2~3 個 cluster（中改動）：6~12 支
 - 4+ 個 cluster（大改動）：12~20 支
-- 上限 20，超過要再合併 variant 或降到 P2 不列
+- 上限 20，超過要再合併 variant
 
-每個 cluster 通常配 1~3 支 P0（主流程代表）+ 0~3 支 P1（補強模組 / 邊界），cluster 內 variant 全合併。
+**子層級上限（嚴格遞減 P0 ≥ P1）**：
+- **P0 ≤ 10**：主流程代表 + 關鍵 happy path
+- **P1 ≤ 8**：補強模組 / 邊界 / 直擊但非主流程
+- 子上限互不擠壓，但合計仍受 20 硬閘門
+
+每個 cluster 通常配 1~3 支 P0（主流程代表）+ 0~3 支 P1（補強模組 / 邊界），其餘 variant 一律合併或進 gap 區，**不再額外開 P2**。
 
 ### 審核步驟
 
@@ -35,25 +40,38 @@
    - `TTDLandingCoordinator` / `SearchResultViewModel` / `SearchResultPushDeepLinkModel` 名字都帶 Search / Landing，但分別是「TTD 落地頁」「搜尋結果頁直接點」「push 進搜尋結果」三條獨立 user flow → **拆三個 cluster**，不是一個
    - 判斷準則：兩個 changed file 是否會被同一條使用者操作路徑同時經過？是 → 同 cluster；否 → 拆開
 
-4. **Reason 驗證（強制）**：為每個選定的 case，列出其 reason 對應到的 **具體 changed file**（至少 1 個檔名）。對不上 → 該 case 不列、或降 P2。Reason 不能只寫「跟 cluster 相關」「主流程必跑」，必須能 trace 到具體檔名。
+4. **Reason 驗證（強制）**：為每個選定的 case，列出其 reason 對應到的 **具體 changed file**（至少 1 個檔名）。對不上 → 該 case 直接不列（**不要**降級救回來）。Reason 不能只寫「跟 cluster 相關」「主流程必跑」，必須能 trace 到具體檔名。
 
 5. **Cluster 無對應 case 處理**：若某 cluster 在 changed files 出現但在 `ai_results` 找不到任何命中 case（無 case 名 / tags / reason 提到該 cluster 的元件）→ **必須寫進 gap 區建議補測**，不能硬塞進別的 case 的 reason。
 
-### P0~P4 五級分類（取代 MUST / SHOULD / CAN_SKIP 三級）
+6. **test/src 同步度檢核（加成訊號）**：
+   - 從 changed files 篩出 test files：`*.test.ts` / `*.tests.ts` / `*.spec.ts` / `*.dayjs.test.ts` 等
+   - 配對規則：`Foo.ts` ↔ `Foo.test.ts`、`useBar.ts` ↔ `useBar.test.ts`、同目錄或同 `__tests__/` 子目錄
+   - 三種訊號：
+     - **src 改 + 配對 test 同步補上 / 新增** → 加強該 cluster 判斷信心（RD 是有意識的改動，不是 accidental edit），E2E 仍照原計畫跑
+     - **src 改但配對 test 沒動** → 寫進 gap 區「建議補 unit test 或請 RD 補測」，**不**把 E2E case 降級
+     - **大量 `.dayjs.test.ts` / `.migration.test.ts` 之類規律命名的新增** → 反向佐證該 cluster 屬 migration / refactor 屬性，可作為 cluster summary 一句註記（如「dayjs migration 配 12 支 unit test，邏輯 contract 有測試覆蓋」）
+   - 🚫 **不要**根據 test 充足度「自動降 P 級」——unit test 通過 ≠ 整合流程沒壞，E2E 該跑還是要跑
+   - 在 gap 區可加一行同步度摘要（**只在 src 改 ≥ 5 支且未配對 ≥ 3 支才印**，避免噪音）：
+     ```
+     > Unit test 同步度：src 改 N 支，配對 test 變動 M 支，未配對 K 支（建議補測：file1.ts, file2.ts, file3.ts）
+     ```
+   - 撈 test 變動的指令：`gh api "repos/<org>/<repo>/compare/<base>...<target>" --jq '.files[] | select(.filename | test("\\.(test|tests|spec)\\."))'`
+
+### P0~P3 四級分類（取代 MUST / SHOULD / CAN_SKIP 三級）
 
 **「直擊」定義（可驗證）**：case 的 reason / tags / 名稱命中的元件，能在 changed files 中找到該元件的直接修改（檔名、class 名、function 名其中之一吻合）。**只是「概念相關」「同模組」「都跟 X 有關」不算直擊**。
 
-- **P0 — 極核心關鍵路徑**（≤3 支）：直擊 cluster 主流程 + 關鍵 happy path，不跑等於沒驗。例：「立即訂購 → 付款 → 訂單成立」這條主軸
-- **P1 — 核心 cluster 直擊**（≤5 支）：cluster 直擊但屬補強/邊界 case（特殊金流代表、Bottom Sheet 新模組、AB 開關）
-- **P2 — Cluster 周邊**（不列）：直擊但與 P0/P1 同 cluster 同 user flow 變體，跑 P0/P1 過了就一起 cover
-- **P3 — 間接 globalComponent only**（不列）：只透過 globalComponent（多語系、AB 測試、API 網絡層）關聯，沒直擊 cluster
-- **P4 — 完全不沾**（不列）：runtime 改動沒交集
+- **P0 — 極核心關鍵路徑**（≤10 支）：直擊 cluster 主流程 + 關鍵 happy path，不跑等於沒驗。例：「立即訂購 → 付款 → 訂單成立」這條主軸
+- **P1 — 核心 cluster 直擊**（≤8 支）：cluster 直擊但屬補強 / 邊界 case（特殊金流代表、Bottom Sheet 新模組、AB 開關）
+- **P2 — Cluster 周邊**（不列）：直擊但與 P0/P1 同 cluster 同 user flow 的變體 → 走 Variant 合併或進 gap 區，**不再開 P2 收容**
+- **P3 — 間接 globalComponent only / 完全不沾**（不列）：只透過 globalComponent（多語系、AB 測試、API 網絡層）關聯，或 runtime 改動沒交集
 
 ### 永遠不列的 case 類型（即使 AI 給 MUST 也跳過）
 
 - **AB Test 開關類**：case 名含「AB Test」「AB 實驗」「A/B」等 — RD 跑這種 case 沒意義，新 toggle 預設 off / on 都會被主流程 case 自然覆蓋
 - **純語系切換類**：case 名含「Ko -」「Ja -」「zh-tw -」前綴的同名 case → 只挑一支代表（zh-tw 優先）
-- **純 UI 顯示驗證**（無互動）：case 名含「展示檢查」「UI 正常顯示」且沒有實際 user action → 降 P2 不列
+- **純 UI 顯示驗證**（無互動）：case 名含「展示檢查」「UI 正常顯示」且沒有實際 user action → 直接不列
 - **分期付款（instalment）類**：case 名含「分期付款」「instalment」「BIN 檢核」等 — 分期是少數人才用，**不是主流程**；如果要挑「立即訂購 + 付款」happy path 代表，請挑**信用卡 3D**（非分期）的 case，例如 `TAPPAY - 信用卡付款 (3D)` (iOS 主流量) / `STRIPE - 信用卡付款` (海外)
 
 ### iOS / Android 信用卡主流量金流挑選優先序（給 reason 寫「信用卡 happy path 代表」時用）
@@ -81,14 +99,14 @@
 
 同 case ID 出現在多個 cycle（例：KQT-T20131 同時在 Regression & Project）→ 只保留 Project（≥ Regression > Trans 視 cluster 主場）
 
-**最終得到 ≤10 支精選清單**（跨 3 cycle 合計，按 cycle 分組，每支標 P0/P1）。
+**最終得到 ≤20 支精選清單**（跨 3 cycle 合計，按 cycle 分組，每支標 P0/P1）。
 
 ### 輸出原則
 
 - **不要**把「我重審了 N 支」「降級了 M 支」「合併了 N 個 variant」這類過程貼給使用者
-- **只列 P0/P1**（≤10 支總計），按 cycle 分組
+- **只列 P0/P1**（≤20 支總計，依動態規則收斂），按 cycle 分組
 - **不列完整 MUST 清單**（即使 user 想看，請他自己 `cat /tmp/release_impact_<task_id>.json | jq` 看 raw）
-- 在結果末尾用一行 footer 標：`> AI 原始 MUST X 支 → 精選 P0/P1 共 Y 支（已合併 variant、過濾間接關聯）`
+- footer `> AI 原始 MUST X 支 → 精選 P0/P1 共 Y 支（已合併 variant、過濾間接關聯）` 放在 gap 區 / 完整 JSON 路徑**之後**、**自動化觸發詢問之前**（觸發詢問必須是整篇輸出的最後一句，見「自動化觸發」段）
 
 ### 何時跳過 / 必須觸發
 
@@ -97,13 +115,13 @@
 - `ai_results` 為空（`cycle=none`）
 
 必須觸發收斂：
-- AI 原 MUST 總數 > 20 → 強制做 P0~P4 + variant 合併，輸出依動態規則（最多 20）
-- AI 原 MUST 占 ai_results > 30% → 強制做 P0~P4 + variant 合併
+- AI 原 MUST 總數 > 20 → 強制做 P0/P1 收斂 + variant 合併，輸出依動態規則（最多 20）
+- AI 原 MUST 占 ai_results > 30% → 強制做 P0/P1 收斂 + variant 合併
 - 兩者都不滿足 → 仍按 cycle 列原 MUST，不強制收斂（但仍 ≤ 20 支）
 
 ## 階段 1：輸出格式
 
-**用人話講重點**（不貼 raw JSON）。**精選清單按 cycle 分組**（🔁 Regression / 📦 Project / 🚗 Trans），每支標 P0/P1。每個 cycle 區塊內**只列 P0 與 P1**，跨 cycle 合計 ≤ 10 支。
+**用人話講重點**（不貼 raw JSON）。**精選清單按 cycle 分組**（🔁 Regression / 📦 Project / 🚗 Trans），每支標 P0/P1。每個 cycle 區塊內**只列 P0 與 P1**，跨 cycle 合計 ≤ 20 支（依動態規則收斂）。
 
 **⚙️ / 🖐 自動化標記**：列每支 case 時，把 `test_case_id` 跟 task JSON 的 `automated_case_ids` 比對：
 - 命中 → 標 `⚙️`（有自動化）
@@ -144,7 +162,7 @@
 - **P0** 🖐 KQT-T9012 — 接送結帳流程 — Trans 主流程直擊 — files: TransCheckoutFlow.swift
 - **P1** 🖐 KQT-T9020 — 接送優惠券折抵 — coupon API 變動 — files: TransCouponAPI.swift
 
-## 可一鍵觸發自動化的 case（must_run ∩ automated_case_ids）
+## 可一鍵觸發自動化的 case
 
 > **iOS / Android（`kkday-ios-member` / `kkday-android-member`）跳過這段** — mobile single test run 暫時無法讓使用者直接觸發，列出來只會混淆。輸出時整段（含「自動化觸發 single test run」curl 範例）不顯示，⚙️/🖐 標記仍保留供識別用。
 
@@ -165,11 +183,28 @@ KQT-T7180,KQT-T7203,KQT-T8801,...
 - 沒有覆蓋「優惠券 + 多幣別」組合的 case，建議手動補一輪 SGD / JPY 結帳
 
 完整 JSON：/tmp/release_impact_<task_id>.json
+
+> AI 原始 MUST X 支 → 精選 P0/P1 共 Y 支（已合併 variant、過濾間接關聯）
+
+---
+
+### 👉 要直接觸發這 N 支自動化測試嗎？
+
+`KQT-T7180, KQT-T7203, KQT-T8801, ...`
+
+回「要 / yes / 觸發 / go」我就打 single test run。
 ```
 
+⚠️ 上面 example 的**最後三行**就是觸發詢問區塊（分隔線 `---` + `### 👉` heading + 案例清單 + 一句確認語）。實際輸出時，這區塊之後**什麼都不能再加**——任何 token 使用統計、總結、tip、emoji 都會把觸發機會埋掉。
+
+**觸發詢問顯眼三要素**（必須同時做）：
+1. 上方加一條 `---` 水平分隔線，跟前文（gap 區 / footer）視覺切開
+2. 用 `### 👉 要直接觸發這 N 支自動化測試嗎？` 標題級別（h3 + emoji），不要只用 blockquote
+3. 案例清單獨立一行 inline code block（` ``...`` `），不要塞在標題裡
+
 **選擇邏輯**：
-- 跨 cycle 合計輸出 ≤ 10 支
-- 每個 cycle 內以 P0 為主、P1 補強；P2/P3/P4 不顯示
+- 跨 cycle 合計輸出 ≤ 20 支（依動態規則：1 cluster 3~5 / 2~3 cluster 6~12 / 4+ cluster 12~20）
+- 每個 cycle 內以 P0 為主、P1 補強；P2/P3 不顯示
 - nice_to_have / skip / unknown：不列（如果使用者要看，請他自己讀 JSON）
 
 **單一 cycle 場景**（`cycle=KQT-R...` 或 `cycle=none` 或 alias 走 b2c-api）：不分組，直接列「## 精選 P0/P1（共 N 支）」。
@@ -182,11 +217,22 @@ KQT-T7180,KQT-T7203,KQT-T8801,...
 
 > **同上 — iOS / Android 跳過這段**。mobile single test run 平台還沒開放給一般使用者直接打。
 
-對 ⚙️ 標記的 case（限 b2c-web / member-ci / mobile-member-ci / b2c-api），**不要在結果輸出貼 curl payload**，只在結尾用一行問句問使用者：
+對 ⚙️ 標記的 case（限 b2c-web / member-ci / mobile-member-ci / b2c-api），**不要在結果輸出貼 curl payload**，只在結尾用以下格式問使用者：
 
 ```
-> 要直接觸發這 N 支自動化測試嗎？（KQT-T..., KQT-T..., ...）
+---
+
+### 👉 要直接觸發這 N 支自動化測試嗎？
+
+`KQT-T..., KQT-T..., ...`
+
+回「要 / yes / 觸發 / go」我就打 single test run。
 ```
+
+🚨 **這整塊必須在整篇輸出的最後**（含風險評估 / 精選清單 / 自動化清單 / gap 區 / JSON 路徑 / `AI 原始 MUST X 支 → 精選 Y 支` footer 都必須在它之前），否則使用者會錯過觸發機會。
+- 觸發詢問**底下不可再加**任何 footer、註腳、AI 比例摘要、token 使用、tips
+- **必須**先放 `---` 水平分隔線視覺隔離，再放 `### 👉` h3 標題（不是 blockquote、不是 plain text），最後 inline code 列 case ID
+- 若是 iOS / Android（跳過自動化段）→ 整篇輸出的最後一句改成 gap 區或完整 JSON 路徑那行，**不要**硬塞一個無意義的提示句
 
 使用者回「要 / yes / 觸發 / go」之類肯定詞後，再實際打 `POST $AUTOTEST/api/v1/automation/run`。打的時候：
 

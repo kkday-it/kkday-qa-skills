@@ -32,6 +32,7 @@ import argparse
 import json
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -247,6 +248,7 @@ class State:
 
     def __init__(self, out: Path, params: dict[str, Any]):
         self.out = out
+        self._lock = threading.Lock()
         self.data: dict[str, Any] = {
             "task_id": params["task_id"],
             "status": "running",
@@ -267,42 +269,51 @@ class State:
             "progress_log": [],
             "errors": [],
         }
-        self.flush()
+        self._flush_locked()
 
     def set(self, **kwargs: Any) -> None:
-        self.data.update(kwargs)
-        self.data["updated_at"] = now_iso()
-        self.flush()
+        with self._lock:
+            self.data.update(kwargs)
+            self.data["updated_at"] = now_iso()
+            self._flush_locked()
 
     def log_progress(self, step: str, message: str) -> None:
-        self.data["progress_log"].append(
-            {"ts": now_iso(), "step": step, "message": message}
-        )
-        # 只保留最近 100 條 progress（避免檔案無限長）
-        self.data["progress_log"] = self.data["progress_log"][-100:]
-        self.data["updated_at"] = now_iso()
-        self.flush()
+        with self._lock:
+            self.data["progress_log"].append(
+                {"ts": now_iso(), "step": step, "message": message}
+            )
+            # 只保留最近 100 條 progress（避免檔案無限長）
+            self.data["progress_log"] = self.data["progress_log"][-100:]
+            self.data["updated_at"] = now_iso()
+            self._flush_locked()
         emit(step, message)
 
     def fail(self, step: str, error: str) -> None:
-        self.data["errors"].append(
-            {"ts": now_iso(), "step": step, "error": error}
-        )
-        self.data["status"] = "failed"
-        self.data["completed_at"] = now_iso()
-        self.data["updated_at"] = now_iso()
-        self.flush()
+        with self._lock:
+            self.data["errors"].append(
+                {"ts": now_iso(), "step": step, "error": error}
+            )
+            self.data["status"] = "failed"
+            self.data["completed_at"] = now_iso()
+            self.data["updated_at"] = now_iso()
+            self._flush_locked()
         emit(step, f"FAILED — {error}")
 
     def complete(self) -> None:
-        self.data["status"] = "completed"
-        self.data["current_step"] = "done"
-        self.data["completed_at"] = now_iso()
-        self.data["updated_at"] = now_iso()
-        self.flush()
+        with self._lock:
+            self.data["status"] = "completed"
+            self.data["current_step"] = "done"
+            self.data["completed_at"] = now_iso()
+            self.data["updated_at"] = now_iso()
+            self._flush_locked()
         emit("done", "pipeline completed")
 
     def flush(self) -> None:
+        with self._lock:
+            self._flush_locked()
+
+    def _flush_locked(self) -> None:
+        """Write JSON atomically. Caller must hold self._lock."""
         tmp = self.out.with_suffix(self.out.suffix + ".tmp")
         tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=2))
         tmp.replace(self.out)
@@ -654,8 +665,17 @@ def main() -> int:
     flat_test_cases: list[dict[str, Any]] = []
     flat_ai_results: list[dict[str, Any]] = []
 
-    # ---- Step 4 & 5: per cycle loop ----
-    for group, cycle_id in cycles:
+    # ---- Step 4 & 5: 多 cycle 並行（每個 cycle 跑自己的 step4+step5 鏈）----
+    # 為什麼並行：3 個 cycle 串行時 step4+5 佔總時間 95%，且彼此完全獨立（不同 cycle_id
+    # 撈不同 case、各自跑 LLM）。並行 max(t1,t2,t3) 取代 t1+t2+t3，理論省 60%+。
+    # 後端是 FastAPI + LLM，受限於 backend concurrency 與 LLM rate-limit，max_workers
+    # 不要拉太高；目前 cycle 最多 3 個，直接綁定 cycle 數即可。
+    impact_summary_snapshot = state.data["impact_summary"]
+
+    def _run_one_cycle(
+        group: str, cycle_id: str
+    ) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]], list[tuple[str, str]]]:
+        """跑單一 cycle 的 step4+step5；回傳 (group, cycle_id, test_cases, results, errors)。"""
         step4_name = f"step4_get_test_cases[{group}]"
         try:
             tc_resp = stream_sse(
@@ -670,33 +690,21 @@ def main() -> int:
             )
             test_cases = tc_resp.get("test_cases") or []
         except Exception as e:
-            state.fail(step4_name, str(e))
-            return 1
-
-        test_cases_by_cycle[group] = {
-            "cycle_id": cycle_id,
-            "test_cases": test_cases,
-        }
-        flat_test_cases.extend(test_cases)
-        state.set(
-            test_cases_by_cycle=test_cases_by_cycle,
-            test_cases=flat_test_cases,
-        )
+            return group, cycle_id, [], [], [(step4_name, str(e))]
 
         if not test_cases:
             state.log_progress(
                 step4_name,
                 f"cycle={cycle_id} 沒撈到 case，跳過 step5",
             )
-            ai_results_by_cycle[group] = {"cycle_id": cycle_id, "results": []}
-            continue
+            return group, cycle_id, [], [], []
 
         step5_name = f"step5_ai_analyze_impact[{group}]"
         try:
             ai_resp = stream_sse(
                 f"{backend}/api/release-impact/ai-analyze-impact",
                 payload={
-                    "impact_summary": state.data["impact_summary"],
+                    "impact_summary": impact_summary_snapshot,
                     "test_cases": test_cases,
                     "test_cycle_key": cycle_id,
                     "github_repo": args.repo,
@@ -715,18 +723,58 @@ def main() -> int:
             )
             results = ai_resp.get("results") or []
         except Exception as e:
-            state.fail(step5_name, str(e))
-            return 1
+            return group, cycle_id, test_cases, [], [(step5_name, str(e))]
 
+        return group, cycle_id, test_cases, results, []
+
+    state.set(current_step=f"step4_5_parallel[{len(cycles)}_cycles]")
+    state.log_progress(
+        "step4_5_parallel",
+        f"並行跑 {len(cycles)} 個 cycle (step4 + step5)",
+    )
+
+    cycle_outputs: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {}
+    cycle_errors: list[tuple[str, str]] = []
+
+    with ThreadPoolExecutor(max_workers=max(1, len(cycles))) as ex:
+        futures = [ex.submit(_run_one_cycle, g, c) for g, c in cycles]
+        for fut in as_completed(futures):
+            group, cycle_id, test_cases, results, errs = fut.result()
+            if errs:
+                cycle_errors.extend(errs)
+                continue
+            cycle_outputs[group] = (test_cases, results)
+
+    if cycle_errors:
+        step_name, err = cycle_errors[0]
+        extra = (
+            f"; 另有 {len(cycle_errors) - 1} 個 cycle 也失敗"
+            if len(cycle_errors) > 1
+            else ""
+        )
+        state.fail(step_name, err + extra)
+        return 1
+
+    # 依原本 cycles 順序合併，輸出穩定（不受 as_completed 完成順序影響）
+    for group, cycle_id in cycles:
+        test_cases, results = cycle_outputs.get(group, ([], []))
+        test_cases_by_cycle[group] = {
+            "cycle_id": cycle_id,
+            "test_cases": test_cases,
+        }
+        flat_test_cases.extend(test_cases)
         ai_results_by_cycle[group] = {
             "cycle_id": cycle_id,
             "results": results,
         }
         flat_ai_results.extend(results)
-        state.set(
-            ai_results_by_cycle=ai_results_by_cycle,
-            ai_results=flat_ai_results,
-        )
+
+    state.set(
+        test_cases_by_cycle=test_cases_by_cycle,
+        test_cases=flat_test_cases,
+        ai_results_by_cycle=ai_results_by_cycle,
+        ai_results=flat_ai_results,
+    )
 
     # ---- Step 6: fetch automation platform case list ----
     # 用來標記哪些 MUST/SHOULD case 是真的有自動化（可一鍵觸發 single test run）

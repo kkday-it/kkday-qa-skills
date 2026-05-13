@@ -87,9 +87,9 @@ Wait 模式 chat 內 SSE stream；Background 模式跑 `scripts/run_pipeline.py`
 
 ### 結果解讀（Wait / Background / `result <id>` 共用）
 
-**強制做 P0~P4 二次審核 + variant 合併**（過程不顯示給用戶，只給最終結果）。核心原則：**RD 跑不完 = 等於沒分類**，跨 cycle 合計上限 20 支（依 cluster 數動態），通常 ≤ 10 支精選。
+**強制做 P0/P1 二次審核 + variant 合併**（過程不顯示給用戶，只給最終結果）。核心原則：**RD 跑不完 = 等於沒分類**，跨 cycle 合計上限 20 支（依 cluster 數動態：1 cluster 3~5 / 2~3 cluster 6~12 / 4+ cluster 12~20）。
 
-完整規則（P0~P4 分級、AB Test / 語系 / 分期 / 純 UI 永不列、信用卡 happy path 挑選優先序、Variant 合併、跨 cycle 去重、⚙️/🖐 自動化標記、輸出格式、自動化觸發 single test run、iOS/Android 跳過自動化觸發段、Follow-up Q&A 對應方式）見 [references/result-interpretation.md](references/result-interpretation.md)。
+完整規則（P0/P1 分級（P2 起一律不列）、AB Test / 語系 / 分期 / 純 UI 永不列、信用卡 happy path 挑選優先序、Variant 合併、跨 cycle 去重、⚙️/🖐 自動化標記、test/src 同步度檢核加成訊號、輸出格式、自動化觸發 single test run（必須是最後一句）、iOS/Android 跳過自動化觸發段、Follow-up Q&A 對應方式）見 [references/result-interpretation.md](references/result-interpretation.md)。
 
 ### Background script
 
