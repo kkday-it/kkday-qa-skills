@@ -64,7 +64,14 @@ curl -s -H "X-User-Id: mp0qewxc-idis9qqi1d" "$BACKEND/api/config" | head -c 200
 
 ### Mode A — 只給 repo / 別名
 
-用戶只給 repo（如 `ios`、`b2c-web`），列 refs 讓用戶選 base/target。**完全用本地 `gh` CLI**。詳細實作（tags / release branches / dev branches 撈法、編號顯示、b2c-web 配對）見 [references/mode-a-list-refs.md](references/mode-a-list-refs.md)。
+用戶只給 repo（如 `ios`、`b2c-web`），**強制跑 `scripts/list_refs.py`**——不要再手寫 gh / GraphQL（會踩雷：first:100 限制、--jq 對 array 輸出 NDJSON、master/main/develop 不在 top-100 commit date ranking）。
+
+```bash
+python3 ~/.claude/skills/pr-impact-analysis/scripts/list_refs.py <repo_or_alias>
+# 範例：... b2c-api / ... ios --filter rc / ... member-ci（自動 pair b2c-web）
+```
+
+script 一次處理掉 gh auth check、GraphQL 上限、master/main/develop 補抓、release/* 砍量、b2c-web pairing 等所有 edge case。完整參數表 + 解析使用者回覆的邏輯見 [references/mode-a-list-refs.md](references/mode-a-list-refs.md)。
 
 ### Mode B — 直接給 base/target
 
@@ -81,15 +88,51 @@ curl -s -H "X-User-Id: mp0qewxc-idis9qqi1d" "$BACKEND/api/config" | head -c 200
 | 5 | `ai-analyze-impact`（SSE，每 cycle 跑一次） | must_run 分類 |
 | 6 | `GET /api/v1/testcase`（autotest-service） | 自動化 case_id list（標 ⚙️/🖐） |
 
-Wait 模式 chat 內 SSE stream；Background 模式跑 `scripts/run_pipeline.py`。詳細（payload 格式、模式判斷 threshold、Wait 走法、Background 啟動、進度面板、awk per-step 去重）見 [references/pipeline.md](references/pipeline.md)。
+Wait 模式 chat 內 SSE stream；Background 模式跑 `scripts/run_pipeline.py`。詳細（payload 格式、模式判斷 threshold、Wait 走法、Background 啟動、awk per-step 去重）見 [references/pipeline.md](references/pipeline.md)。
+
+> ⛔ **強制：Pipeline 啟動後第一個輸出必須是 Unicode 方框進度面板**（不是 task ID、不是 "已啟動 pipeline" 字串），每收到 step 切換通知就**重印整個面板**。範例：
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 📊 PR Impact Analysis — <repo>                                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│ base    : <base_ref>                                                    │
+│ target  : <target_ref>                                                  │
+│ size    : ahead=N commits, files=M → Wait/Background 模式               │
+│ cycles  : 🔁 KQT-R...  📦 KQT-R...  🚗 KQT-R... (all)                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Step 1  get-diff                  ✅ done                                │
+│ Step 2  analyze-components        ⏳ 跑中                                │
+│ Step 3  version-impact-summary    ⏸ 等                                  │
+│ Step 4  get-test-cases (×N)       ⏸ 等                                  │
+│ Step 5  ai-analyze-impact (×N)    ⏸ 等                                  │
+│ Step 6  fetch automated_case_ids  ⏸ 等                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+狀態符號約定：`⏸ 等` / `⏳ 跑中` / `✅ done` / `❌ 失敗`。**沒印面板 = 3.25。**
 
 短路：`code_changed=false` 或 `release_only=true && kept_files=[]` → 直接回「本次變更僅版本號 / lock file，無需 regression」。
 
 ### 結果解讀（Wait / Background / `result <id>` 共用）
 
+> ⛔ **強制前置動作**：Pipeline 跑完（或 `result <id>` 被呼叫）後，**送出結果輸出之前，必須先用 Read 工具讀完 [references/result-interpretation.md](references/result-interpretation.md)**。憑記憶輸出 = 一定踩雷（漏 `files:` 欄位、漏 P0/P1 標、自動化觸發格式錯、footer 位置錯）。**沒讀完規範就直接出表 = 3.25。**
+
 **強制做 P0/P1 二次審核 + variant 合併**（過程不顯示給用戶，只給最終結果）。核心原則：**RD 跑不完 = 等於沒分類**，跨 cycle 合計上限 20 支（依 cluster 數動態：1 cluster 3~5 / 2~3 cluster 6~12 / 4+ cluster 12~20）。
 
-完整規則（P0/P1 分級（P2 起一律不列）、AB Test / 語系 / 分期 / 純 UI 永不列、信用卡 happy path 挑選優先序、Variant 合併、跨 cycle 去重、⚙️/🖐 自動化標記、test/src 同步度檢核加成訊號、輸出格式、自動化觸發 single test run（必須是最後一句）、iOS/Android 跳過自動化觸發段、Follow-up Q&A 對應方式）見 [references/result-interpretation.md](references/result-interpretation.md)。
+**送出前自我檢核 checklist**（任一沒過 → 回頭讀 result-interpretation.md 重做）：
+- [ ] 已撈真實 `compare/<base>...<target>` changed files（不只看 `diff_meta.kept_files_count`）
+- [ ] 每支精選 case 標 `[P0]` 或 `[P1]`（P2/P3 一律不列）
+- [ ] 每支精選 case 帶 `files:` 欄位列具體檔名（寫不出來 → 直接丟掉，不要硬掰）
+- [ ] 每支標 `⚙️`（在 `automated_case_ids` 內）或 `🖐`
+- [ ] AB Test / 純語系 / 分期 / 純 UI case **沒**混進精選清單
+- [ ] Variant 已合併（同 cluster 同 user flow 只挑一支代表）
+- [ ] footer `> AI 原始 MUST X 支 → 精選 P0/P1 共 Y 支` 放在 gap 區 + JSON 路徑**之後**、自動化觸發詢問**之前**
+- [ ] 結尾自動化觸發區塊用 `---` + `### 👉 要直接觸發這 N 支自動化測試嗎？` + inline code 列 case ID +「回 要/yes/觸發/go ...」三件套（**不是** blockquote / plain text / 隨意動詞）
+- [ ] iOS/Android repo → 整段自動化觸發**跳過不顯示**
+- [ ] 結尾**沒有**任何 token 使用統計 / 多餘總結 / tips
+
+完整規則（P0/P1 分級、永不列 case 類型、信用卡 happy path 挑選優先序、Variant 合併判斷準則、跨 cycle 去重、test/src 同步度檢核、輸出格式 + example、自動化觸發 single test run、iOS/Android 跳過段、Follow-up Q&A）見 [references/result-interpretation.md](references/result-interpretation.md)。**這個檔每次跑完 pipeline 都要重讀，不能憑記憶。**
 
 ### Background script
 

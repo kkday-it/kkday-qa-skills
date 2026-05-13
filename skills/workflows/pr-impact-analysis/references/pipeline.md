@@ -56,31 +56,11 @@ curl -s -X POST "$BACKEND/api/release-impact/get-diff" \
 
 **兩種模式都走完整 5 支 API**（analyze-components → get-version-impact-summary → get-test-cases → ai-analyze-impact），差別只在「在 chat 內等」vs「丟背景跑」。結果完全一致、都被 ai-studio 後端 cache 收錄。
 
-## 進度面板（兩種模式都建議印）
+## 進度面板
 
-啟動 pipeline（不管 wait 或 background）後，先在 chat 印 Unicode 方框面板，把 base/target/規模/cycle/各 step 狀態列出來。Watchdog / SSE 進度更新時把對應 step 改 ✅。
+⛔ 強制必印（兩種模式都是），格式 + 範例 + 狀態符號約定見 SKILL.md「Pipeline」段——這份 reference 不再重複範例，避免兩邊改一邊忘記同步。
 
-範例：
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ 📊 PR Impact Analysis — kkday-b2c-web                                    │
-├─────────────────────────────────────────────────────────────────────────┤
-│ base    : task/KB2CW-3938-forced-reflow-scroll-throttle-hydration-       │
-│ target  : master                                                          │
-│ size    : ahead=6 commits, files=7  →  Wait 模式                          │
-│ cycles  : 🔁 KQT-R929  📦 KQT-R1056  🚗 KQT-R1189 (all)                   │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Step 1  get-diff                  ✅ done                                  │
-│ Step 2  analyze-components        ⏳ 跑中                                  │
-│ Step 3  version-impact-summary    ⏸ 等                                    │
-│ Step 4  get-test-cases (×N cycle) ⏸ 等                                    │
-│ Step 5  ai-analyze-impact (×N)    ⏸ 等                                    │
-│ Step 6  fetch automated_case_ids  ⏸ 等                                    │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-狀態符號約定：`⏸ 等` / `⏳ 跑中` / `✅ done` / `❌ 失敗`。
+Watchdog（Background）/ SSE 進度（Wait）收到 step 切換時：**重印整個面板**（從 `⏸ 等` → `⏳ 跑中` → `✅ done`），不要只 echo "step3 done"。
 
 ## Background 模式 awk per-step 去重
 
