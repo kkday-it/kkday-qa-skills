@@ -71,7 +71,9 @@ python3 ~/.claude/skills/pr-impact-analysis/scripts/list_refs.py <repo_or_alias>
 # 範例：... b2c-api / ... ios --filter rc / ... member-ci（自動 pair b2c-web）
 ```
 
-script 一次處理掉 gh auth check、GraphQL 上限、master/main/develop 補抓、release/* 砍量、b2c-web pairing 等所有 edge case。完整參數表 + 解析使用者回覆的邏輯見 [references/mode-a-list-refs.md](references/mode-a-list-refs.md)。
+⛔ **強制：跑完 list_refs.py 後，必須再 render「推薦 base→target 組合表」（plain text markdown table，C1~C10 編號）**，不能只把 refs 列完就丟給使用者打字選。**不准**用 AskUserQuestion 把選項限縮成 4 個（會塞掉自由輸入）。組合場景：task branch review、master vs develop、master vs test/*、test/* vs master、hotfix vs master、跨 release tag diff。**沒印組合表 = 3.25。**
+
+script 一次處理掉 gh auth check、GraphQL 上限、master/main/develop 補抓、release/* 砍量、b2c-web pairing 等所有 edge case。完整組合表規範 + 參數表 + 解析使用者回覆的邏輯見 [references/mode-a-list-refs.md](references/mode-a-list-refs.md)。
 
 ### Mode B — 直接給 base/target
 

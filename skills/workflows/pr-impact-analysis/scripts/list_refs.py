@@ -39,6 +39,8 @@ OWNER = "kkday-it"
 RELEASE_LIKE_RE = re.compile(r"^(master|main|develop|rc|release/.*|hotfix/.*)$")
 # 一定要列出來的「主分支」——即使不在 top-100 commit date ranking 裡也要查
 ALWAYS_LIST = ("master", "main", "develop")
+# 主分支排序優先（越前面越上面）；rc 也算主分支排序，但不強制 fallback fetch
+PRIMARY_ORDER = ("master", "main", "develop", "rc")
 
 
 def _gh(args: list[str], check: bool = True) -> str:
@@ -55,18 +57,71 @@ def _gh(args: list[str], check: bool = True) -> str:
     return res.stdout
 
 
-def fetch_tags(repo: str, per_page: int = 30) -> list[str]:
-    """Fetch latest N tags via REST API."""
-    out = _gh(
+def fetch_tags(repo: str, per_page: int = 30) -> list[dict[str, Any]]:
+    """Fetch latest N tags + commit date via GraphQL.
+
+    REST `/tags` 不帶 commit date 而且沒按日期排（按 alphabetical），這裡用 GraphQL
+    refs(refPrefix:"refs/tags/", orderBy:TAG_COMMIT_DATE) 一發撈完。
+    """
+    query = """
+    query($owner:String!,$name:String!,$first:Int!){
+      repository(owner:$owner,name:$name){
+        refs(refPrefix:"refs/tags/",first:$first,orderBy:{field:TAG_COMMIT_DATE,direction:DESC}){
+          nodes{
+            name
+            target{
+              __typename
+              ... on Commit { committedDate }
+              ... on Tag { tagger { date } target { ... on Commit { committedDate } } }
+            }
+          }
+        }
+      }
+    }
+    """
+    raw = _gh(
         [
             "api",
-            f"repos/{OWNER}/{repo}/tags?per_page={per_page}",
-            "--jq",
-            ".[].name",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-f",
+            f"owner={OWNER}",
+            "-f",
+            f"name={repo}",
+            "-F",
+            f"first={per_page}",
         ],
         check=False,
     )
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"[list_refs] Tags GraphQL parse failed: {e}\nraw head:\n{raw[:500]}\n")
+        return []
+    nodes = (
+        data.get("data", {})
+        .get("repository", {})
+        .get("refs", {})
+        .get("nodes", [])
+        or []
+    )
+    out: list[dict[str, Any]] = []
+    for n in nodes:
+        name = n.get("name")
+        if not name:
+            continue
+        target = n.get("target") or {}
+        committed = None
+        if target.get("__typename") == "Commit":
+            committed = target.get("committedDate")
+        elif target.get("__typename") == "Tag":
+            tagger = target.get("tagger") or {}
+            committed = tagger.get("date")
+            if not committed:
+                committed = (target.get("target") or {}).get("committedDate")
+        out.append({"name": name, "committedDate": committed})
+    return out
 
 
 def fetch_branches_graphql(repo: str) -> list[dict[str, Any]]:
@@ -172,13 +227,14 @@ def split_branches(
             dev.append(b)
 
     # 補上 master/main/develop（如果不在 top-100 GraphQL 結果裡）
+    # 只接受有 committedDate 的（過濾 404 空殼或 force-pushed empty branch）
     missing = [n for n in ALWAYS_LIST if n not in seen_names]
     if missing:
         with ThreadPoolExecutor(max_workers=len(missing)) as ex:
             futures = {ex.submit(fetch_branch_meta, repo, n): n for n in missing}
             for fut in as_completed(futures):
                 meta = fut.result()
-                if meta is not None:
+                if meta is not None and meta.get("committedDate"):
                     release_like.append(meta)
                     seen_names.add(meta["name"])
 
@@ -189,10 +245,11 @@ def split_branches(
     release_like.sort(key=_key, reverse=True)
     dev.sort(key=_key, reverse=True)
 
-    # 主分支（master/main/develop）強制排在最前面
-    primary = [b for b in release_like if b["name"] in ALWAYS_LIST]
-    others = [b for b in release_like if b["name"] not in ALWAYS_LIST]
-    # release/* 太多時砍掉只留最近 N 個
+    # 主分支（master/main/develop/rc）強制排在最前面，照 PRIMARY_ORDER 順序
+    primary_map = {b["name"]: b for b in release_like if b["name"] in PRIMARY_ORDER}
+    primary = [primary_map[n] for n in PRIMARY_ORDER if n in primary_map]
+    others = [b for b in release_like if b["name"] not in PRIMARY_ORDER]
+    # release/hotfix 太多時砍掉只留最近 N 個
     if len(others) > release_branches_keep:
         others = others[:release_branches_keep]
     release_like = primary + others
@@ -213,9 +270,35 @@ def apply_filter(items: list[Any], pattern: str, key=lambda x: x) -> list[Any]:
     return [x for x in items if p in str(key(x)).lower()]
 
 
+def _format_total(shown_count: int, total: int, graphql_capped: bool = False) -> str:
+    """Format `N / total` with `+` suffix when GraphQL hit the 100 ceiling."""
+    if graphql_capped and total >= 100:
+        return f"{shown_count} / 100+"
+    return f"{shown_count} / {total}"
+
+
+def _align_rows(items: list[tuple[str, str]], indent: str = "  ") -> list[str]:
+    """Render `(label, date)` rows with name column right-padded to the widest label.
+
+    Output example:
+      T1.  @kkday/b2c-web-trans@2.8.3-rc.1      (2026-05-12)
+      T2.  @kkday/b2c-web-main@8.7.4            (2026-05-12)
+    """
+    if not items:
+        return []
+    name_pad = max(len(label) for label, _ in items)
+    out = []
+    for label, date in items:
+        if date:
+            out.append(f"{indent}{label.ljust(name_pad)}    ({date})")
+        else:
+            out.append(f"{indent}{label}")
+    return out
+
+
 def render(
     repo: str,
-    tags: list[str],
+    tags: list[dict[str, Any]],
     release_like: list[dict[str, Any]],
     dev: list[dict[str, Any]],
     tags_limit: int,
@@ -235,42 +318,56 @@ def render(
     # Tags
     tags_total = len(tags)
     tags_shown = tags if show_all_tags else tags[:tags_limit]
-    tags_hint = (
-        f"Tags ({len(tags_shown)} / {tags_total}, 用 --tags-limit N / --show-all-tags 看更多):"
-        if not show_all_tags
-        else f"Tags ({tags_total}):"
-    )
+    if show_all_tags:
+        tags_hint = f"Tags ({tags_total}，最新依 commit date 排序):"
+    else:
+        tags_hint = (
+            f"Tags ({_format_total(len(tags_shown), tags_total)}，"
+            "最新依 commit date 排序，用 tags=N / tags=all 看更多):"
+        )
     lines.append(tags_hint)
-    for i, t in enumerate(tags_shown, 1):
-        lines.append(f"  {prefix_t}{i}.  {t}")
-    if not tags_shown:
+    tag_rows = [
+        (f"{prefix_t}{i}.  {t['name']}", short_date(t.get("committedDate")))
+        for i, t in enumerate(tags_shown, 1)
+    ]
+    if tag_rows:
+        lines.extend(_align_rows(tag_rows))
+    else:
         lines.append("  (無 tag)")
     lines.append("")
 
     # Release Branches
     lines.append("Release Branches (固定列):")
-    for i, b in enumerate(release_like, 1):
-        d = short_date(b.get("committedDate"))
-        d_str = f"  ({d})" if d else ""
-        lines.append(f"  {prefix_r}{i}.  {b['name']}{d_str}")
-    if not release_like:
+    rb_rows = [
+        (f"{prefix_r}{i}.  {b['name']}", short_date(b.get("committedDate")))
+        for i, b in enumerate(release_like, 1)
+    ]
+    if rb_rows:
+        lines.extend(_align_rows(rb_rows))
+    else:
         lines.append("  (無 release branch)")
     lines.append("")
 
     # Dev Branches
     dev_total = len(dev)
     dev_shown = dev if show_all_branches else dev[:branches_limit]
-    dev_hint = (
-        f"Dev Branches ({len(dev_shown)} / {dev_total}, 用 --branches-limit N / --show-all-branches):"
-        if not show_all_branches
-        else f"Dev Branches ({dev_total}):"
-    )
+    # GraphQL first:100 上限 — 若 dev_total + len(release_like) == 100 視為 capped
+    graphql_capped = (dev_total + len(release_like)) >= 100
+    if show_all_branches:
+        dev_hint = f"Dev Branches ({'100+' if graphql_capped else dev_total}):"
+    else:
+        dev_hint = (
+            f"Dev Branches ({_format_total(len(dev_shown), dev_total, graphql_capped)}，"
+            "用 branches=N / branches=all 看更多):"
+        )
     lines.append(dev_hint)
-    for i, b in enumerate(dev_shown, 1):
-        d = short_date(b.get("committedDate"))
-        d_str = f"  ({d})" if d else ""
-        lines.append(f"  {prefix_b}{i}.  {b['name']}{d_str}")
-    if not dev_shown:
+    dev_rows = [
+        (f"{prefix_b}{i}.  {b['name']}", short_date(b.get("committedDate")))
+        for i, b in enumerate(dev_shown, 1)
+    ]
+    if dev_rows:
+        lines.extend(_align_rows(dev_rows))
+    else:
         lines.append("  (無 dev branch)")
 
     return "\n".join(lines)
@@ -376,7 +473,7 @@ def main() -> int:
         )
 
     sys.stdout.write(
-        "\n請輸入 base 跟 target，例如：T2 T1 / R1 B1 / v3.5.6 master / B1 R1\n"
+        "\n請輸入 base 跟 target，例如：T2 R1 / R1 B1 / B1 R1 / @kkday/b2c-web-main@8.7.3 master\n"
     )
     return 0
 
