@@ -8,7 +8,7 @@ description: |
   - 使用者只給平台別名（如 `ios`、`b2c-web`），想列 refs 選 base/target
   - 使用者問「task <id> 跑到哪 / 結果如何」「為什麼這支 case 是 must_run」「這個 commit 誰寫的」
 
-  必要工具：Bash、Read、Edit、Monitor、本地 `gh` CLI（必須先 `gh auth login`）、Python 3（`requests` 套件）
+  必要工具：Bash、Read、Edit、Monitor（references/ 內以「Watchdog」稱呼）、本地 `gh` CLI（必須先 `gh auth login`）、Python 3（`requests` 套件）
   前置條件：本機需有 `gh` CLI 並已登入；可連到 ai-studio backend（預設 `http://autotest-service.sit.kkday.com:8081/ai_studio`）。
 ---
 
