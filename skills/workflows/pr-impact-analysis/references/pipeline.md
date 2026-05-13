@@ -157,6 +157,13 @@ Log (stderr): /tmp/release_impact_<task_id>.log
 
 ToolSearch 載入 `Monitor` schema（`select:Monitor`）→ 監看 bash task ID。每條 stdout line = 1 個 notification。不需要 sleep / poll。
 
+**Monitor 沒授權怎麼辦**（fallback 路徑）：SKILL.md「Monitor 權限預檢」段使用者選「不要 / skip」、或第一次跑彈權限被駁回 → **不要硬塞 Monitor 重試**，改走 fallback：
+
+- 不啟動 Watchdog；純粹靠 bash `run_in_background=true` 的完成通知收 task
+- 啟動後回給使用者的訊息**移除**「即時推進度」那句，改成「跑完會自動通知 + 解讀，中途想看進度回『task <id> 跑到哪』」
+- 完成通知到 → 一樣讀 `OUT` JSON 進結果解讀段
+- 使用者問「task <id> 跑到哪」→ 讀 JSON `current_step` + `progress_log` 最後幾條回 1~2 行
+
 **用戶問「task <id> 跑到哪」**：若 Watchdog 還在串，回最近一條；否則讀 JSON 的 `current_step` + `progress_log` 最後幾條，回 1~2 行進度，**不要等**。
 
 **Watchdog timeout 處理**：若收到 `<task-notification>` 內含 `Monitor timed out — re-arm if needed.`，先看 background bash 是否已 done（讀 `OUT` JSON `current_step == "done"`）。已 done → 不必 re-arm；未 done → 重新呼叫 Monitor 監看同 task ID。
