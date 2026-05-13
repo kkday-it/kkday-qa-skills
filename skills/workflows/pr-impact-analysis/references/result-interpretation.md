@@ -31,7 +31,17 @@
    - `TapPayAftee*`, `PaymentStrategyManager`, `MakePayment` → cluster: **KKPayment 改造**
    - `TransCouponAPI`, `JapanRailways*`, `VtransAtServiceCarsDTO` → cluster: **Trans 改造**
 
+   ⚠️ **cluster 不是按檔名前綴 group**。檔名前綴只是線索，最終要按 **user flow** 收斂：
+   - `TTDLandingCoordinator` / `SearchResultViewModel` / `SearchResultPushDeepLinkModel` 名字都帶 Search / Landing，但分別是「TTD 落地頁」「搜尋結果頁直接點」「push 進搜尋結果」三條獨立 user flow → **拆三個 cluster**，不是一個
+   - 判斷準則：兩個 changed file 是否會被同一條使用者操作路徑同時經過？是 → 同 cluster；否 → 拆開
+
+4. **Reason 驗證（強制）**：為每個選定的 case，列出其 reason 對應到的 **具體 changed file**（至少 1 個檔名）。對不上 → 該 case 不列、或降 P2。Reason 不能只寫「跟 cluster 相關」「主流程必跑」，必須能 trace 到具體檔名。
+
+5. **Cluster 無對應 case 處理**：若某 cluster 在 changed files 出現但在 `ai_results` 找不到任何命中 case（無 case 名 / tags / reason 提到該 cluster 的元件）→ **必須寫進 gap 區建議補測**，不能硬塞進別的 case 的 reason。
+
 ### P0~P4 五級分類（取代 MUST / SHOULD / CAN_SKIP 三級）
+
+**「直擊」定義（可驗證）**：case 的 reason / tags / 名稱命中的元件，能在 changed files 中找到該元件的直接修改（檔名、class 名、function 名其中之一吻合）。**只是「概念相關」「同模組」「都跟 X 有關」不算直擊**。
 
 - **P0 — 極核心關鍵路徑**（≤3 支）：直擊 cluster 主流程 + 關鍵 happy path，不跑等於沒驗。例：「立即訂購 → 付款 → 訂單成立」這條主軸
 - **P1 — 核心 cluster 直擊**（≤5 支）：cluster 直擊但屬補強/邊界 case（特殊金流代表、Bottom Sheet 新模組、AB 開關）
@@ -61,7 +71,10 @@
 - 例：「2C2P 信用卡 3D」、「2C2P 信用卡 非 3D」、「2C2P 信用卡 3D + 跳轉 APP」→ 挑 3D（主流量 happy path）一支代表，其餘合併
 - 例：「JR 訂購新幹線」、「JR 訂購 1 成人」、「JR 訂購指定座位」→ 挑 1 成人 happy path 一支代表
 - 例：「Ko/Ja/zh-tw Email 註冊」（語系變體）→ 挑一支代表
-- 判斷依據：tags 重疊 ≥ 60% 且 case 名前綴/cluster 相同 → 視為同 cluster 變體
+- 判斷依據（必須**同時**滿足）：
+  1. tags 重疊 ≥ 60% 且 case 名前綴/cluster 相同
+  2. 兩個 case 對應到的 changed file 集合**有交集**（程式路徑重疊，非僅名字相似）
+- 只滿足 1 不滿足 2（名字像但程式路徑不同）→ **不是 variant，要分開判斷或拆 cluster**
 - 代表挑選優先序：⚙️（有自動化）> 廣度最高（涵蓋主流量地區/幣別）> 名字最像 happy path
 
 ### 跨 cycle 去重
@@ -97,9 +110,19 @@
 - 沒命中 → 標 `🖐`（手動 only）
 
 **格式要求**：
-- 每支 case 一行：`[P0/P1] [⚙️/🖐] KQT-T<id> — <case 名> — <一句話為什麼>`
+- 每支 case 一行：`[P0/P1] [⚙️/🖐] KQT-T<id> — <case 名> — <一句話為什麼> — files: <檔名 1>, <檔名 2>`
+- `files:` 欄位**強制**：列出該 case reason 對應到的 changed file（短檔名即可，最多 3 個）。**寫不出來 → 直接丟掉這支 case**，不要硬掰
 - **不要**多層 cluster tag、不要 emoji 裝飾、不要 score、不要 reason 全文
 - **不要列「完整 MUST 清單」**
+
+### 輸出前自我檢核（強制，過程不顯示）
+
+送出前對每支 case 逐項檢查，**任一不通過就拿掉**：
+1. `files:` 欄位有實際 changed file 名稱（不是「主流程相關」這種空話）
+2. reason 提到的元件 / cluster 在 changed files 真的存在
+3. 該 case 名稱描述的 user flow，會經過 `files:` 列出的程式碼
+
+寧可只列 3 支 P0、其他全進 gap 區，**也不能讓不相關 case 混進精選清單**。RD 看到不相關 case 會誤判測試方向，比漏報還糟。
 
 ```
 ## 風險評估
@@ -109,17 +132,17 @@
 ## 精選 P0/P1（跨 cycle 共 N 支）
 
 ### 🔁 Regression — KQT-R929
-- **P0** ⚙️ KQT-T7180 — 結帳金額計算 — fee 算法直接改動，主流量必跑
-- **P0** ⚙️ KQT-T7203 — 優惠券折抵 — coupon API 改動
-- **P1** 🖐 KQT-T6991 — 多商品結帳 — 多筆 cart 邏輯涵蓋邊界
+- **P0** ⚙️ KQT-T7180 — 結帳金額計算 — fee 算法直接改動，主流量必跑 — files: CheckoutFeeCalculator.swift, OrderSummaryView.swift
+- **P0** ⚙️ KQT-T7203 — 優惠券折抵 — coupon API 改動 — files: CouponAPI.swift
+- **P1** 🖐 KQT-T6991 — 多商品結帳 — 多筆 cart 邏輯涵蓋邊界 — files: CartViewModel.swift
 
 ### 📦 Project — KQT-R1056
-- **P0** ⚙️ KQT-T8801 — 結帳功能新版 UI — 新 UI 元件直擊
-- **P1** 🖐 KQT-T8815 — 結帳金額顯示 — 金額 footer 改動
+- **P0** ⚙️ KQT-T8801 — 結帳功能新版 UI — 新 UI 元件直擊 — files: CheckoutBottomSheet.swift
+- **P1** 🖐 KQT-T8815 — 結帳金額顯示 — 金額 footer 改動 — files: PriceFooterView.swift
 
 ### 🚗 Trans — KQT-R1189
-- **P0** 🖐 KQT-T9012 — 接送結帳流程 — Trans 主流程直擊
-- **P1** 🖐 KQT-T9020 — 接送優惠券折抵 — coupon API 變動
+- **P0** 🖐 KQT-T9012 — 接送結帳流程 — Trans 主流程直擊 — files: TransCheckoutFlow.swift
+- **P1** 🖐 KQT-T9020 — 接送優惠券折抵 — coupon API 變動 — files: TransCouponAPI.swift
 
 ## 可一鍵觸發自動化的 case（must_run ∩ automated_case_ids）
 
@@ -134,8 +157,12 @@ KQT-T7180,KQT-T7203,KQT-T8801,...
 可直接複製貼到 single test run trigger，platform 依 repo 選 `web` / `mweb` / `api`。
 
 ## 建議補測（gap 區，跨 cycle 共通）
-- 沒有覆蓋「優惠券 + 多幣別」組合的 case
-- 建議手動補一輪 SGD / JPY 結帳
+
+> 用途：**ai_results 找不到對應 case 的 cluster** 在這裡列出，告訴 RD「這塊沒測，要人工補」。**不要**塞回上面的精選清單。
+
+- TTD 落地頁點擊 → 搜尋結果頁（`TTDLandingCoordinator.swift` 改動，現有 cycle 無覆蓋 case）
+- 搜尋結果頁的 push deeplink 進入（`SearchResultPushDeepLinkModel.swift` 改動，現有 cycle 無覆蓋 case）
+- 沒有覆蓋「優惠券 + 多幣別」組合的 case，建議手動補一輪 SGD / JPY 結帳
 
 完整 JSON：/tmp/release_impact_<task_id>.json
 ```
