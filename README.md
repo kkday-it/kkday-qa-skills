@@ -39,14 +39,31 @@ prompts/        # 啟動 prompt 範本（給人用的）
 
 ### 安裝
 
+> ⚠️ Claude Code 的 skill discovery **只掃一層** `<root>/<skill-name>/SKILL.md`，不 recursive。
+> 直接 `ln -s skills .claude/skills` 不會載入子分類目錄裡的 skill。
+> 必須**逐個 symlink 進 root**：
+
 ```bash
-# Project-level（推薦，跟 repo 走）
-git clone <this-repo> .claude-shared
-ln -s .claude-shared/skills .claude/skills
-ln -s .claude-shared/agents .claude/agents
+# Clone repo
+git clone https://github.com/kkday-it/kkday-qa-skills.git ~/kkday-qa-skills
+
+# Project-level（跟著當前 repo 走）
+mkdir -p .claude/skills .claude/agents
+for s in ~/kkday-qa-skills/skills/tools/* ~/kkday-qa-skills/skills/workflows/*; do
+  ln -s "$s" .claude/skills/
+done
+for a in ~/kkday-qa-skills/agents/*.md; do
+  ln -s "$a" .claude/agents/
+done
 
 # 或 user-level（個人全域）
-ln -s $(pwd)/skills ~/.claude/skills
+mkdir -p ~/.claude/skills ~/.claude/agents
+for s in ~/kkday-qa-skills/skills/tools/* ~/kkday-qa-skills/skills/workflows/*; do
+  ln -s "$s" ~/.claude/skills/
+done
+for a in ~/kkday-qa-skills/agents/*.md; do
+  ln -s "$a" ~/.claude/agents/
+done
 ```
 
 ### 開啟 Agent Teams（實驗性）
