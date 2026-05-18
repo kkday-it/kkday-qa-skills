@@ -37,17 +37,17 @@ prompts/        # 啟動 prompt 範本（給人用的）
 
 ## 快速開始
 
-### 安裝
+完整安裝步驟（含新手建議的「先裝哪 2 支、之後再加哪 2 支」）：[docs/getting-started.md](docs/getting-started.md)
+
+最簡 user-level 安裝（已經知道自己要全裝）：
 
 ```bash
-# Project-level（推薦，跟 repo 走）
-git clone <this-repo> .claude-shared
-ln -s .claude-shared/skills .claude/skills
-ln -s .claude-shared/agents .claude/agents
-
-# 或 user-level（個人全域）
-ln -s $(pwd)/skills ~/.claude/skills
+git clone https://github.com/kkday-it/kkday-qa-skills.git ~/Documents/kkday-qa-skills
+mkdir -p ~/.claude/skills
+for s in ~/Documents/kkday-qa-skills/skills/*/*; do ln -s "$s" ~/.claude/skills/; done
 ```
+
+開**新的** Claude Code session 即可使用。所有 skill 的索引與推薦搭配：[docs/skills-catalog.md](docs/skills-catalog.md)。
 
 ### 開啟 Agent Teams（實驗性）
 
@@ -56,14 +56,6 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 ```
 
 需要 Claude Code v2.1.32+。
-
-### 跑第一個流程
-
-```
-請執行 prd-spec-review，PRD 連結：<confluence URL>
-```
-
-Claude 會自動載入 `skills/workflows/prd-spec-review/SKILL.md`，依流程呼叫 `skills/tools/confluence-page-ops` 等工具型 skill。
 
 ## 設計原則
 
