@@ -4,6 +4,21 @@
 
 > 補充說明：每支 skill 的 frontmatter `description` 都寫好了觸發條件，使用者**不需要記 skill 名字** — 講話命中關鍵字 Claude 會自動載入。下方表格的「使用時機」是給人類快速理解，不是給 agent 的觸發規則。
 
+## 初次安裝建議
+
+**第一次裝：只接 2 支 tools** —
+- `qa-test-report-template`（測試完拿來就用，立即見效）
+- `python-pr-quality-checklist`（commit 前自檢，寫 py 的人立刻有感）
+
+**用 1-2 週後再加 meta** —
+- `task-input-readiness-check` + `dev-focus-alignment`
+
+為什麼分批？meta skill 的價值在「強迫 agent 動工前停下來確認」，但新手第一次遇到 agent 突然丟 5 段清單要你看，常見反應是「煩」而不是「對」。等踩過幾次「agent 自己腦補做錯方向 / 缺資料硬做」的坑，這時 meta skill 才會被當救星而不是路障。
+
+> 不想記順序也沒關係 — 全部裝上去後 Claude 該觸發哪支自動決定，但對新手而言「先看到正向回饋再加上把關 skill」會比較順。
+
+> 完整安裝步驟看 [getting-started.md](getting-started.md)。
+
 ## 三層分類
 
 ```
@@ -19,7 +34,7 @@ skills/
 |---|---|---|
 | [jira-bug-query](../skills/tools/jira-bug-query/SKILL.md) | 從 KKday Jira 抓 bug 並做 platform / project / assignee 多維度分析 | Atlassian MCP |
 | [qa-test-report-template](../skills/tools/qa-test-report-template/SKILL.md) | 測試完成後產 Pass / Fail 雙範本回寫到開發單 | 無（純文字範本） |
-| [python-pr-quality-checklist](../skills/tools/python-pr-quality-checklist/SKILL.md) | Python commit / PR 前自檢 7 條程式品質硬規則 | 無（建議搭配 ruff / mypy） |
+| [python-pr-quality-checklist](../skills/tools/python-pr-quality-checklist/SKILL.md) | Python commit / PR 前自檢 6 條程式品質硬規則（+ 1 條測試 code 專用） | 無（建議搭配 ruff / mypy） |
 
 ## Workflows — 流程型 skill
 
