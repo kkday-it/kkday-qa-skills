@@ -6,8 +6,8 @@ description: |
   適用情境：
   - 任務跨多個資料來源（spec 文件、target system、branch、env 配置...）
   - 預期執行時間 > 30 分鐘的長任務（避免做到一半發現缺 input 重來）
-  - planner 派任務給 implementer / investigator 前的入口檢查
-  - 自動化 / agentic 流程啟動前的 pre-flight check
+  - 把任務交給別人（同事 / 外包 / Claude / 另一個 agent）動手前的入口檢查 — 交出去前 30 秒檢查，比對方做到一半才回頭問你便宜得多
+  - 自動化流程啟動前的 pre-flight check（cron / workflow / multi-step agent）
 
   防止：agent 一頭埋下去做、做到一半發現缺資料、要嘛瞎猜要嘛中斷重啟，浪費 context 與時間。
 argument-hint: "[任務描述]"

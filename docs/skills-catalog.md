@@ -86,12 +86,13 @@ skills/
 3. **Skill 不是 Tool** — Skill 是「教 agent 怎麼做」，不是「直接做」
 4. **繁中為團隊文件主語言** — 對外輸出（Confluence / Slack）用繁中
 
-## 與 agent 角色的搭配
+## 按工作切面搭配（自行對應到你的角色 / agent）
 
-| 角色 | 推薦載入 skill |
+> 這份表格按「**工作切面**」分，不假設你有特定 agent 設置。一個人寫 code 也用得上；用 Claude Code subagent 或自組 multi-agent system 的人，把表格左欄對應到你自己的角色即可。
+
+| 工作切面 | 推薦載入 skill |
 |---|---|
-| `qa-planner` | `task-input-readiness-check` + 任務分派時引用對應 workflow |
-| `qa-investigator` | 依任務載入 `jira-bug-query` 等 tools |
-| `qa-implementer` | `dev-focus-alignment` + `python-pr-quality-checklist` + 對應 workflow |
-| `qa-reviewer` | `qa-test-report-template`（驗收時對照標準範本） |
-| `qa-evaluator` | 不依賴 skill，純獨立挑剔（見 agents/qa-evaluator.md） |
+| 出題 / 拆任務 / 派工 | `task-input-readiness-check`（派之前先確認素材齊備） |
+| 撈資料 / 查 Jira / 跑 SOP | 依任務載入 `jira-bug-query` 等 tools |
+| 寫 code / 改設定 / 動手 | `dev-focus-alignment`（動工前對焦）+ `python-pr-quality-checklist`（commit 前自檢） |
+| 驗收 / 寫測試報告 / review | `qa-test-report-template`（驗收時對照標準範本） |

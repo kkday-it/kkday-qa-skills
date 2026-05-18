@@ -6,8 +6,8 @@ description: |
   適用情境：
   - 收到「幫我加一個 X」「改一下 Y」「重構 Z」這類開發或修改需求
   - agent 即將動 code（commit / push / 改檔案）前最後一道門
-  - planner 派任務給 implementer 前的對齊
-  - reviewer 看 PR 前要確認 author 有沒有跑這個流程
+  - 把開發任務交給別人動手前的對齊（人交給人、人交給 Claude、agent spawn agent 都算）
+  - PR review 時要確認 author 動工前有沒有跑這個對焦流程
 
   防止：agent 自我腦補需求、改了一堆沒對焦的檔案、事後回不去；多人協作時上下游期望不一致。
 argument-hint: "[需求描述]"
@@ -25,7 +25,7 @@ LLM agent（包括人類工程師）拿到需求最常見的失敗模式：
 1. **腦補需求** — 把「加個 modal」自動延伸成「順便重構整個對話流」
 2. **改錯檔案** — 修改了不在原本意圖內的位置，產生意外副作用
 3. **事後解釋成本** — 沒對焦就動，事後 PR review 階段才發現方向錯，回不去
-4. **跨角色期望落差** — planner 想的、implementer 做的、reviewer 期待的，三個版本
+4. **跨人 / 跨 agent 期望落差** — 出題的人想的、動手的人做的、驗收的人期待的，三個版本
 
 對焦清單**強迫**把腦中的隱含假設外顯化，讓人類有機會在低成本時喊停。
 
@@ -122,11 +122,15 @@ task-input-readiness-check    →    dev-focus-alignment    →    動工
 
 人類只會被打斷兩次（一次補資料、一次確認方向），不會被反覆問同樣的事。
 
-## 對其他 agent / 角色的整合
+## 跨人 / 跨 agent 怎麼用
 
-- **planner → implementer**：planner 寫的 task spec 可以**直接當對焦清單第 1-3 段的輸入**，implementer 補第 4-5 段並回 planner 確認
-- **implementer → reviewer**：對焦清單可以放進 PR description，reviewer 對著清單看 PR 比看 raw diff 快
-- **agent self-loop**：如果在 agentic loop 內，把對焦清單寫進 progress 檔案，下一輪 agent 知道前一輪確認了什麼
+對焦清單是一份「**可轉手的對齊紀錄**」，不只給寫 code 的人自己看。常見三種接力場景：
+
+- **出題的人 → 動手的人**：出題方寫的 task spec / 需求文件可以**直接當對焦清單第 1-3 段的輸入**，動手方補第 4-5 段、回傳給出題方確認方向才動工
+- **動手的人 → review 的人**：對焦清單放進 PR description，reviewer 對著清單看 PR 比看 raw diff 快得多
+- **agent 自我迴圈**：如果在多輪 agent loop 內，把對焦清單寫進 progress 檔案，下一輪 agent 知道前一輪確認了什麼，不會重複對焦
+
+> 不管你是一個人寫 code、或是在用 multi-agent 系統，這份清單都用得上 — 它的價值在「把腦中假設攤開」這個動作，跟有沒有特定角色設定無關。
 
 ## 反模式
 

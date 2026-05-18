@@ -75,13 +75,17 @@ Confluence 輸出格式請見 `references/confluence-template.md`。
 
 ---
 
-## 多 Agent 協作模式（進階）
+## 多 Agent 協作模式（進階，選用）
 
-當 retro 任務複雜（>1 個專案 / >500 則 Slack 訊息）時，建議用 team 模式：
+> 一個人 / 一個 agent 順著 Step 1-5 跑就能完成這支 skill，**不需要 multi-agent 設置**。
+> 下面這段只在你有 subagent / agent team 框架（如 Claude Code 的 subagent、或自己組的 multi-agent system）時參考。
 
-- `qa-investigator`：Step 1-2（dump + 初步分類）
-- `qa-planner`：Step 3-4（交叉分析 + action items）
-- `qa-reviewer`：Step 5（產出 Confluence 前的最終 review）
-- `qa-evaluator`：獨立挑剔報告品質（避免互相取暖）
+當 retro 任務複雜（>1 個專案 / >500 則 Slack 訊息）時，可以拆成不同 agent 跑不同階段，降低單一 agent 的 context 負擔：
 
-對應 team 範本：`teams/retro-analysis-team.md`
+| Step | 適合的分工角色（自行對應到你的系統） |
+|---|---|
+| Step 1-2（dump + 初步分類） | 「查資料 / 撈 log」角色 — 大量讀但少推論 |
+| Step 3-4（交叉分析 + action items） | 「分析 / 拆解」角色 — 推論強、需要 context |
+| Step 5（最終 review） | 「驗收 / 挑剔」角色 — 跟前面分開避免互相取暖 |
+
+> 如果你用 Claude Code 原生 subagent，可分別 spawn `general-purpose` agent 做前兩階段、主 agent 收尾。如果你自己有 agent team 框架，對應到你內部的 planner / executor / reviewer 角色即可。重點是「**分階段切 context**」，不是「一定要用哪個特定 agent 名字」。
