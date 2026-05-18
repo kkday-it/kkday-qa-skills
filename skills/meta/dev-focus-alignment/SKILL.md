@@ -97,6 +97,31 @@ LLM agent（包括人類工程師）拿到需求最常見的失敗模式：
 
 但 **DB migration、API breaking change、跨服務改動、>3 個檔案的改動** 一律不可跳過。
 
+## 跟 task-input-readiness-check 的順序
+
+兩支 meta skill 在「動工前」都會跳出來，分工如下：
+
+```
+task-input-readiness-check    →    dev-focus-alignment    →    動工
+       (input pre-flight)              (方向對焦)
+```
+
+- **task-input-readiness-check**：先檢查「動工的素材齊不齊」（spec / target / env / 帳號），缺項就停下索取
+- **dev-focus-alignment（本 skill）**：素材齊備後，再列「方向對不對」的對焦清單給人類確認
+
+**為什麼分兩支不合併**：兩道門的失敗模式不同。
+- input 缺 = agent 沒材料，做了也白做（解法：跟人類索取）
+- 方向錯 = agent 有材料但理解錯（解法：把腦中假設攤開給人類驗）
+
+合成一支會讓「索取資料」和「確認方向」混在一塊，人類看不清楚要回什麼。
+
+**對 agent 的執行原則**：兩支都跳出來時，**依序執行不重複**：
+1. 先跑 task-input-readiness-check，input 齊備
+2. 再跑 dev-focus-alignment，方向對焦
+3. 兩道綠燈才動工
+
+人類只會被打斷兩次（一次補資料、一次確認方向），不會被反覆問同樣的事。
+
 ## 對其他 agent / 角色的整合
 
 - **planner → implementer**：planner 寫的 task spec 可以**直接當對焦清單第 1-3 段的輸入**，implementer 補第 4-5 段並回 planner 確認
