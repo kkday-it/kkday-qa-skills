@@ -35,7 +35,7 @@ QA 寫測試結果常見問題：
 |---|---|---|
 | 測試日期 | ✅ | `2026-05-04` |
 | 測試環境 | ✅ | `STAGE-1`、`SIT-213`、`prod`（用實際的實例編號，不只寫 stage / sit） |
-| 測試人員 | ✅ | `lance.liu@kkday.com`（人）或 `qa-bot@...`（agent） |
+| 測試人員 | ✅ | `qa-engineer@example.com`（人）或 `qa-bot@example.com`（agent） |
 | 測試範圍 | ✅ | API endpoint / UI 路徑 / feature 名稱 + 一句話功能描述 |
 | Test Case 列表 | ✅ | case ID + 說明 + 結果 |
 | 結論 | ✅ | 一行明確訊號（✅ 可合併 / 🔴 不可合併 / 🟡 部分通過待確認） |
