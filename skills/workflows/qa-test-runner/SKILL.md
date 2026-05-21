@@ -48,33 +48,54 @@ description: |
 
 ### 1. 確認參數
 
-- Case ID：`KQT-T<number>` 格式 → 用 `--caseid`
-- Feature 名稱（如 AppPay、WebLogin）→ 用 `--feature`
-- Test Run Key：`KQT-R<number>` 格式 → 加 `--testrunkey`
-- Platform：`android` / `ios` / `web` / `mweb`
-- 若用戶未提供 platform，詢問
+用戶輸入通常是 **空格分隔的 tokens**，按下列規則辨識：
+
+- `KQT-T<number>` → 加 `--caseid`（可多個，空格分隔）
+- `KQT-R<number>` → 加 `--testrunkey`
+- `android` / `ios` / `web` / `mweb` → platform，加 `--platform <plat>`
+- 其餘 token → feature 名稱（如 `AppPay`、`WebLogin`、`WebPay_playwright`），加 `--feature`
+
+**例如**：
+- `WebPay_playwright mweb KQT-R2189` → `--feature WebPay_playwright --platform mweb --testrunkey KQT-R2189`
+- `KQT-T16668 web` → `--caseid KQT-T16668 --platform web`
+- `AppPay ios` → `--feature AppPay --platform ios`
+
+不要因為 token 順序不同就漏掉某個欄位；platform 一定要明確抓出來，不要默認從 YAML 推斷。
+若用戶完全沒給 platform 才詢問。
 
 ### 2. 執行測試
 
-以 Step 0 偵測到的 `<framework_path>` 為 base：
+**從當前 cwd 自動往上找 repo root**（含 `QATest/src` 跟 `venv` 的目錄），不要寫死路徑。
+若 cwd 不在任何 kkday-QA-automation clone 內，回到 Step 0 偵測流程或向用戶詢問。
 
 ```bash
-source <framework_path>/venv/bin/activate && cd <framework_path>/QATest/src && python -m qatest run <參數>
+REPO="$(d="$PWD"; while [ "$d" != "/" ]; do [ -d "$d/QATest/src" ] && [ -d "$d/venv" ] && echo "$d" && break; d="$(dirname "$d")"; done)"
+[ -z "$REPO" ] && echo "not in a kkday-QA-automation clone" && exit 1
+source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest run <參數>
 ```
 
 參數規則：
 - KQT-T 開頭 → `--caseid KQT-T7490 KQT-T7495`（**空格分隔**，不是逗號）
 - Feature 名稱 → `--feature AppPay`
 - KQT-R 開頭 → 加 `--testrunkey KQT-R2059`
-- platform 是 `web` 或 `mweb` → 額外加 `--use_driver playwright`，並在指令最前面加 `export HEADLESS=1 &&`
-  - **正確**：`export HEADLESS=1 && source ... && python -m qatest run ...`
+- **用戶指定 platform（`web` / `mweb` / `android` / `ios`）→ 必須加 `--platform <plat>`**
+  - 單一 KQT-T 不帶 `--platform` 時，框架會讀 YAML 的 `platform:` 欄位，用戶口頭指定的 platform 會被忽略
+  - Feature / testrunkey 批量跑時，case YAML 沒鎖 `limit_test_platform` 會混 web/mweb，**一定要帶 `--platform` 強制**，否則跑錯邊
+- platform 是 `web` 或 `mweb` → 同時加 `--use_driver playwright`，並在指令最前面加 `export HEADLESS=1 &&`
+  - **正確**：`export HEADLESS=1 && source ... && python -m qatest run ... --platform mweb --use_driver playwright`
   - **錯誤**：`HEADLESS=1 source ...`（前綴方式只對 source 生效，python 讀不到）
+  - **錯誤**：少帶 `--platform mweb`（feature/testrunkey 批量會混跑）
 
 注意：
 - 順序：先 `source venv` → 再 `cd QATest/src` → 最後執行
 - 指令是 `qatest run`（不含 `test`，用 `--caseid` 雙橫線）
+- **qatest 一律前景跑，不准 background**：禁止 `run_in_background=true`，禁止 `| tail`、`&` 等任何會讓 Bash 自動 background 的 pipe/redirect，scheduler 不可靠會 queue 不啟動。直接讓 timeout 處理（單一 case 給 600000ms / 10 分鐘，批量 case 估時間給足）
 - **Web/MWeb 不受設備限制**，可以同時跑多個（web + mweb 平行、多個 case 同時跑都可以）
 - **App（iOS/Android）同一台設備同時只能跑一個**，不同設備可以平行
+- **iOS/Android 一律不允許模擬器（simulator/emulator），必須使用實體機**：
+  - iOS：禁止 `xcrun simctl boot`、禁止任何 simulator UDID；取實體機 UDID 用 `idevice_id -l` 或 `xcrun devicectl list devices`
+  - Android：禁止 `emulator -avd`、禁止 AVD UDID；取實體機 UDID 用 `adb devices`
+  - 若實體機沒接上，直接告訴用戶接設備，不要 fallback 到 simulator/emulator
 
 觀察輸出，注意 PASS/FAIL 結果。
 
@@ -127,8 +148,35 @@ source <framework_path>/venv/bin/activate && cd <framework_path>/QATest/src && p
 
 修復完成後用戶要求發 PR 時，必須：
 - 跑 `pre-commit run --all-files`
-- 使用團隊 PR 範本格式（見 memory/feedback_pr_template.md）
-- 指派 reviewer：`angelalin0822,eileen0923,ericsukkday,ethan02872`
+- PR body 套 repo `.github/pull_request_template.md` 五段式範本（**不可**用 `## Summary` + `## Test plan` 簡化格式）：
+
+  ```
+  ## Description
+  <簡單敘述這個 PR 在幹嘛>
+
+  ## Changes Made
+  ### <相對檔案路徑>
+  - <因為什麼目的而改>
+
+  ## Testing
+  - ✅ KQT-Txxxxx mweb/web/ios/android Pass
+  - ✅ pre-commit run --all-files 全 pass
+
+  ## Related Issues
+  <修了什麼 Bug or 為了哪些 case 而改>
+
+  ## Checklist
+  - [ ] 有改到底層邏輯，請記得加好Unit Test
+  - [x] 請指派相對應的Code reviewer
+  - [x] 此branch記得先與dev merge過一次 => git merge origin/master
+
+  ---
+  **註：** <額外提醒 AI Reviewer 的政策說明，例如 XPath union 保留舊段>
+
+  🤖 Generated with [Claude Code](https://claude.com/claude-code)
+  ```
+
+- 指派 reviewer：`angelalin0822,ericsukkday,ethan02872`（若用戶或 PR template 帶入 `Lance-Liu-KKday` 需移除）
 
 ## 看畫面
 
