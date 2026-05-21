@@ -120,3 +120,37 @@ description: |
 ## 通用 Coding Style
 
 縮排、import 排序、命名、pre-commit 等通用規範見 [references/coding-style.md](references/coding-style.md) 與 [Confluence Coding Style](https://kkday.atlassian.net/wiki/spaces/QS/pages/473661593/Coding+Style)。
+
+## 發 PR
+
+用戶要求發 PR 時，必須：
+- 跑 `pre-commit run --all-files`
+- PR body 套 repo `.github/pull_request_template.md` 五段式範本（**不可**用 `## Summary` + `## Test plan` 簡化格式）：
+
+  ```
+  ## Description
+  <簡單敘述這個 PR 在幹嘛>
+
+  ## Changes Made
+  ### <相對檔案路徑>
+  - <因為什麼目的而改>
+
+  ## Testing
+  - ✅ KQT-Txxxxx mweb/web/ios/android Pass
+  - ✅ pre-commit run --all-files 全 pass
+
+  ## Related Issues
+  <修了什麼 Bug or 為了哪些 case 而改>
+
+  ## Checklist
+  - [ ] 有改到底層邏輯，請記得加好Unit Test
+  - [x] 請指派相對應的Code reviewer
+  - [x] 此branch記得先與dev merge過一次 => git merge origin/master
+
+  ---
+  **註：** <額外提醒 AI Reviewer 的政策說明，例如 XPath union 保留舊段>
+
+  🤖 Generated with [Claude Code](https://claude.com/claude-code)
+  ```
+
+- 指派 reviewer：`angelalin0822,ericsukkday,ethan02872`（若用戶或 PR template 帶入 `Lance-Liu-KKday` 需移除）
