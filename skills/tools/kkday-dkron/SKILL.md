@@ -16,7 +16,7 @@ description: 安全操作 kkday Dkron 排程的「會改 server 的動作」— 
 | 環境 | Base URL | 認證 |
 |---|---|---|
 | stage | `https://dkron.stage.kkday.com` | 目前**無認證**,GET/POST/PUT 直通 |
-| prod | `https://dkron.prod.kkday.com` | 預期需要(SSO 或 X-Dkron-Token);若 401/403 請使用者提供 |
+| prod | `https://dkron.kkday.com` (UI: `https://dkron.kkday.com/ui/#/`) | 預期需要(SSO 或 X-Dkron-Token);若 401/403 請使用者提供 |
 
 寫 script 前先設變數,後面所有指令都用變數:
 
@@ -54,7 +54,7 @@ GET 類動作直接執行不囉嗦。但任何 **修改 spec** 或 **觸發 run*
 2. 等到使用者明確同意(「OK」「跑吧」「yes」「好」)才執行
 
 ### 2. prod 環境兩道關
-任何指向 `dkron.prod.kkday.com` 的 POST/PUT 都要二次確認,並提醒這次 run 會打到 prod DB / Redis / 真實使用者資料。
+任何指向 `dkron.kkday.com`(prod) 的 POST/PUT 都要二次確認,並提醒這次 run 會打到 prod DB / Redis / 真實使用者資料。
 
 ### 3. Placeholder command 警告
 kkday 有些 manual job 的 command 寫死 placeholder,例如:
