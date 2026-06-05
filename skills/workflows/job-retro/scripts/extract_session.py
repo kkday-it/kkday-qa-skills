@@ -57,7 +57,7 @@ CORRECTION_HINTS = [
 
 ROLE_SIGNALS = {
     "qa": [
-        "test", "ttest case", "testcase", "regression", "zephyr", "tcms",
+        "test", "test case", "testcase", "regression", "zephyr", "tcms",
         "jira", "bug", "qa-automation", "playwright", "appium", "e2e",
         "assertion", "test run", "test cycle", "coverage", "live bug",
         "smoke", "verify", "驗收", "測試", "測資", "缺陷", "回歸",
@@ -298,7 +298,8 @@ def extract(path, full=False):
     mcp_servers = Counter()
     commands = []              # bash commands
     files_touched = defaultdict(set)  # path -> {Edit/Write/...}
-    tool_errors = []           # {tool, snippet, turn_index}
+    tool_errors = []           # {turn, tool, snippet}
+    tool_use_names = {}        # tool_use_id -> tool name (to label errors)
     subagents = []             # Task/Agent spawns with prompts
     result_lines = []          # assistant "result:"/"failed:"/"needs input:" lines
 
@@ -384,7 +385,9 @@ def extract(path, full=False):
                             if _is_error_result(b):
                                 snip = _result_snippet(b)
                                 tool_errors.append({
-                                    "turn": turn_index, "snippet": _trim(snip, 300),
+                                    "turn": turn_index,
+                                    "tool": tool_use_names.get(b.get("tool_use_id"), "?"),
+                                    "snippet": _trim(snip, 300),
                                 })
 
             # --- assistant messages ---
@@ -405,6 +408,8 @@ def extract(path, full=False):
                             continue
                         name = b.get("name", "?")
                         tool_uses[name] += 1
+                        if b.get("id"):
+                            tool_use_names[b["id"]] = name
                         inp = b.get("input", {}) or {}
                         if name.startswith("mcp__"):
                             mcp_servers["__".join(name.split("__")[:2])] += 1
@@ -538,8 +543,16 @@ def fmt_dur(sec):
     return f"{s}s"
 
 
-def render_md(d, job_state=None):
+def render_md(d, job_state=None, full=False):
     L = []
+    # honour --full: with it, render the complete lists; without, cap the
+    # markdown for readability and note how many were elided.
+    def lim(seq, n):
+        return seq if full else seq[:n]
+
+    def more(total, n):
+        return [] if (full or total <= n) else [f"- … +{total - n} more"]
+
     m = d["meta"]
     L.append(f"# Session retro digest — `{m['session_id'][:8]}`")
     L.append("")
@@ -595,28 +608,30 @@ def render_md(d, job_state=None):
 
     if d["tool_errors"]:
         L.append("## Tool errors (retries / friction)")
-        for e in d["tool_errors"][:30]:
-            L.append(f"- @turn {e['turn']}: {e['snippet']}")
-        if len(d["tool_errors"]) > 30:
-            L.append(f"- … +{len(d['tool_errors'])-30} more")
+        for e in lim(d["tool_errors"], 30):
+            L.append(f"- @turn {e['turn']} (`{e.get('tool','?')}`): {e['snippet']}")
+        L += more(len(d["tool_errors"]), 30)
         L.append("")
 
     L.append("## Tool usage")
-    L.append("- " + ", ".join(f"`{k}`×{v}" for k, v in d["tool_usage"].items()) or "- (none)")
+    L.append("- " + (", ".join(f"`{k}`×{v}" for k, v in d["tool_usage"].items()) or "(none)"))
     if d["mcp_servers"]:
         L.append("- MCP: " + ", ".join(f"`{k}`×{v}" for k, v in d["mcp_servers"].items()))
     L.append("")
 
     if d["subagents"]:
         L.append("## Subagents spawned")
-        for s in d["subagents"][:30]:
+        for s in lim(d["subagents"], 30):
             L.append(f"- `{s['type']}` @turn {s['turn']}: {s['desc']}")
+        L += more(len(d["subagents"]), 30)
         L.append("")
 
     if d["files_touched"]:
         L.append("## Files touched")
-        for fp, ops in list(d["files_touched"].items())[:60]:
+        items = list(d["files_touched"].items())
+        for fp, ops in lim(items, 60):
             L.append(f"- {fp}  ({','.join(ops)})")
+        L += more(len(items), 60)
         L.append("")
 
     if d["result_lines"]:
@@ -645,7 +660,7 @@ def main():
     path, job_state = resolve_selector(args.selector)
     log(f"[extract] transcript: {path}")
     d = extract(path, full=args.full)
-    md = render_md(d, job_state)
+    md = render_md(d, job_state, full=args.full)
 
     if args.json_out:
         with open(args.json_out, "w") as f:

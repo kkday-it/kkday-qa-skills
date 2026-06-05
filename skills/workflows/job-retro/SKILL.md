@@ -91,12 +91,18 @@ Step 7  （進階）跨 session 彙整：多個 digest 一起看，找反覆模�
 
 ## Step 0 — 選 session
 
+> **腳本路徑依安裝位置而定**（user-level `~/.claude/skills/` 或 project-level `.claude/skills/`）。
+> 先解析一次再用，下面的指令都以 `$SKILL` 代稱：
+> ```bash
+> SKILL=$(ls -d ~/.claude/skills/job-retro .claude/skills/job-retro 2>/dev/null | head -1)
+> ```
+
 不確定要 retro 哪個時，先列出來：
 
 ```bash
-python3 ~/.claude/skills/job-retro/scripts/find_sessions.py            # 全部，最近活動排前
-python3 ~/.claude/skills/job-retro/scripts/find_sessions.py --stopped  # 只列閒置 >24h（已結束）
-python3 ~/.claude/skills/job-retro/scripts/find_sessions.py --cwd <專案路徑>
+python3 "$SKILL"/scripts/find_sessions.py            # 全部，最近活動排前
+python3 "$SKILL"/scripts/find_sessions.py --stopped  # 只列閒置 >24h（已結束）
+python3 "$SKILL"/scripts/find_sessions.py --cwd <專案路徑>
 ```
 
 輸出最左欄 `SELECTOR` 就是下一步要餵給 `extract_session.py` 的值。
@@ -109,7 +115,7 @@ python3 ~/.claude/skills/job-retro/scripts/find_sessions.py --cwd <專案路徑>
 ## Step 1 — 萃取結構化 digest
 
 ```bash
-python3 ~/.claude/skills/job-retro/scripts/extract_session.py <SELECTOR> \
+python3 "$SKILL"/scripts/extract_session.py <SELECTOR> \
   --json <jobdir>/tmp/retro.json --md <jobdir>/tmp/retro.md
 ```
 

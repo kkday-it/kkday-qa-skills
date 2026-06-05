@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -145,7 +146,20 @@ def main():
         rows = [r for r in rows if r["stopped"]]
     if args.cwd:
         c = os.path.abspath(args.cwd)
-        rows = [r for r in rows if r["cwd"] and os.path.abspath(r["cwd"]).startswith(c)]
+        # job rows store a real cwd path; orphan rows store the Claude Code
+        # project-slug (e.g. "-Users-me-proj"). Match both, and require a path
+        # boundary so /proj doesn't also match /proj-other.
+        c_slug = re.sub(r"[^0-9A-Za-z]+", "-", c)
+
+        def _under(rc):
+            if not rc:
+                return False
+            rp = os.path.abspath(rc)
+            if rp == c or rp.startswith(c + os.sep):
+                return True
+            return rc == c_slug or rc.startswith(c_slug + "-")
+
+        rows = [r for r in rows if _under(r["cwd"])]
 
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
