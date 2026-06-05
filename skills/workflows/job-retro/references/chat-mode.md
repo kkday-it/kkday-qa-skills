@@ -8,8 +8,9 @@ job-retro 的第二種模式。用在**沒有本機檔案存取**的環境(claud
 直接「重讀我們這段對話」來分析。
 
 > **想 retro 的是「歷史聊天」而非當前對話?** claude.ai / 桌面版聊天的歷史內容存在雲端、
-> 本機讀不到(本機只有對話 ID 與快取)。請使用者先到 claude.ai → Settings 匯出資料,
-> 拿到 `conversations.json`,在有 python 的環境跑:
+> 本機讀不到(本機只有對話 ID 與快取)。請使用者先匯出資料:claude.ai 或桌面版 App →
+> **左下角頭像 → Settings → Privacy → "Export data"**(會寄 email 連結,點開下載 zip,
+> 裡面是 `conversations.json` 或 `.jsonl`,帳號層級含所有對話)。拿到後在有 python 的環境跑:
 > ```bash
 > python3 scripts/extract_chat_export.py <conversations.json> list      # 列出所有對話
 > python3 scripts/extract_chat_export.py <conversations.json> <index>   # 選一段做 retro

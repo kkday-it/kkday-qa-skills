@@ -2,8 +2,10 @@
 """
 extract_chat_export.py — retro a claude.ai / Claude Desktop *chat* conversation
 from a data export, since chat history is NOT stored locally (it lives in the
-cloud; see references/chat-mode.md). Get the file via claude.ai →
-Settings → Privacy/Account → Export data; the zip contains `conversations.json`.
+cloud; see references/chat-mode.md). Get the file from claude.ai OR the Claude
+Desktop app: 左下角頭像 → Settings → Privacy → "Export data" (emails a link, not an
+instant download). The zip holds `conversations.json` (or `.jsonl`) — an
+account-level dump of ALL conversations, including Desktop chats.
 
 This complements extract_session.py (which reads Claude Code's local
 ~/.claude/projects/*.jsonl). Same retro signals, different input shape: a chat
@@ -56,14 +58,46 @@ def msg_has_attachment(m):
     return False
 
 
+def _as_conv_list(data):
+    """Normalise a parsed JSON value into a list of conversation objects."""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for k in ("conversations", "data"):
+            if isinstance(data.get(k), list):
+                return data[k]
+        # a bare single conversation object (not a wrapper)
+        if "chat_messages" in data or "uuid" in data:
+            return [data]
+    return None
+
+
 def load_conversations(path):
-    with open(path, errors="replace") as f:
-        data = json.load(f)
-    if isinstance(data, dict):  # some exports wrap in {"conversations": [...]}
-        data = data.get("conversations", data.get("data", []))
-    if not isinstance(data, list):
-        sys.exit("Unexpected conversations.json shape (expected a list).")
-    return data
+    # claude.ai exports have shown up as both conversations.json (one big JSON
+    # array, or {"conversations":[...]}) and conversations.jsonl (one
+    # conversation object per line). Handle all of them.
+    raw = open(path, errors="replace").read().strip()
+    if not raw:
+        sys.exit(f"{path} is empty.")
+    try:
+        got = _as_conv_list(json.loads(raw))
+        if got is not None:
+            return got
+    except json.JSONDecodeError:
+        pass
+    # JSON Lines fallback (one conversation per line)
+    convs = []
+    for line in raw.splitlines():
+        line = line.strip().rstrip(",")
+        if not line or line in ("[", "]"):
+            continue
+        try:
+            convs.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    if convs:
+        return convs
+    sys.exit("Could not parse export as a JSON array or JSON Lines.")
 
 
 def pick(convs, selector):
