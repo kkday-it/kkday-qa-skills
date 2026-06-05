@@ -1,18 +1,6 @@
 ---
 name: job-retro
-description: |
-  對「一個 AI 工作 session / 背景 job」做回顧（retrospective）：把整段 session 的 transcript 解析成結構化摘要，萃取出過程做了哪些事、人類在哪裡不斷修正方向、踩了哪些坑，然後轉成可重用的知識——更新 memory、改進 skill / workflow，並可輸出成 Confluence 工作紀錄與 lesson learned。也支援跨 session 彙整，找出反覆出現的模式。
-
-  一開始會先用 prompt-engineering 的角度辨識這個 session 的角色（QA / engineer / data analyst / 混合），再依角色決定知識要回饋到哪裡。
-
-  適用情境（即使沒點名 skill 也應觸發）：
-  - 使用者說「幫這個 session / job 做 retro」、「回顧一下剛剛這個任務」、「這次做了什麼、修正了什麼」
-  - 使用者說「從這個 session 萃取知識」、「把這次的教訓記下來 / 更新 skill / 更新 memory」
-  - 使用者說「把這個 job 的過程整理成 Confluence 工作紀錄 / lesson learned」
-  - 使用者給一個 job short id、session id、transcript 路徑，或說「最近那個 xxx 任務」
-  - 使用者想「跨多個 session 找重複踩的坑 / 該沉澱成 skill 的東西」
-
-  核心理念：session 本身就是最好的訓練資料——做完不要丟掉，從裡面把「不斷修正的地方」抽出來變成下次不用再修正的東西。
+description: 對一個 AI 工作 session / 背景 job 做回顧(retrospective):解析 transcript 成結構化摘要,萃取「做了什麼、人在哪裡不斷修正、踩了什麼坑」,轉成可重用知識——更新 memory、改進 skill/workflow、產出 Confluence 工作紀錄與 lesson learned,並支援跨 session 找重複模式。觸發詞:「幫這個 session/job 做 retro」「回顧剛剛的任務 / 這次修正了什麼」「從 session 萃取知識、把教訓記下來、更新 skill/memory」「把過程整理成 Confluence」,或給 job id / session id / transcript 路徑 /「最近那個 xxx 任務」。純資訊查詢不觸發。
 ---
 
 # Job Retro Skill
