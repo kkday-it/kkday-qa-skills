@@ -7,6 +7,10 @@ cloud; see references/chat-mode.md). Export is only on the claude.ai WEBSITE
 your initials (bottom-left) → Settings → Privacy → "Export data". It emails a
 link (not an instant download); the zip holds `conversations.json` (or `.jsonl`)
 — an account-level dump of ALL conversations (incl. those made in Desktop).
+NOTE: only personal Free/Pro/Max accounts can self-export. On Team/Enterprise
+(e.g. kkday) individual members CANNOT export; only the org Primary Owner can,
+and only the whole org. So corporate members usually can't obtain this file —
+use the live chat mode (references/chat-mode.md) or Claude Code instead.
 Authoritative steps: https://support.claude.com/en/articles/9450526
 
 This complements extract_session.py (which reads Claude Code's local
