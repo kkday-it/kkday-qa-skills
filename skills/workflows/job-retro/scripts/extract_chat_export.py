@@ -107,11 +107,13 @@ def load_conversations(path):
 
 
 def pick(convs, selector):
-    # index
+    # index — a numeric selector is always an index; fail clearly if out of
+    # range rather than silently falling through to uuid/name matching.
     if selector.isdigit():
         i = int(selector)
         if 0 <= i < len(convs):
             return convs[i]
+        sys.exit(f"Index {i} out of range (0..{len(convs) - 1}). Run `list` to see indices.")
     # uuid full / prefix
     for c in convs:
         if str(c.get("uuid", "")).startswith(selector):
@@ -148,6 +150,7 @@ def extract(conv, full=False):
     human_prompts, corrections, blob = [], [], []
     n_human = n_assistant = n_attach = 0
     turn = 0  # assistant turns so far (mirror extract_session's turn_index)
+    seen_first_human = False  # the first human message is the goal, not a correction
 
     for m in msgs:
         sender = m.get("sender") or m.get("role")
@@ -166,8 +169,10 @@ def extract(conv, full=False):
         if not t and not msg_has_attachment(m):
             continue
         human_prompts.append({"turn": turn, "text": _trim(t, 600)})
-        if turn == 0:
-            continue  # first ask isn't a correction
+        if not seen_first_human:
+            seen_first_human = True
+            continue  # first human message is the goal, not a correction
+                      # (robust even if the export starts with an assistant msg)
         has_att = msg_has_attachment(m)
         if has_att:
             n_attach += 1

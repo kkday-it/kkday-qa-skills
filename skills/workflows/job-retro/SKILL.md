@@ -24,7 +24,7 @@ skill 一啟動,先做這個檢查再開工,並**把判斷結果講給使用者�
    - 讀得到 → **session-file 模式**(往下 Step 0–7 跑腳本)。
    - 讀不到(claude.ai / 純聊天,沒有檔案工具)→ **chat 模式**(讀 `references/chat-mode.md`,回顧當前對話,不跑腳本)。
 3. **灰色地帶**(在 Claude Code 裡又說「retro 這段對話」):兩者皆可;預設走 session-file + `latest` selector(當前 session 就是最新那個 jsonl),結果最完整。
-4. **要 retro 的是 claude.ai / 桌面版「聊天」的歷史對話**(不是 Claude Code session):本機讀不到,請使用者先從 claude.ai 匯出資料拿 `conversations.json`,再跑 `scripts/extract_chat_export.py <conversations.json> list` 選一段 → **chat-export 模式**。
+4. **要 retro 的是 claude.ai / 桌面版「聊天」的歷史對話**(不是 Claude Code session):本機讀不到,請使用者先從 claude.ai 匯出資料拿 `conversations.json` → **chat-export 模式**。**兩道指令**:先 `extract_chat_export.py <conversations.json> list` 看清單,再 `extract_chat_export.py <conversations.json> <index>` 對選定那段產 digest(僅 `list` 不會產出 retro)。
 
 宣告範例:「偵測到我在 Claude Code、讀得到本機 transcript → 用 **session-file 模式**,先列 session。」
 
