@@ -1,6 +1,16 @@
 ---
 name: kkday-dkron
-description: 安全操作 kkday Dkron 排程的「會改 server 的動作」— 手動觸發 / 啟用 / 停用 / 修改某個 cron job 的 command 或 schedule。**只在使用者明確指示要對某個具體 job 執行動作時觸發**,例如:「幫我跑 api-vtrans-xxx」「stage 部署完要觸發 import-price」「把 svc-vtrans-yyy enable 起來跑一次」「改 zzz 的 keys 跑一下」,或貼出 dkron.\*.kkday.com 的 job URL 並表達想執行/啟用/停用該 job。**不要在純資訊查詢時觸發**:列 job、搜尋 job、看 spec、看 executions、解釋 Dkron 是什麼、比較 Dkron vs Airflow 等都直接用 curl 回答即可,別載這個 skill。
+description: |
+  安全操作 kkday Dkron 排程的「會改 server 的動作」：手動觸發 / 啟用 / 停用 / 修改某個 cron job 的 command 或 schedule。
+
+  適用情境（只在使用者明確要對某個具體 job 執行動作時觸發）：
+  - 「幫我跑 api-vtrans-xxx」、「stage 部署完要觸發 import-price」
+  - 「把 svc-vtrans-yyy enable 起來跑一次」、「改 zzz 的 keys 跑一下」
+  - 貼出 dkron.*.kkday.com 的 job URL 並表達想執行 / 啟用 / 停用
+
+  不要觸發（純資訊查詢直接用 curl 回答即可，別載這個 skill）：列 job、搜尋 job、看 spec、看 executions、解釋 Dkron 是什麼、比較 Dkron vs Airflow。
+
+  必要工具：curl、jq、bash
 ---
 
 # kkday Dkron 操作指引
