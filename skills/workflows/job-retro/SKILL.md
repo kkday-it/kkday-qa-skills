@@ -7,12 +7,13 @@ description: 對一個 AI session / job 做回顧:解析 transcript 萃取「做
 
 把一個（或多個）AI 工作 session 的完整歷程，變成「下次更省事」的知識。
 
-## 兩種模式
+## 三種模式
 
 | 模式 | 用在 | 輸入 | 入口 |
 |------|------|------|------|
-| **預設（session-file）** | Claude Code（CLI / IDE / 桌面版 Code 模式）——能讀本機檔、有 Bash | `~/.claude` 下的 transcript 檔 | 下面 Step 0–7 + `scripts/` |
-| **chat** | claude.ai / Claude 桌面版聊天——無本機檔存取,或要回顧「當前這段對話」 | 對話本身（已在 context 裡） | 讀 `references/chat-mode.md`,不跑腳本 |
+| **預設（session-file）** | Claude Code（CLI / IDE / 桌面版 Code 模式）——能讀本機檔、有 Bash | `~/.claude` 下的 transcript 檔 | 下面 Step 0–7 + `scripts/extract_session.py` |
+| **chat-export** | 要離線 retro claude.ai / 桌面版**聊天的歷史對話**(本機讀不到,需先從 claude.ai 匯出資料),且能跑 python | `conversations.json`(claude.ai 匯出) | `scripts/extract_chat_export.py`,流程同 Step 2–7 |
+| **chat（即時）** | claude.ai / 桌面版聊天當下——無本機檔存取,要回顧「當前這段對話」 | 對話本身（已在 context 裡） | 讀 `references/chat-mode.md`,不跑腳本 |
 
 ### 模式自我檢查（觸發後的第一件事）
 
@@ -23,6 +24,7 @@ skill 一啟動,先做這個檢查再開工,並**把判斷結果講給使用者�
    - 讀得到 → **session-file 模式**(往下 Step 0–7 跑腳本)。
    - 讀不到(claude.ai / 純聊天,沒有檔案工具)→ **chat 模式**(讀 `references/chat-mode.md`,回顧當前對話,不跑腳本)。
 3. **灰色地帶**(在 Claude Code 裡又說「retro 這段對話」):兩者皆可;預設走 session-file + `latest` selector(當前 session 就是最新那個 jsonl),結果最完整。
+4. **要 retro 的是 claude.ai / 桌面版「聊天」的歷史對話**(不是 Claude Code session):本機讀不到,請使用者先從 claude.ai 匯出資料拿 `conversations.json`,再跑 `scripts/extract_chat_export.py <conversations.json> list` 選一段 → **chat-export 模式**。
 
 宣告範例:「偵測到我在 Claude Code、讀得到本機 transcript → 用 **session-file 模式**,先列 session。」
 

@@ -7,6 +7,15 @@ job-retro 的第二種模式。用在**沒有本機檔案存取**的環境(claud
 它已經在你的 context 裡。所以這個模式**不解析檔案、不碰 `~/.claude`、不執行任何腳本**,
 直接「重讀我們這段對話」來分析。
 
+> **想 retro 的是「歷史聊天」而非當前對話?** claude.ai / 桌面版聊天的歷史內容存在雲端、
+> 本機讀不到(本機只有對話 ID 與快取)。請使用者先到 claude.ai → Settings 匯出資料,
+> 拿到 `conversations.json`,在有 python 的環境跑:
+> ```bash
+> python3 scripts/extract_chat_export.py <conversations.json> list      # 列出所有對話
+> python3 scripts/extract_chat_export.py <conversations.json> <index>   # 選一段做 retro
+> ```
+> 它會產出和本檔同款的 digest(corrections / 角色 / lessons),之後接 Step 4–5 分析與沉澱。
+
 > 怎麼選模式:能讀本機 `~/.claude/projects/*.jsonl`(有 Bash / 在 Claude Code)→ 用預設模式
 > 跑 `scripts/extract_session.py`。否則(純 chat 環境,或要回顧當前對話)→ 用這個 chat mode。
 
