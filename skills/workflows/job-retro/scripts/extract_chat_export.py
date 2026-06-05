@@ -2,10 +2,12 @@
 """
 extract_chat_export.py — retro a claude.ai / Claude Desktop *chat* conversation
 from a data export, since chat history is NOT stored locally (it lives in the
-cloud; see references/chat-mode.md). Get the file from claude.ai OR the Claude
-Desktop app: 左下角頭像 → Settings → Privacy → "Export data" (emails a link, not an
-instant download). The zip holds `conversations.json` (or `.jsonl`) — an
-account-level dump of ALL conversations, including Desktop chats.
+cloud; see references/chat-mode.md). Export is only on the claude.ai WEBSITE
+(the Desktop app's Settings has no export option): log in at claude.ai → click
+your initials (bottom-left) → Settings → Privacy → "Export data". It emails a
+link (not an instant download); the zip holds `conversations.json` (or `.jsonl`)
+— an account-level dump of ALL conversations (incl. those made in Desktop).
+Authoritative steps: https://support.claude.com/en/articles/9450526
 
 This complements extract_session.py (which reads Claude Code's local
 ~/.claude/projects/*.jsonl). Same retro signals, different input shape: a chat
