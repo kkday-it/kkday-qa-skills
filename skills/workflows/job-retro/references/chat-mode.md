@@ -7,6 +7,21 @@ job-retro 的第二種模式。用在**沒有本機檔案存取**的環境(claud
 它已經在你的 context 裡。所以這個模式**不解析檔案、不碰 `~/.claude`、不執行任何腳本**,
 直接「重讀我們這段對話」來分析。
 
+> **想 retro 的是「歷史聊天」而非當前對話?** claude.ai / 桌面版聊天的歷史內容存在雲端、
+> 本機讀不到(本機只有對話 ID 與快取)。**取得 conversations.json 要看帳號類型:**
+> - **個人帳號(Free/Pro/Max)**:claude.ai 網頁 → 左下頭像 → Settings → Privacy → **Export data**
+>   (寄 email 連結,zip 內 `conversations.json`/`.jsonl`;官方 support.claude.com/en/articles/9450526)。
+> - **Team/Enterprise 企業帳號(如 kkday)**:個人成員**無法自助匯出**;只有組織 Primary Owner 能匯出
+>   整個組織資料(Organization settings → Data and privacy → Export Data)。**所以企業成員實務上拿不到**
+>   ——這種情況請改用上面的「即時 chat 模式」回顧當下對話,或用 Claude Code 做 session-file retro。
+>
+> 真的拿到 export 檔後,在有 python 的環境跑:
+> ```bash
+> python3 scripts/extract_chat_export.py <conversations.json> list      # 列出所有對話
+> python3 scripts/extract_chat_export.py <conversations.json> <index>   # 選一段做 retro
+> ```
+> 它會產出和本檔同款的 digest(corrections / 角色 / lessons),之後接 Step 4–5 分析與沉澱。
+
 > 怎麼選模式:能讀本機 `~/.claude/projects/*.jsonl`(有 Bash / 在 Claude Code)→ 用預設模式
 > 跑 `scripts/extract_session.py`。否則(純 chat 環境,或要回顧當前對話)→ 用這個 chat mode。
 

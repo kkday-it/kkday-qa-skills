@@ -1,30 +1,19 @@
 ---
 name: job-retro
-description: |
-  對「一個 AI 工作 session / 背景 job」做回顧（retrospective）：把整段 session 的 transcript 解析成結構化摘要，萃取出過程做了哪些事、人類在哪裡不斷修正方向、踩了哪些坑，然後轉成可重用的知識——更新 memory、改進 skill / workflow，並可輸出成 Confluence 工作紀錄與 lesson learned。也支援跨 session 彙整，找出反覆出現的模式。
-
-  一開始會先用 prompt-engineering 的角度辨識這個 session 的角色（QA / engineer / data analyst / 混合），再依角色決定知識要回饋到哪裡。
-
-  適用情境（即使沒點名 skill 也應觸發）：
-  - 使用者說「幫這個 session / job 做 retro」、「回顧一下剛剛這個任務」、「這次做了什麼、修正了什麼」
-  - 使用者說「從這個 session 萃取知識」、「把這次的教訓記下來 / 更新 skill / 更新 memory」
-  - 使用者說「把這個 job 的過程整理成 Confluence 工作紀錄 / lesson learned」
-  - 使用者給一個 job short id、session id、transcript 路徑，或說「最近那個 xxx 任務」
-  - 使用者想「跨多個 session 找重複踩的坑 / 該沉澱成 skill 的東西」
-
-  核心理念：session 本身就是最好的訓練資料——做完不要丟掉，從裡面把「不斷修正的地方」抽出來變成下次不用再修正的東西。
+description: 對一個 AI session / job 做回顧:解析 transcript 萃取「做了什麼、哪裡反覆修正、踩了什麼坑」,轉成可重用知識(memory / skill / Confluence),並支援跨 session 找重複模式。觸發:幫 session/job 做 retro、回顧剛剛的任務、萃取教訓、整理成 Confluence,或給 job/session id。
 ---
 
 # Job Retro Skill
 
 把一個（或多個）AI 工作 session 的完整歷程，變成「下次更省事」的知識。
 
-## 兩種模式
+## 三種模式
 
 | 模式 | 用在 | 輸入 | 入口 |
 |------|------|------|------|
-| **預設（session-file）** | Claude Code（CLI / IDE / 桌面版 Code 模式）——能讀本機檔、有 Bash | `~/.claude` 下的 transcript 檔 | 下面 Step 0–7 + `scripts/` |
-| **chat** | claude.ai / Claude 桌面版聊天——無本機檔存取,或要回顧「當前這段對話」 | 對話本身（已在 context 裡） | 讀 `references/chat-mode.md`,不跑腳本 |
+| **預設（session-file）** | Claude Code（CLI / IDE / 桌面版 Code 模式）——能讀本機檔、有 Bash | `~/.claude` 下的 transcript 檔 | 下面 Step 0–7 + `scripts/extract_session.py` |
+| **chat-export** | 要離線 retro claude.ai / 桌面版**聊天的歷史對話**(本機讀不到,需先從 claude.ai 匯出資料),且能跑 python | `conversations.json`(claude.ai 匯出) | `scripts/extract_chat_export.py`,流程同 Step 2–7 |
+| **chat（即時）** | claude.ai / 桌面版聊天當下——無本機檔存取,要回顧「當前這段對話」 | 對話本身（已在 context 裡） | 讀 `references/chat-mode.md`,不跑腳本 |
 
 ### 模式自我檢查（觸發後的第一件事）
 
@@ -35,6 +24,7 @@ skill 一啟動,先做這個檢查再開工,並**把判斷結果講給使用者�
    - 讀得到 → **session-file 模式**(往下 Step 0–7 跑腳本)。
    - 讀不到(claude.ai / 純聊天,沒有檔案工具)→ **chat 模式**(讀 `references/chat-mode.md`,回顧當前對話,不跑腳本)。
 3. **灰色地帶**(在 Claude Code 裡又說「retro 這段對話」):兩者皆可;預設走 session-file + `latest` selector(當前 session 就是最新那個 jsonl),結果最完整。
+4. **要 retro 的是 claude.ai / 桌面版「聊天」的歷史對話**(不是 Claude Code session):本機讀不到,請使用者先從 claude.ai 匯出資料拿 `conversations.json` → **chat-export 模式**。**兩道指令**:先 `extract_chat_export.py <conversations.json> list` 看清單,再 `extract_chat_export.py <conversations.json> <index>` 對選定那段產 digest(僅 `list` 不會產出 retro)。
 
 宣告範例:「偵測到我在 Claude Code、讀得到本機 transcript → 用 **session-file 模式**,先列 session。」
 
