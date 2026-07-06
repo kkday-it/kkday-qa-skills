@@ -1,0 +1,15 @@
+[project]
+name = "kkday-qa-tools-mcp"
+version = "0.1.0"
+description = "MCP server wrapping KKday AI Studio Tools panel endpoints — add points / coupons / experience / tier / orders / redeem etc."
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=0.2.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+kkday-qa-tools-mcp = "server:main"
+
+[tool.setuptools]
+py-modules = ["server"]

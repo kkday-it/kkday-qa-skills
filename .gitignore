@@ -19,3 +19,8 @@ Thumbs.db
 # Temp
 tmp/
 *.tmp
+
+# Python (mcp_servers)
+__pycache__/
+*.py[cod]
+.venv/
