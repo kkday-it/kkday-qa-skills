@@ -1,5 +1,8 @@
 # kkday-qa-tools MCP Server
 
+> 🤖 **要 AI 幫你裝？** 直接對你的 AI 助手說「照這個 repo 幫我裝 kkday-qa-tools MCP」，
+> 它會讀 [`CLAUDE.md`](./CLAUDE.md)（給 AI 的安裝 SOP）自動幫你加上。以下文件是給人讀的完整說明。
+
 把 [ai-studio 小工具（Tools 面板）](http://autotest-service.sit.kkday.com:8081/ai_studio/dashboard?dialog=tools) 的後端 API 包成 **MCP tools**，讓任何支援 MCP 的 LLM client（Claude Code / Claude Desktop / Cursor / Zed 等）用自然語言直接呼叫，取代開網頁點 UI 一個個做的流程。
 
 **範例對話**：

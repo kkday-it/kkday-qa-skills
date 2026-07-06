@@ -12,10 +12,13 @@ KKday QA 團隊用這個 repo 把日常 QA 工作（bug triage、retro、PRD rev
 skills/tools/       工具型 skill（Jira、Confluence、Slack、Jenkins...）
 skills/workflows/   流程型 skill（retro、PRD review、bug triage...）
 skills/meta/        給 agent team 自己用（progress 追蹤、handoff、自評）
+mcp_servers/        自架 MCP server（用自然語言呼叫 QA 工具）
 agents/             subagent 角色定義
 teams/              預組合 team 範本
 prompts/            啟動 prompt 範本
 ```
+
+> 使用者要你**幫他安裝某個 MCP server**時：到 `mcp_servers/<name>/CLAUDE.md` 讀該 server 專屬的安裝 SOP，照著動手做。例如 `mcp_servers/kkday_qa_tools/CLAUDE.md`。
 
 ## Non-Negotiable Rules
 
