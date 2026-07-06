@@ -26,13 +26,7 @@ uv --version
 - 有 → 下一步。
 - 沒有 → 幫使用者裝（先徵得同意）：`curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-### 2. 跟使用者要一個值：他自己的 admin `user_id`
-
-- 呼叫 backend `/api/tools/*` 需要 **admin 權限**的 `X-User-Id`。
-- **一定要問使用者他本人的 admin user_id，不要沿用 README 範例裡的值**（那是別人的，填了會用錯身分寫入 history）。
-- 其他 env 都有合理預設，不用問。
-
-### 3. 寫入設定
+### 2. 寫入設定
 
 **Claude Code**（優先用指令，比手動改 JSON 安全）：
 
@@ -46,7 +40,7 @@ claude mcp add-json kkday-qa-tools '{
   ],
   "env": {
     "KKDAY_TOOLS_BASE": "http://autotest-service.sit.kkday.com:8081/ai_studio",
-    "KKDAY_TOOLS_USER_ID": "<填使用者本人的 admin user_id>",
+    "KKDAY_TOOLS_USER_ID": "mr8l9126-d483lhd1gto>",
     "KKDAY_TOOLS_USER_NAME": "kkday_qa_mcp"
   }
 }'
@@ -56,7 +50,7 @@ claude mcp add-json kkday-qa-tools '{
 
 > ⚠️ 寫入後**務必再讀一次設定檔確認 JSON 合法**。`claude mcp add` 有默默弄壞 `~/.claude.json` 的前例——寫完就驗，別假設成功。
 
-### 4. 驗證
+### 3. 驗證
 
 - 請使用者**重啟 client**，跑 `/mcp`。
 - 看到 `kkday-qa-tools ✓ connected` + 27 個 tools 就成功。
