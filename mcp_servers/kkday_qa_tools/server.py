@@ -124,7 +124,8 @@ def help() -> dict:
             "商品/兌換": [
                 "product_categories: 商品分類",
                 "fetch_packages: 依 OID 取 package 選項",
-                "create_product: 建測試商品",
+                "product_types: 列建商品可用的 20 種 prod_type",
+                "create_product: 建測試商品（20 種商品型別選 1）",
                 "product_create_history: 建商品紀錄",
                 "redeem_voucher: 用 voucher 兌換",
                 "redeem_history: 兌換紀錄",
@@ -137,6 +138,7 @@ def help() -> dict:
         ],
         "discovery_tips": [
             "create_coupon 前先 coupon_templates 拿模板列表（template 值不能亂猜）",
+            "create_product 前先 product_types 確認 prod_type（20 選 1，不能亂猜）",
             "redeem_voucher 前先 product_categories → fetch_packages 拿 product_oid / package_oid",
             "update_member_tier 前先 tier_rules 確認該 env 的可用 tier 名稱",
             "任何 tool 想看細節參數 + 範例呼叫 describe_tool(name)",
@@ -211,6 +213,17 @@ def describe_tool(name: str) -> dict:
                 "env": "sit / stage / prod",
             },
             "example": 'register_member(login_id="test_20260703@kkday.com", env="stage")',
+        },
+        "create_product": {
+            "purpose": "建測試商品（一併建 package + item），約 3 分鐘",
+            "required_first": "先跑 product_types() 看 20 種 prod_type 的 key + 中文說明",
+            "params": {
+                "env": "sit / stage / prod（例：sit / sit218 / stage）",
+                "prod_type": "商品種類，只能用 product_types() 列的 20 種 key 之一",
+            },
+            "returns": "prod_oid / pkg_oid / item_oid / publish_status + 商品頁 URL + BE2 編輯頁 URL",
+            "example": 'create_product(env="stage", prod_type="normal")',
+            "example_bundle": 'create_product(env="sit", prod_type="bundle_product")',
         },
         "redeem_voucher": {
             "purpose": "用 voucher 兌換商品訂單",
@@ -545,14 +558,78 @@ def fetch_packages(env: str, oid: str) -> dict:
     return _call("GET", "/api/tools/fetch-packages", params={"env": env, "oid": oid})
 
 
+# 商品種類 — 對齊「建立商品」Tab (ToolsDialog.tsx PROD_TYPE_OPTIONS)，
+# 值來自 qatest-web src/config/toolMapping.ts product[0].options，不可亂猜。
+PROD_TYPE_OPTIONS = {
+    "normal": "普通商品",
+    "manually_process_ticket": "手動出票商品",
+    "khsr": "高鐵假期商品（商品最後狀態不定版）",
+    "cruise": "動態郵輪商品",
+    "hotel": "飯店商品（商品最後狀態不定版）",
+    "open_date": "開放日期商品（商品最後狀態不定版）",
+    "same_price_by_date_has_event": "每日均一價＆有場次的商品",
+    "same_price_by_date_no_event": "每日均一價＆無場次的商品",
+    "depends_on_price_by_date_has_event": "依日期定價＆有場次的商品",
+    "depends_on_price_by_date_no_event": "依日期定價＆無場次的商品",
+    "large_event": "大量場次的商品（34560 筆場次）",
+    "stamp_duty_hk": "香港印花稅商品（最後狀態定版但不發布）",
+    "ocbt_main_product": "OCBT_母商品",
+    "ocbt_sub_product": "OCBT_子商品",
+    "three_level_sku": "三層 SKU 的商品",
+    "normal_mo_location": "商品所在地為澳門的商品",
+    "b2d_normal": "B2D 快速成立商品（開放 B2D 渠道）",
+    "b2d_channel_disable": "未開啟 B2D 渠道_普通商品（定版但不發布）",
+    "bundle_product": "票券組合商品",
+    "compound_calendar": "複合式月曆_旅規下放（opendate + godate）",
+}
+
+
 @mcp.tool()
-def create_product(env: str = "stage", prod_type: str = "normal") -> dict:
-    """建立測試商品。
+def product_types() -> dict:
+    """列出「建立商品」支援的所有 prod_type 值 + 中文說明（共 20 種），給使用者挑選用。
+
+    使用者只說「建立商品」而沒指定種類時，**先呼叫這個 tool**，把 `options` 這份
+    編號清單原樣列給使用者選，等使用者選定某個 value 後再呼叫 create_product。
+
+    create_product 的 prod_type 只能用這裡的 key，不能亂猜（例如沒有 'ticket' /
+    'bundle' 這種值，票券組合是 'bundle_product'、手動出票是 'manually_process_ticket'）。
+    """
+    options = [
+        {"no": i, "value": v, "label": label}
+        for i, (v, label) in enumerate(PROD_TYPE_OPTIONS.items(), start=1)
+    ]
+    return {
+        "instruction": "把 options 編號清單列給使用者挑，使用者選定後再呼叫 create_product(prod_type=<value>)",
+        "options": options,
+    }
+
+
+@mcp.tool()
+def create_product(env: str, prod_type: str) -> dict:
+    """建立測試商品（proxy 到 autotest-service，會一併建 package + item，較慢約 3 分鐘）。
+
+    prod_type 判斷規則：
+    - 使用者**已明確講出某種商品**（例：「建立普通商品」→ normal、「建郵輪商品」→ cruise、
+      「票券組合商品」→ bundle_product）：直接對應到 value 建立，不用再問。
+    - 使用者**只說「建立商品」沒指明種類**：🚫 禁止擅自帶 normal 或任何值直接建；
+      必須先呼叫 `product_types()` 把 20 個選項列給使用者挑，選定後再帶入。
+    - 講的種類**對不到任何 value / 模稜兩可**：一樣先跑 product_types() 讓使用者確認。
+    env 未指定時同樣要問使用者。
+
+    prod_type 只能用 product_types() 列出的 20 個 value 之一（沒有 'ticket'/'bundle' 這種值）。
+
+    回傳含 prod_oid / pkg_oid / item_oid / publish_status，以及商品頁 URL 與 BE2 編輯頁 URL。
 
     Args:
-        env: sit / stage / prod
-        prod_type: normal / bundle / ticket 等（詳看 backend 支援清單）
+        env: 環境 sit / stage / prod（例：sit / sit218 / stage）— 必填，未指定要問使用者
+        prod_type: 商品種類，20 選 1（見 product_types()）— 必填，未指定要列選項給使用者挑
     """
+    prod_type = (prod_type or "").strip()
+    if prod_type not in PROD_TYPE_OPTIONS:
+        raise ValueError(
+            f"prod_type '{prod_type}' 不是有效值；請先呼叫 product_types() 把 20 個選項"
+            f"列給使用者挑，選定後再帶入。可用值：{', '.join(PROD_TYPE_OPTIONS)}"
+        )
     return _call(
         "POST", "/api/tools/create-product", json={"env": env, "prod_type": prod_type}
     )
