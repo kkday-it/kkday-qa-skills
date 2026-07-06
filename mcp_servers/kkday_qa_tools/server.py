@@ -196,14 +196,14 @@ def describe_tool(name: str) -> dict:
         },
         "update_member_tier": {
             "purpose": "直接改會員 tier / expiry_date（跳過經驗值累積）",
-            "required_first": "先跑 tier_rules(env) 看該環境有哪些 tier 名稱",
             "params": {
                 "uuid_or_email": "會員 UUID 或 email",
                 "env": "sit / stage / prod",
-                "tier": "目標 tier 名稱（bronze / silver / gold / diamond 等，依 tier_rules）",
-                "expiry_date": "tier 到期日 YYYY-MM-DD",
+                "new_tier": "等級代碼 01=白銀 04=黃金 02=白金 03=黑鑽（傳 silver/gold/… 會自動轉）",
+                "new_expiry_date": 'tier 到期日 "YYYY-MM-DD HH:MM:SS"（例 2027-12-31 00:00:00）',
+                "trigger_dkron": "是否觸發 Dkron 降級 job（預設 False）",
             },
-            "example": 'update_member_tier(uuid_or_email="user@kkday.com", env="stage", tier="gold", expiry_date="2027-12-31")',
+            "example": 'update_member_tier(uuid_or_email="user@kkday.com", env="stage", new_tier="04", new_expiry_date="2027-12-31 00:00:00")',
         },
         "register_member": {
             "purpose": "註冊測試會員",
@@ -249,17 +249,17 @@ def describe_tool(name: str) -> dict:
 
 
 @mcp.tool()
-def lookup_member(uuid_or_email: str, env: str = "stage") -> dict:
-    """查詢會員資訊（UUID / email / login_id 都可）。
+def lookup_member(email: str, env: str = "stage") -> dict:
+    """用 email 查會員 UUID / tier / 資訊（這支 endpoint 是 email → UUID）。
 
     Args:
-        uuid_or_email: 會員 UUID、email 或 login_id
+        email: 會員 email（此 endpoint 只吃 email，不能傳 UUID）
         env: 環境 sit / stage / prod（預設 stage）
     """
     return _call(
         "POST",
         "/api/tools/lookup-member",
-        json={"uuid_or_email": uuid_or_email, "env": env},
+        json={"email": email, "env": env},
     )
 
 
@@ -390,14 +390,26 @@ def experience_history(limit: int = 20) -> dict:
 
 
 @mcp.tool()
-def mark_experience_downgraded(uuid_or_email: str, downgraded: bool = True) -> dict:
-    """標記某筆經驗值紀錄為「已降級」狀態（PATCH）。"""
+def mark_experience_downgraded(
+    uuid_or_email: str, downgrade_status: str = "success"
+) -> dict:
+    """更新該會員最新一筆經驗值紀錄的降級狀態（PATCH）。
+
+    Args:
+        uuid_or_email: 會員 UUID 或 email
+        downgrade_status: 只能是 success / dkron_failed / downgrade_failed
+    """
+    valid = {"success", "dkron_failed", "downgrade_failed"}
+    if downgrade_status not in valid:
+        raise ValueError(
+            f"downgrade_status '{downgrade_status}' 無效；只能是 {', '.join(valid)}"
+        )
     return _call(
         "PATCH",
         "/api/tools/experience-history",
         json={
             "uuid_or_email": uuid_or_email,
-            "downgraded": downgraded,
+            "downgrade_status": downgrade_status,
         },
     )
 
@@ -421,26 +433,60 @@ def tier_rules(env: str = "stage") -> dict:
     return _call("POST", "/api/tools/tier-rules", json={"env": env})
 
 
+# 會員等級代碼 — 後端 new_tier 只吃這些代碼，不是英文名（對齊 ToolsDialog TIER_LABELS）
+TIER_CODES = {
+    "01": "白銀會員 (silver)",
+    "04": "黃金會員 (gold)",
+    "02": "白金會員 (platinum)",
+    "03": "黑鑽會員 (diamond)",
+}
+# 常見英文/中文名 → 代碼，方便自然語言呼叫時自動對應
+_TIER_NAME_TO_CODE = {
+    "silver": "01", "白銀": "01",
+    "gold": "04", "黃金": "04",
+    "platinum": "02", "白金": "02",
+    "diamond": "03", "black": "03", "黑鑽": "03",
+}
+
+
 @mcp.tool()
 def update_member_tier(
     uuid_or_email: str,
     env: str = "stage",
-    tier: Optional[str] = None,
-    expiry_date: Optional[str] = None,
+    new_tier: Optional[str] = None,
+    new_expiry_date: Optional[str] = None,
+    trigger_dkron: bool = False,
 ) -> dict:
     """直接改會員 tier / expiry_date（跳過經驗值累積）。
+
+    ⚠️ new_tier 只能是代碼 01/02/03/04（不是英文名）：
+        01=白銀(silver) / 04=黃金(gold) / 02=白金(platinum) / 03=黑鑽(diamond)。
+    傳英文名（silver/gold/…）會自動換成代碼；其他值會擋下。
 
     Args:
         uuid_or_email: 會員 UUID / email
         env: sit / stage / prod
-        tier: 目標 tier（bronze / silver / gold / diamond 等）
-        expiry_date: tier 到期日 YYYY-MM-DD
+        new_tier: 目標等級代碼 01/02/03/04（或 silver/gold/platinum/diamond 自動轉）
+        new_expiry_date: tier 到期日，格式 "YYYY-MM-DD HH:MM:SS"（例 2027-12-31 00:00:00）
+        trigger_dkron: 是否觸發 Dkron 降級 job（預設 False）
     """
-    body = {"uuid_or_email": uuid_or_email, "env": env}
-    if tier:
-        body["tier"] = tier
-    if expiry_date:
-        body["expiry_date"] = expiry_date
+    body: dict = {
+        "uuid_or_email": uuid_or_email,
+        "env": env,
+        "trigger_dkron": trigger_dkron,
+    }
+    if new_tier:
+        code = new_tier if new_tier in TIER_CODES else _TIER_NAME_TO_CODE.get(
+            new_tier.strip().lower()
+        )
+        if not code:
+            raise ValueError(
+                f"new_tier '{new_tier}' 無效；用代碼 {', '.join(TIER_CODES)} "
+                f"（01=白銀 04=黃金 02=白金 03=黑鑽）"
+            )
+        body["new_tier"] = code
+    if new_expiry_date:
+        body["new_expiry_date"] = new_expiry_date
     return _call("POST", "/api/tools/update-member-tier", json=body)
 
 
@@ -536,10 +582,15 @@ def member_orders_history(limit: int = 20) -> dict:
 
 
 @mcp.tool()
-def complete_order(order_id: str, env: str = "stage") -> dict:
-    """把訂單標記為完成狀態（測試用）。"""
+def complete_order(order_mid: str, env: str = "stage") -> dict:
+    """把訂單推進到完成狀態（BE2 認養 + 推狀態，測試用）。
+
+    Args:
+        order_mid: 訂單編號（order master id）
+        env: sit / stage / prod
+    """
     return _call(
-        "POST", "/api/tools/complete-order", json={"order_id": order_id, "env": env}
+        "POST", "/api/tools/complete-order", json={"order_mid": order_mid, "env": env}
     )
 
 
@@ -553,9 +604,26 @@ def product_categories(env: str = "stage") -> dict:
 
 
 @mcp.tool()
-def fetch_packages(env: str, oid: str) -> dict:
-    """依 product OID 取 package 選項（給 redeem_voucher 挑 package_oid 用）。"""
-    return _call("GET", "/api/tools/fetch-packages", params={"env": env, "oid": oid})
+def fetch_packages(
+    env: str,
+    product_oid: str,
+    begin_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> dict:
+    """依 product OID 取可選 package 列表（給 redeem_voucher 挑 package_oid 用）。
+
+    Args:
+        env: 環境 sit / stage
+        product_oid: 商品 OID
+        begin_date: 起始日 YYYY-MM-DD（預設今日）
+        end_date: 結束日 YYYY-MM-DD（預設一年後）
+    """
+    params = {"env": env, "product_oid": product_oid}
+    if begin_date:
+        params["begin_date"] = begin_date
+    if end_date:
+        params["end_date"] = end_date
+    return _call("GET", "/api/tools/fetch-packages", params=params)
 
 
 # 商品種類 — 對齊「建立商品」Tab (ToolsDialog.tsx PROD_TYPE_OPTIONS)，
