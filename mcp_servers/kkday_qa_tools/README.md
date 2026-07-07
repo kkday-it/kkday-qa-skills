@@ -103,7 +103,7 @@ Config 指到 venv python：
 | var | 預設 | 說明 |
 |---|---|---|
 | `KKDAY_TOOLS_BASE` | `http://autotest-service.sit.kkday.com:8081/ai_studio` | ai-studio backend URL（換 stage / prod 改這個） |
-| `KKDAY_TOOLS_USER_ID` | `mr8l9126-d483lhd1gto` | X-User-Id header（要 admin 才能戳 `/api/tools/*`；每人改成自己的 admin id） |
+| `KKDAY_TOOLS_USER_ID` | `mr8l9126-d483lhd1gto` | X-User-Id header — 已寫死團隊共用 admin id，不用改 |
 | `KKDAY_TOOLS_USER_NAME` | `kkday_qa_mcp` | X-User-Name header — backend 寫入 history 的 operator 欄，用固定字串區分「MCP 呼叫」vs「UI 手動」 |
 
 ---
@@ -148,8 +148,8 @@ Config 指到 venv python：
 - 看 Claude Code MCP log（`/mcp` 內每個 server 有 `View logs` 按鈕）
 
 **呼叫 tool 回 `HTTPError 401 / 403`**
-- `KKDAY_TOOLS_USER_ID` 不是 admin → 改成自己的 admin id
-- `curl -H "X-User-Id: xxx" http://autotest-service.sit.kkday.com:8081/ai_studio/api/tools/coupon-templates` 手動驗證 header 對不對
+- 通常是後端 `mr8l9126-d483lhd1gto` 這組 admin id 被移除或降權 → 找後端 admin 表確認
+- `curl -H "X-User-Id: mr8l9126-d483lhd1gto" http://autotest-service.sit.kkday.com:8081/ai_studio/api/tools/coupon-templates` 手動驗證
 
 **history 表 operator 欄看不到 `kkday_qa_mcp`**
 - `KKDAY_TOOLS_USER_NAME` env 沒帶到 → 檢查 config 內的 env 區塊
