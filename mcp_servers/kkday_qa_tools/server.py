@@ -29,6 +29,7 @@ Env vars:
 """
 
 import os
+import re
 from typing import Optional
 
 import requests
@@ -54,6 +55,21 @@ def _headers() -> dict:
     }
 
 
+# 合法環境：stage 或 sit 系列（sit / sit0x / sit20x，如 sit04 / sit206）。
+# 用來擋掉亂編的 prod / staging / uat / beta 等不存在的環境。
+_VALID_ENV_RE = re.compile(r"stage|sit\d*")
+
+
+def _check_env(env: str) -> None:
+    """驗證 env；非 stage / sit 系列一律擋下，避免 LLM 亂編環境送到 backend。"""
+    if not isinstance(env, str) or not _VALID_ENV_RE.fullmatch(env):
+        raise ValueError(
+            f"env '{env}' 不是合法環境；只接受 'stage' 或 'sit' 系列"
+            f"（sit / sit0x / sit20x，如 sit04 / sit206），沒有 prod / staging / uat / beta。"
+            f"請向使用者確認要用哪個環境（選 sit 需再追問是哪一台）。"
+        )
+
+
 def _call(
     method: str,
     path: str,
@@ -62,6 +78,10 @@ def _call(
     params: Optional[dict] = None,
 ) -> dict:
     """統一呼叫 backend，把 Response 轉 JSON。錯誤直接拋 exception 讓 LLM 看到。"""
+    # 集中攔截：任何帶 env 的呼叫都先驗證，擋掉亂編的環境值。
+    for _src in (json, params):
+        if _src and "env" in _src:
+            _check_env(_src["env"])
     url = f"{BASE}{path}"
     resp = requests.request(
         method, url, headers=_headers(), json=json, params=params, timeout=30
@@ -146,7 +166,7 @@ def help() -> dict:
         "notes": [
             f"所有操作 audit log 的 operator 欄 = '{USER_NAME}'（跟 UI 手動操作分辨）",
             "GMBE/PG 帳密相關 endpoint 刻意不暴露（敏感）",
-            "預設環境 stage；prod 慎用",
+            "預設環境 stage；僅測試環境（sit / stage），不提供 prod",
         ],
     }
 
@@ -177,7 +197,7 @@ def describe_tool(name: str) -> dict:
             "purpose": "加/扣 KKday 點數",
             "params": {
                 "uuid_or_email": "會員 UUID 或 email",
-                "env": "sit / stage / prod",
+                "env": "sit / stage",
                 "points": "每筆點數（預設 500）",
                 "count": "加幾筆（預設 1）",
                 "mode": "'add' 加點 / 'deduct' 扣點",
@@ -189,7 +209,7 @@ def describe_tool(name: str) -> dict:
             "note": "會員經驗值累積過門檻自動升等；要直接改 tier 用 update_member_tier",
             "params": {
                 "uuid_or_email": "會員 UUID 或 email",
-                "env": "sit / stage / prod",
+                "env": "sit / stage",
                 "exp_value": "要加的經驗值（預設 100）",
             },
             "example": 'add_experience(uuid_or_email="user@kkday.com", env="stage", exp_value=5000)',
@@ -198,7 +218,7 @@ def describe_tool(name: str) -> dict:
             "purpose": "直接改會員 tier / expiry_date（跳過經驗值累積）",
             "params": {
                 "uuid_or_email": "會員 UUID 或 email",
-                "env": "sit / stage / prod",
+                "env": "sit / stage",
                 "new_tier": "等級代碼 01=白銀 04=黃金 02=白金 03=黑鑽（傳 silver/gold/… 會自動轉）",
                 "new_expiry_date": 'tier 到期日 "YYYY-MM-DD HH:MM:SS"（例 2027-12-31 00:00:00）',
                 "trigger_dkron": "是否觸發 Dkron 降級 job（預設 False）",
@@ -210,7 +230,7 @@ def describe_tool(name: str) -> dict:
             "params": {
                 "login_id": "登入 ID（通常是 email）",
                 "password": "預設 'Aa12345678'",
-                "env": "sit / stage / prod",
+                "env": "sit / stage",
             },
             "example": 'register_member(login_id="test_20260703@kkday.com", env="stage")',
         },
@@ -218,7 +238,7 @@ def describe_tool(name: str) -> dict:
             "purpose": "建測試商品（一併建 package + item），約 3 分鐘",
             "required_first": "先跑 product_types() 看 20 種 prod_type 的 key + 中文說明",
             "params": {
-                "env": "sit / stage / prod（例：sit / sit218 / stage）",
+                "env": "sit / stage（例：sit / sit218 / stage）",
                 "prod_type": "商品種類，只能用 product_types() 列的 20 種 key 之一",
             },
             "returns": "prod_oid / pkg_oid / item_oid / publish_status + 商品頁 URL + BE2 編輯頁 URL",
@@ -254,7 +274,7 @@ def lookup_member(email: str, env: str = "stage") -> dict:
 
     Args:
         email: 會員 email（此 endpoint 只吃 email，不能傳 UUID）
-        env: 環境 sit / stage / prod（預設 stage）
+        env: 環境 sit / stage（預設 stage）
     """
     return _call(
         "POST",
@@ -283,11 +303,11 @@ def add_kkday_points(
     """加（或扣）KKday 點數給指定會員。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / env / points / count / mode）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     Args:
         uuid_or_email: 會員 UUID 或 email
-        env: sit / stage / prod
+        env: sit / stage
         points: 每筆點數
         count: 加幾筆
         mode: 'add' 加點 / 'deduct' 扣點
@@ -333,7 +353,7 @@ def create_coupon(
     """建立優惠券並可歸戶到會員。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（env / template / member_uuid 等）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     ⚠️ 呼叫前**強烈建議**先跑 `coupon_templates()` 拿可用模板列表；如果不確定要用
     哪個 template，先問 user 或跑 `describe_tool("create_coupon")` 看範例。
@@ -374,11 +394,11 @@ def add_experience(
     """加經驗值給會員（升等用）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / env / exp_value）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     Args:
         uuid_or_email: 會員 UUID 或 email
-        env: sit / stage / prod
+        env: sit / stage
         exp_value: 要加的經驗值
     """
     return _call(
@@ -405,7 +425,7 @@ def mark_experience_downgraded(
     """更新該會員最新一筆經驗值紀錄的降級狀態（PATCH）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / downgrade_status）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     Args:
         uuid_or_email: 會員 UUID 或 email
@@ -472,7 +492,7 @@ def update_member_tier(
     """直接改會員 tier / expiry_date（跳過經驗值累積）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / env / new_tier / new_expiry_date / trigger_dkron）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     ⚠️ new_tier 只能是代碼 01/02/03/04（不是英文名）：
         01=白銀(silver) / 04=黃金(gold) / 02=白金(platinum) / 03=黑鑽(diamond)。
@@ -480,7 +500,7 @@ def update_member_tier(
 
     Args:
         uuid_or_email: 會員 UUID / email
-        env: sit / stage / prod
+        env: sit / stage
         new_tier: 目標等級代碼 01/02/03/04（或 silver/gold/platinum/diamond 自動轉）
         new_expiry_date: tier 到期日，格式 "YYYY-MM-DD HH:MM:SS"（例 2027-12-31 00:00:00）
         trigger_dkron: 是否觸發 Dkron 降級 job（預設 False）
@@ -534,7 +554,7 @@ def tier_downgrade_history(limit: int = 20) -> dict:
 def trigger_dkron_tier(env: str = "stage") -> dict:
     """觸發 Dkron 的 tier-expire job（不直接改 DB，透過排程觸發）。
 
-    〔詢問模式（預設）〕呼叫前先向使用者確認 env；〔全自動模式〕使用者明確要求自動時才直接執行、不問。未經確認不要自行套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔詢問模式（預設）〕呼叫前先向使用者確認 env；〔全自動模式〕使用者明確要求自動時才直接執行、不問。未經確認不要自行套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
     """
     return _call("POST", "/api/tools/trigger-dkron-tier", json={"env": env})
 
@@ -557,12 +577,12 @@ def register_member(
 
     〔詢問模式（預設）〕呼叫前先向使用者確認 login_id / password / env；可附「沿用慣例」選項供一鍵確認
     （login_id 取 register_member_history 最大 +N 的下一個，如 xxx+1@kkday.com；password 預設 Aa12345678；env=stage）。
-    〔全自動模式〕使用者明確說「自動創 / 直接建」時才用慣例值直接建立、不問。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確說「自動創 / 直接建」時才用慣例值直接建立、不問。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     Args:
         login_id: 登入 ID / email
         password: 預設 "Aa12345678"
-        env: sit / stage / prod
+        env: sit / stage
     """
     return _call(
         "POST",
@@ -608,11 +628,11 @@ def complete_order(order_mid: str, env: str = "stage") -> dict:
     """把訂單推進到完成狀態（BE2 認養 + 推狀態，測試用）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（order_mid / env）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     Args:
         order_mid: 訂單編號（order master id）
-        env: sit / stage / prod
+        env: sit / stage
     """
     return _call(
         "POST", "/api/tools/complete-order", json={"order_mid": order_mid, "env": env}
@@ -702,7 +722,7 @@ def create_product(env: str, prod_type: str) -> dict:
     """建立測試商品（proxy 到 autotest-service，會一併建 package + item，較慢約 3 分鐘）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認 env / prod_type（見下方判斷規則）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     prod_type 判斷規則：
     - 使用者**已明確講出某種商品**（例：「建立普通商品」→ normal、「建郵輪商品」→ cruise、
@@ -717,7 +737,7 @@ def create_product(env: str, prod_type: str) -> dict:
     回傳含 prod_oid / pkg_oid / item_oid / publish_status，以及商品頁 URL 與 BE2 編輯頁 URL。
 
     Args:
-        env: 環境 sit / stage / prod（例：sit / sit218 / stage）— 必填，未指定要問使用者
+        env: 環境 sit / stage（例：sit / sit218 / stage）— 必填，未指定要問使用者
         prod_type: 商品種類，20 選 1（見 product_types()）— 必填，未指定要列選項給使用者挑
     """
     prod_type = (prod_type or "").strip()
@@ -744,7 +764,7 @@ def redeem_voucher(
     """用 voucher（優惠券）兌換商品訂單。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（env / product_oid / package_oid / qyt）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     Args:
         env: sit / stage
