@@ -12,20 +12,23 @@
 > User：「把 test@kkday.com 拉到 gold tier 到 2027 年底」
 > LLM：（chain `lookup_member` → `add_experience` → `update_member_tier`）
 
+> User：「幫我建一個測試商品」
+> LLM：（先 `product_types()` 拿 20 種商品型別給你挑 → 你選定 → `create_product(env=..., prod_type=...)` → 回傳 prod_oid / pkg_oid / item_oid + 商品頁 URL + BE2 編輯頁 URL，約 3 分鐘）
+
 ---
 
-## Tools 一覽（27 個）
+## Tools 一覽（29 個 + 2 個說明工具）
 
 | 分類 | Tools |
 |---|---|
-| **help** | `help` — 全 category 一覽<br>`describe_tool(name)` — 拿指定 tool 的欄位說明 + 範例 |
+| **說明** | `help` — 全 category 一覽<br>`describe_tool(name)` — 拿指定 tool 的欄位說明 + 範例 |
 | **會員** | `lookup_member`, `member_lookup_history`, `register_member`, `register_member_history` |
 | **點數** | `add_kkday_points`, `points_history` |
 | **優惠券** | `coupon_templates`, `create_coupon`, `coupon_history` |
 | **經驗值** | `add_experience`, `experience_history`, `mark_experience_downgraded`, `query_exp_value` |
 | **等級** | `tier_rules`, `update_member_tier`, `tier_change_records`, `tier_upgrade_history`, `tier_downgrade_history`, `trigger_dkron_tier` |
 | **訂單** | `get_member_orders`, `member_orders_history`, `complete_order` |
-| **商品/兌換** | `product_categories`, `fetch_packages`, `create_product`, `product_create_history`, `redeem_voucher`, `redeem_history` |
+| **商品/兌換** | `product_categories`, `product_types`, `fetch_packages`, `create_product`, `product_create_history`, `redeem_voucher`, `redeem_history` |
 
 **刻意不提供**：GMBE / PG 帳密相關 6 個 endpoint（`gmbe-credentials`、`pg-credentials`）— 涉敏感帳密，一律走 ai-studio UI，backend tool 需要的帳密會由 backend 自己讀。
 
@@ -117,8 +120,19 @@ Config 指到 venv python：
 | 「查 xxx@ 現在什麼等級」 | `lookup_member(...)` 或 `query_exp_value(...)` |
 | 「幫 xxx@ 拉到 gold」 | chain `lookup_member` → `add_experience` → `update_member_tier` |
 | 「建一張 5% 折扣券給 xxx@」 | 先 `coupon_templates()` → 選模板 → `create_coupon(...)` |
+| 「幫我建測試商品」 | 先 `product_types()` → 使用者選 prod_type → `create_product(env=..., prod_type=...)`（一併建 package + item，回 prod_oid / pkg_oid / item_oid / 商品頁 URL / BE2 編輯頁 URL；~3 分鐘） |
+| 「用 voucher 換商品」 | 先 `product_categories` → `fetch_packages` → `redeem_voucher(...)` |
 
-**驗證有沒有裝好**：在 Claude Code 跑 `/mcp`（內建指令）→ 看得到 `kkday-qa-tools ✓ connected` + 27 tools 就 OK。
+**驗證有沒有裝好**：在 Claude Code 跑 `/mcp`（內建指令）→ 看得到 `kkday-qa-tools ✓ connected` + 31 tools 就 OK。
+
+---
+
+## 小提醒（LLM 會自動處理，你只要用自然語言講）
+
+- **建優惠券**：LLM 會先把可用的模板列給你挑，再幫你建（你不用背 template 名稱）
+- **建測試商品**：如果你沒指定商品類型（普通 / 郵輪 / 飯店 / 票券組合 …），LLM 會把 20 種商品類型列給你選；建立過程約 3 分鐘，會回商品頁 URL + BE2 編輯頁 URL
+- **改會員等級**：直接說「拉到黃金」/「改成白金」/「降到白銀」都行，LLM 會自動對應
+- **用 voucher 換商品**：LLM 會先幫你查商品分類、抓 package，再兌換
 
 ---
 
