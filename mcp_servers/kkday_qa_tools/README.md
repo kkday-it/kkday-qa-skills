@@ -28,7 +28,8 @@
 | **經驗值** | `add_experience`, `experience_history`, `mark_experience_downgraded`, `query_exp_value` |
 | **等級** | `tier_rules`, `update_member_tier`, `tier_change_records`, `tier_upgrade_history`, `tier_downgrade_history`, `trigger_dkron_tier` |
 | **訂單** | `get_member_orders`, `member_orders_history`, `complete_order` |
-| **商品/兌換** | `product_categories`, `product_types`, `fetch_packages`, `create_product`, `product_create_history`, `redeem_voucher`, `redeem_history` |
+| **商品** | `product_categories`, `product_types`, `fetch_packages`, `create_product`, `product_create_history` |
+| **兌換** | `redeem_voucher`, `redeem_history` |
 
 **刻意不提供**：GMBE / PG 帳密相關 6 個 endpoint（`gmbe-credentials`、`pg-credentials`）— 涉敏感帳密，一律走 ai-studio UI，backend tool 需要的帳密會由 backend 自己讀。
 
