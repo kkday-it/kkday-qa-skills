@@ -98,16 +98,6 @@ Config 指到 venv python：
 
 ---
 
-## 環境變數
-
-| var | 預設 | 說明 |
-|---|---|---|
-| `KKDAY_TOOLS_BASE` | `http://autotest-service.sit.kkday.com:8081/ai_studio` | ai-studio backend URL（換 stage / prod 改這個） |
-| `KKDAY_TOOLS_USER_ID` | `mr8l9126-d483lhd1gto` | X-User-Id header — 已寫死團隊共用 admin id，不用改 |
-| `KKDAY_TOOLS_USER_NAME` | `kkday_qa_mcp` | X-User-Name header — backend 寫入 history 的 operator 欄，用固定字串區分「MCP 呼叫」vs「UI 手動」 |
-
----
-
 ## 使用
 
 **MCP 不是 slash command**，用**自然語言**跟 LLM 講就好：
