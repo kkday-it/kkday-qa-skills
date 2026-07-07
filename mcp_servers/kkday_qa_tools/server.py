@@ -15,7 +15,7 @@ Claude Code hook 進去（`.claude/settings.json` 或使用者 mcp config）：
           "args": ["/absolute/path/to/mcp_servers/kkday_qa_tools/server.py"],
           "env": {
             "KKDAY_TOOLS_BASE": "http://autotest-service.sit.kkday.com:8081/ai_studio",
-            "KKDAY_TOOLS_USER_ID": "ml09h4qj-l7bsikcns5m"
+            "KKDAY_TOOLS_USER_ID": "mr8l9126-d483lhd1gto"
           }
         }
       }
@@ -38,7 +38,7 @@ BASE = os.getenv(
     "KKDAY_TOOLS_BASE",
     "http://autotest-service.sit.kkday.com:8081/ai_studio",
 ).rstrip("/")
-USER_ID = os.getenv("KKDAY_TOOLS_USER_ID", "ml09h4qj-l7bsikcns5m")
+USER_ID = os.getenv("KKDAY_TOOLS_USER_ID", "mr8l9126-d483lhd1gto")
 # 後端 _get_operator 從 X-User-Name 抓，寫進各 history table 的 operator 欄。
 # 用固定字串 `kkday_qa_mcp` 讓報表能區分「UI 手動 vs MCP 呼叫」的來源。
 USER_NAME = os.getenv("KKDAY_TOOLS_USER_NAME", "kkday_qa_mcp")

@@ -54,7 +54,7 @@
       ],
       "env": {
         "KKDAY_TOOLS_BASE": "http://autotest-service.sit.kkday.com:8081/ai_studio",
-        "KKDAY_TOOLS_USER_ID": "<你的 admin user_id>",
+        "KKDAY_TOOLS_USER_ID": "mr8l9126-d483lhd1gto",
         "KKDAY_TOOLS_USER_NAME": "kkday_qa_mcp"
       }
     }
@@ -103,7 +103,7 @@ Config 指到 venv python：
 | var | 預設 | 說明 |
 |---|---|---|
 | `KKDAY_TOOLS_BASE` | `http://autotest-service.sit.kkday.com:8081/ai_studio` | ai-studio backend URL（換 stage / prod 改這個） |
-| `KKDAY_TOOLS_USER_ID` | `ml09h4qj-l7bsikcns5m` | X-User-Id header（要 admin 才能戳 `/api/tools/*`；每人改成自己的 admin id） |
+| `KKDAY_TOOLS_USER_ID` | `mr8l9126-d483lhd1gto` | X-User-Id header（要 admin 才能戳 `/api/tools/*`；每人改成自己的 admin id） |
 | `KKDAY_TOOLS_USER_NAME` | `kkday_qa_mcp` | X-User-Name header — backend 寫入 history 的 operator 欄，用固定字串區分「MCP 呼叫」vs「UI 手動」 |
 
 ---
