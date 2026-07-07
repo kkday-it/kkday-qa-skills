@@ -44,6 +44,10 @@ USER_ID = os.getenv("KKDAY_TOOLS_USER_ID", "mr8l9126-d483lhd1gto")
 # 用固定字串 `kkday_qa_mcp` 讓報表能區分「UI 手動 vs MCP 呼叫」的來源。
 USER_NAME = os.getenv("KKDAY_TOOLS_USER_NAME", "kkday_qa_mcp")
 
+# backend 呼叫的 (連線, 讀取) 逾時秒數。建商品/建券等操作後端可能跑數分鐘，
+# 讀取逾時放寬到 300s，避免明明有建成卻因回應慢被誤判逾時。
+_TIMEOUT = (10, 300)
+
 mcp = FastMCP("kkday-qa-tools")
 
 
@@ -61,7 +65,12 @@ _VALID_ENV_RE = re.compile(r"stage|sit\d*")
 
 
 def _check_env(env: str) -> None:
-    """驗證 env；非 stage / sit 系列一律擋下，避免 LLM 亂編環境送到 backend。"""
+    """驗證 env；未指定或非 stage / sit 系列一律擋下，避免 LLM 亂編或自行預設環境。"""
+    if env is None or env == "":
+        raise ValueError(
+            "未指定環境：不可自行預設，請先向使用者確認要用 stage 還是 sit"
+            "（選 sit 需再追問是哪一台）。"
+        )
     if not isinstance(env, str) or not _VALID_ENV_RE.fullmatch(env):
         raise ValueError(
             f"env '{env}' 不是合法環境；只接受 'stage' 或 'sit' 系列"
@@ -76,15 +85,20 @@ def _call(
     *,
     json: Optional[dict] = None,
     params: Optional[dict] = None,
+    timeout: tuple = _TIMEOUT,
 ) -> dict:
-    """統一呼叫 backend，把 Response 轉 JSON。錯誤直接拋 exception 讓 LLM 看到。"""
+    """統一呼叫 backend，把 Response 轉 JSON。錯誤直接拋 exception 讓 LLM 看到。
+
+    timeout 為 (連線, 讀取) 秒數；建商品/建券等後端可能跑數分鐘，讀取逾時放寬到
+    300s。注意：逾時 ≠ 沒建成，後端可能已寫入，逾時後應用對應 *_history 查證。
+    """
     # 集中攔截：任何帶 env 的呼叫都先驗證，擋掉亂編的環境值。
     for _src in (json, params):
         if _src and "env" in _src:
             _check_env(_src["env"])
     url = f"{BASE}{path}"
     resp = requests.request(
-        method, url, headers=_headers(), json=json, params=params, timeout=30
+        method, url, headers=_headers(), json=json, params=params, timeout=timeout
     )
     if not resp.ok:
         raise RuntimeError(f"{method} {path} → {resp.status_code}: {resp.text[:500]}")
@@ -269,7 +283,7 @@ def describe_tool(name: str) -> dict:
 
 
 @mcp.tool()
-def lookup_member(email: str, env: str = "stage") -> dict:
+def lookup_member(email: str, env: str) -> dict:
     """用 email 查會員 UUID / tier / 資訊（這支 endpoint 是 email → UUID）。
 
     Args:
@@ -295,7 +309,7 @@ def member_lookup_history(limit: int = 20) -> dict:
 @mcp.tool()
 def add_kkday_points(
     uuid_or_email: str,
-    env: str = "stage",
+    env: str,
     points: int = 500,
     count: int = 1,
     mode: str = "add",
@@ -342,7 +356,7 @@ def coupon_templates() -> dict:
 
 @mcp.tool()
 def create_coupon(
-    env: str = "sit",
+    env: str,
     template: str = "basic_percentage_single",
     coupon_json: Optional[str] = None,
     code_qty: int = 1,
@@ -389,7 +403,7 @@ def coupon_history(limit: int = 20) -> dict:
 
 @mcp.tool()
 def add_experience(
-    uuid_or_email: str, env: str = "stage", exp_value: int = 100
+    uuid_or_email: str, env: str, exp_value: int = 100
 ) -> dict:
     """加經驗值給會員（升等用）。
 
@@ -447,7 +461,7 @@ def mark_experience_downgraded(
 
 
 @mcp.tool()
-def query_exp_value(uuid_or_email: str, env: str = "stage") -> dict:
+def query_exp_value(uuid_or_email: str, env: str) -> dict:
     """查詢會員當前累積經驗值 + 對應 tier。"""
     return _call(
         "POST",
@@ -460,7 +474,7 @@ def query_exp_value(uuid_or_email: str, env: str = "stage") -> dict:
 
 
 @mcp.tool()
-def tier_rules(env: str = "stage") -> dict:
+def tier_rules(env: str) -> dict:
     """取指定環境的 tier 升等規則（各等級的門檻 exp）。"""
     return _call("POST", "/api/tools/tier-rules", json={"env": env})
 
@@ -484,7 +498,7 @@ _TIER_NAME_TO_CODE = {
 @mcp.tool()
 def update_member_tier(
     uuid_or_email: str,
-    env: str = "stage",
+    env: str,
     new_tier: Optional[str] = None,
     new_expiry_date: Optional[str] = None,
     trigger_dkron: bool = False,
@@ -526,7 +540,7 @@ def update_member_tier(
 
 
 @mcp.tool()
-def tier_change_records(uuid_or_email: str, env: str = "stage") -> dict:
+def tier_change_records(uuid_or_email: str, env: str) -> dict:
     """查詢會員的等級變更紀錄。"""
     return _call(
         "POST",
@@ -551,7 +565,7 @@ def tier_downgrade_history(limit: int = 20) -> dict:
 
 
 @mcp.tool()
-def trigger_dkron_tier(env: str = "stage") -> dict:
+def trigger_dkron_tier(env: str) -> dict:
     """觸發 Dkron 的 tier-expire job（不直接改 DB，透過排程觸發）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認 env；〔全自動模式〕使用者明確要求自動時才直接執行、不問。未經確認不要自行套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
@@ -571,12 +585,12 @@ def trigger_dkron_tier(env: str = "stage") -> dict:
 
 @mcp.tool()
 def register_member(
-    login_id: str, password: str = "Aa12345678", env: str = "stage"
+    login_id: str, env: str, password: str = "Aa12345678"
 ) -> dict:
     """註冊測試會員。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認 login_id / password / env；可附「沿用慣例」選項供一鍵確認
-    （login_id 取 register_member_history 最大 +N 的下一個，如 xxx+1@kkday.com；password 預設 Aa12345678；env=stage）。
+    （login_id 取 register_member_history 最大 +N 的下一個，如 xxx+1@kkday.com；password 預設 Aa12345678）。env 無預設、必須問。
     〔全自動模式〕使用者明確說「自動創 / 直接建」時才用慣例值直接建立、不問。未經確認不要自行沿用歷史或套預設。env 只有 sit / stage 兩種；使用者選 sit 時**必須**追問是哪一台（sit0x 或 sit20x 系列），**不得自行預設或編造**環境代號。
 
     Args:
@@ -605,7 +619,7 @@ def register_member_history(limit: int = 20) -> dict:
 
 
 @mcp.tool()
-def get_member_orders(uuid_or_email: str, env: str = "stage") -> dict:
+def get_member_orders(uuid_or_email: str, env: str) -> dict:
     """查詢會員的訂單清單（走 PG 直連，需先設 pg-credentials）。"""
     return _call(
         "POST",
@@ -624,7 +638,7 @@ def member_orders_history(limit: int = 20) -> dict:
 
 
 @mcp.tool()
-def complete_order(order_mid: str, env: str = "stage") -> dict:
+def complete_order(order_mid: str, env: str) -> dict:
     """把訂單推進到完成狀態（BE2 認養 + 推狀態，測試用）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（order_mid / env）；可附「沿用慣例」選項供一鍵確認。
@@ -643,7 +657,7 @@ def complete_order(order_mid: str, env: str = "stage") -> dict:
 
 
 @mcp.tool()
-def product_categories(env: str = "stage") -> dict:
+def product_categories(env: str) -> dict:
     """取商品分類列表。"""
     return _call("GET", "/api/tools/product-categories", params={"env": env})
 
