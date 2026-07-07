@@ -28,8 +28,13 @@ Env vars:
                            預設 `kkday_qa_mcp`，讓後端 history 分辨 UI 操作 vs MCP 操作）
 """
 
+import getpass
 import os
 import re
+import socket
+import sys
+import threading
+import time
 from typing import Optional
 
 import requests
@@ -57,6 +62,115 @@ def _headers() -> dict:
         "X-User-Name": USER_NAME,
         "Content-Type": "application/json",
     }
+
+
+# ── 埋點（analytics）────────────────────────────────────────────────
+# 每次 tool 呼叫都 fire-and-forget 送一筆到 ai-studio /api/tools/mcp-analytics，
+# 讓 UI 統計呼叫紀錄、成功率、耗時、client 分布。
+#
+# 靜默鐵律：
+# 1. daemon thread，主呼叫不 await
+# 2. 埋點函式 **整層 try/except**，任何錯誤都吞（含網路、序列化）
+# 3. **絕不 print 到 stdout**（會污染 MCP stdio 協定）；stderr 也不印
+# 4. 短 timeout (2, 3)，超時直接放棄
+# 5. 埋點失敗絕對不能讓 tool 本身失敗
+_ANALYTICS_PATH = "/api/tools/mcp-analytics"
+
+try:
+    _CLIENT_USER = f"{getpass.getuser()}@{socket.gethostname()}"
+except Exception:
+    _CLIENT_USER = "unknown"
+
+_SENSITIVE_PARAM_KEYS = {"password", "token", "secret", "api_key", "apikey"}
+
+
+def _sanitize_params(p) -> dict:
+    """簡易遮罩 — 敏感 key 值改成 ***。非 dict 直接空。"""
+    try:
+        if not isinstance(p, dict):
+            return {}
+        return {
+            k: ("***" if str(k).lower() in _SENSITIVE_PARAM_KEYS else v)
+            for k, v in p.items()
+        }
+    except Exception:
+        return {}
+
+
+def _result_summary(result) -> dict:
+    """從 tool 回傳挑重要欄位當摘要（避免整包 payload 灌進 log）。"""
+    try:
+        if not isinstance(result, dict):
+            return {}
+        keys = (
+            "prod_oid",
+            "pkg_oid",
+            "item_oid",
+            "coupon_id",
+            "coupon_code",
+            "points_id",
+            "member_uuid",
+            "uuid",
+            "user_uuid",
+            "order_mid",
+            "status",
+            "publish_status",
+            "message",
+            "id",
+        )
+        summary = {}
+        for k in keys:
+            if k in result:
+                v = result[k]
+                summary[k] = (
+                    str(v)[:200] if not isinstance(v, (int, float, bool)) else v
+                )
+        return summary
+    except Exception:
+        return {}
+
+
+def _send_analytics_payload(payload: dict) -> None:
+    """背景送埋點；整層 try/except 靜默失敗。"""
+    try:
+        requests.post(
+            f"{BASE}{_ANALYTICS_PATH}",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=(2, 3),
+        )
+    except Exception:
+        pass  # 絕對靜默 — 埋點失敗不可干擾主流程或印任何字到 stdio
+
+
+def _emit_analytics(
+    tool_name: str,
+    params_snapshot: dict,
+    result,
+    exc: Optional[BaseException],
+    duration_ms: int,
+) -> None:
+    """組 payload 並用 daemon thread 送出，任何 exception 全吞。"""
+    try:
+        payload = {
+            "tool_name": tool_name,
+            "client_user": _CLIENT_USER,
+            "operator": USER_NAME,
+            "success": exc is None,
+            "duration_ms": int(duration_ms),
+            "error_msg": (str(exc)[:500] if exc else ""),
+            "params": params_snapshot,
+            "result_summary": _result_summary(result) if result is not None else {},
+        }
+        t = threading.Thread(
+            target=_send_analytics_payload,
+            args=(payload,),
+            daemon=True,
+            name=f"mcp-analytics-{tool_name}",
+        )
+        t.start()
+    except Exception:
+        pass
 
 
 # 合法環境：stage 或 sit 系列（sit / sit0x / sit20x，如 sit04 / sit206）。
@@ -91,21 +205,53 @@ def _call(
 
     timeout 為 (連線, 讀取) 秒數；建商品/建券等後端可能跑數分鐘，讀取逾時放寬到
     300s。注意：逾時 ≠ 沒建成，後端可能已寫入，逾時後應用對應 *_history 查證。
+
+    順便做埋點：從呼叫端 frame 抓 tool 名稱，記錄耗時 / 成功 / 錯誤 / 參數摘要 /
+    回傳摘要，fire-and-forget 送到 ai-studio。埋點錯誤永遠不會冒到主流程。
     """
     # 集中攔截：任何帶 env 的呼叫都先驗證，擋掉亂編的環境值。
     for _src in (json, params):
         if _src and "env" in _src:
             _check_env(_src["env"])
-    url = f"{BASE}{path}"
-    resp = requests.request(
-        method, url, headers=_headers(), json=json, params=params, timeout=timeout
-    )
-    if not resp.ok:
-        raise RuntimeError(f"{method} {path} → {resp.status_code}: {resp.text[:500]}")
+
+    # 埋點準備：tool 名稱從 caller frame 抓；參數快照做敏感遮罩
     try:
-        return resp.json()
-    except ValueError:
-        return {"raw": resp.text}
+        _tool_name = sys._getframe(1).f_code.co_name  # noqa: SLF001
+    except Exception:
+        _tool_name = path.rsplit("/", 1)[-1] or "unknown"
+    _params_snapshot = _sanitize_params(json if json else params)
+    _start = time.monotonic()
+
+    url = f"{BASE}{path}"
+    try:
+        resp = requests.request(
+            method, url, headers=_headers(), json=json, params=params, timeout=timeout
+        )
+        if not resp.ok:
+            raise RuntimeError(
+                f"{method} {path} → {resp.status_code}: {resp.text[:500]}"
+            )
+        try:
+            result = resp.json()
+        except ValueError:
+            result = {"raw": resp.text}
+        _emit_analytics(
+            _tool_name,
+            _params_snapshot,
+            result,
+            None,
+            (time.monotonic() - _start) * 1000,
+        )
+        return result
+    except BaseException as exc:
+        _emit_analytics(
+            _tool_name,
+            _params_snapshot,
+            None,
+            exc,
+            (time.monotonic() - _start) * 1000,
+        )
+        raise
 
 
 # ── 說明 ────────────────────────────────────────────────────────────────
@@ -402,9 +548,7 @@ def coupon_history(limit: int = 20) -> dict:
 
 
 @mcp.tool()
-def add_experience(
-    uuid_or_email: str, env: str, exp_value: int = 100
-) -> dict:
+def add_experience(uuid_or_email: str, env: str, exp_value: int = 100) -> dict:
     """加經驗值給會員（升等用）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / env / exp_value）；可附「沿用慣例」選項供一鍵確認。
@@ -488,10 +632,15 @@ TIER_CODES = {
 }
 # 常見英文/中文名 → 代碼，方便自然語言呼叫時自動對應
 _TIER_NAME_TO_CODE = {
-    "silver": "01", "白銀": "01",
-    "gold": "04", "黃金": "04",
-    "platinum": "02", "白金": "02",
-    "diamond": "03", "black": "03", "黑鑽": "03",
+    "silver": "01",
+    "白銀": "01",
+    "gold": "04",
+    "黃金": "04",
+    "platinum": "02",
+    "白金": "02",
+    "diamond": "03",
+    "black": "03",
+    "黑鑽": "03",
 }
 
 
@@ -525,8 +674,10 @@ def update_member_tier(
         "trigger_dkron": trigger_dkron,
     }
     if new_tier:
-        code = new_tier if new_tier in TIER_CODES else _TIER_NAME_TO_CODE.get(
-            new_tier.strip().lower()
+        code = (
+            new_tier
+            if new_tier in TIER_CODES
+            else _TIER_NAME_TO_CODE.get(new_tier.strip().lower())
         )
         if not code:
             raise ValueError(
@@ -584,9 +735,7 @@ def trigger_dkron_tier(env: str) -> dict:
 
 
 @mcp.tool()
-def register_member(
-    login_id: str, env: str, password: str = "Aa12345678"
-) -> dict:
+def register_member(login_id: str, env: str, password: str = "Aa12345678") -> dict:
     """註冊測試會員。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認 login_id / password / env；可附「沿用慣例」選項供一鍵確認
