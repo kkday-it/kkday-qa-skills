@@ -283,7 +283,7 @@ def add_kkday_points(
     """加（或扣）KKday 點數給指定會員。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / env / points / count / mode）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     Args:
         uuid_or_email: 會員 UUID 或 email
@@ -333,7 +333,7 @@ def create_coupon(
     """建立優惠券並可歸戶到會員。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（env / template / member_uuid 等）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     ⚠️ 呼叫前**強烈建議**先跑 `coupon_templates()` 拿可用模板列表；如果不確定要用
     哪個 template，先問 user 或跑 `describe_tool("create_coupon")` 看範例。
@@ -374,7 +374,7 @@ def add_experience(
     """加經驗值給會員（升等用）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / env / exp_value）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     Args:
         uuid_or_email: 會員 UUID 或 email
@@ -405,7 +405,7 @@ def mark_experience_downgraded(
     """更新該會員最新一筆經驗值紀錄的降級狀態（PATCH）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / downgrade_status）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     Args:
         uuid_or_email: 會員 UUID 或 email
@@ -472,7 +472,7 @@ def update_member_tier(
     """直接改會員 tier / expiry_date（跳過經驗值累積）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（uuid_or_email / env / new_tier / new_expiry_date / trigger_dkron）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     ⚠️ new_tier 只能是代碼 01/02/03/04（不是英文名）：
         01=白銀(silver) / 04=黃金(gold) / 02=白金(platinum) / 03=黑鑽(diamond)。
@@ -534,7 +534,7 @@ def tier_downgrade_history(limit: int = 20) -> dict:
 def trigger_dkron_tier(env: str = "stage") -> dict:
     """觸發 Dkron 的 tier-expire job（不直接改 DB，透過排程觸發）。
 
-    〔詢問模式（預設）〕呼叫前先向使用者確認 env；〔全自動模式〕使用者明確要求自動時才直接執行、不問。未經確認不要自行套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔詢問模式（預設）〕呼叫前先向使用者確認 env；〔全自動模式〕使用者明確要求自動時才直接執行、不問。未經確認不要自行套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
     """
     return _call("POST", "/api/tools/trigger-dkron-tier", json={"env": env})
 
@@ -557,7 +557,7 @@ def register_member(
 
     〔詢問模式（預設）〕呼叫前先向使用者確認 login_id / password / env；可附「沿用慣例」選項供一鍵確認
     （login_id 取 register_member_history 最大 +N 的下一個，如 xxx+1@kkday.com；password 預設 Aa12345678；env=stage）。
-    〔全自動模式〕使用者明確說「自動創 / 直接建」時才用慣例值直接建立、不問。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確說「自動創 / 直接建」時才用慣例值直接建立、不問。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     Args:
         login_id: 登入 ID / email
@@ -608,7 +608,7 @@ def complete_order(order_mid: str, env: str = "stage") -> dict:
     """把訂單推進到完成狀態（BE2 認養 + 推狀態，測試用）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（order_mid / env）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     Args:
         order_mid: 訂單編號（order master id）
@@ -702,7 +702,7 @@ def create_product(env: str, prod_type: str) -> dict:
     """建立測試商品（proxy 到 autotest-service，會一併建 package + item，較慢約 3 分鐘）。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認 env / prod_type（見下方判斷規則）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     prod_type 判斷規則：
     - 使用者**已明確講出某種商品**（例：「建立普通商品」→ normal、「建郵輪商品」→ cruise、
@@ -744,7 +744,7 @@ def redeem_voucher(
     """用 voucher（優惠券）兌換商品訂單。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認參數（env / product_oid / package_oid / qyt）；可附「沿用慣例」選項供一鍵確認。
-    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit0x 系列如 sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
+    〔全自動模式〕使用者明確要求自動時才用預設/慣例值直接執行。未經確認不要自行沿用歷史或套預設。env 若選 sit 需再追問是哪一台（sit 即 sit00；sit0x 系列如 sit00/sit04/sit06，或 sit20x 系列如 sit206/sit207/sit208）。
 
     Args:
         env: sit / stage
