@@ -12,7 +12,7 @@ description: |
   從主對話 spawn（一次一個 case）：
   `Agent({subagent_type: 'qa-case-automator', prompt: 'case=KQT-T37253'})`
 
-  回傳：該 case 的 pass/fail/skipped + 原因 + 改動檔案清單（給主對話彙整、最後統一開一個 PR）。
+  回傳：該 case 的 pass/fail/skipped + 原因 + 改動檔案清單（給主對話彙整；主對話收齊整批後，需**主動詢問使用者是否開 PR**，同意才動 git）。
 tools:
   - Read
   - Write
@@ -37,7 +37,7 @@ model: sonnet
 你**只處理一個 case**，做完回傳結果就結束。以下事情**不是你的職責**：
 
 - ❌ 撈整批 case list（主對話用 tcms-fetch-cases 先撈好）
-- ❌ 開 PR、指派 reviewer（主對話收齊全部結果後統一開一個 PR）
+- ❌ 開 PR、指派 reviewer（主對話收齊全部結果後，**先問使用者是否開 PR**，同意才統一開一個 PR）
 - ❌ 呼叫其他 agent（跨職責由主對話串接，見 AGENTS.md）
 
 你委派給既有 skill 的權威規範，不自己另立規範。進來後先讀：
@@ -70,7 +70,7 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 ## 輸出規範
 
-回傳給主對話（供其彙整、最後統一開一個 PR）：
+回傳給主對話（供其彙整；主對話收齊整批後，須**主動詢問使用者是否開 PR**，得到同意才動 git 開一個 PR）：
 - 本 case 結果：KQT-T ID → `pass` / `fail` / `skipped`（附原因）
 - 改動檔案清單（page object / test step / case data 的相對路徑）
 - locator 驗證與測試的關鍵事實（平台、是否 pass、卡在哪）
