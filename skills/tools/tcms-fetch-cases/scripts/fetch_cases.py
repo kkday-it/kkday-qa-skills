@@ -45,30 +45,23 @@ def fetch_case_detail(case_id: int) -> dict:
         return {}
 
 
-def find_case_by_external_id(external_id: str) -> dict | None:
-    """透過 /cases?external_id= 或搜尋取得 case。"""
-    try:
-        result = tcms_get(f"/cases/?external_id={external_id}")
-        if isinstance(result, list) and result:
-            return result[0]
-        if isinstance(result, dict) and result.get("id"):
-            return result
-    except Exception:
-        pass
-    # fallback: search all cases
-    try:
-        cases = tcms_get(f"/cases/?search={external_id}")
-        if isinstance(cases, list):
-            for c in cases:
-                if c.get("external_id") == external_id:
-                    return c
-    except Exception:
-        pass
-    return None
+def load_project_index(project_id: int) -> dict:
+    """一次撈整個 project 的 cases，建 external_id -> case（含 steps）的索引。
+
+    TCMS 沒有「用 external_id 查單筆」的 GET 端點（/cases/?external_id= 會 405），
+    唯一能拿到 external_id -> case_id 對應的方式就是撈整包 project 再 client 端 filter。
+    好在 /cases/project/{id} 回傳已含 steps，所以貼 ID 模式一次請求就夠、不需 N+1。
+    """
+    cases = tcms_get(f"/cases/project/{project_id}")
+    if not isinstance(cases, list):
+        raise SystemExit(f"/cases/project/{project_id} 回傳非預期格式：{type(cases).__name__}")
+    return {c["external_id"]: c for c in cases if c.get("external_id")}
 
 
-def build_entry(case_id: int, result_row: dict | None = None) -> dict:
-    detail = fetch_case_detail(case_id)
+def build_entry(case_id: int, result_row: dict | None = None, detail: dict | None = None) -> dict:
+    # detail 已備妥（如貼 ID 模式從 project 索引拿）就直接用，省一次 /cases/{id}
+    if detail is None:
+        detail = fetch_case_detail(case_id)
     tc = result_row.get("test_case", {}) if result_row else {}
     steps = detail.get("steps", [])
     return {
@@ -98,28 +91,25 @@ def main():
     g.add_argument("--run-id", type=int, help="TCMS Run ID")
     g.add_argument("--cases", help="手動貼 KQT-T ID，逗號分隔（如 KQT-T1234,KQT-T5678）")
     p.add_argument("--assignee", help="Full name / email（搭配 --run-id 用）")
+    p.add_argument("--project-id", type=int, default=1, help="貼 ID 模式用的 TCMS project（預設 1＝KKday QA）")
     p.add_argument("--out", default="/tmp/tcms_cases.json")
     args = p.parse_args()
 
     output = []
 
-    # 模式 A：手動貼 KQT-T ID
+    # 模式 A：手動貼 KQT-T ID —— 撈整個 project 建索引後 client 端 filter
     if args.cases:
         keys = [k.strip() for k in args.cases.split(",") if k.strip()]
         print(f"📋 手動模式：{len(keys)} 個 case")
-
-        def fetch_by_key(key: str) -> tuple:
-            case = find_case_by_external_id(key)
-            return key, (build_entry(case["id"]) if case else None)
-
-        # 並行抓取；ex.map 保留輸入順序，輸出結果順序不受併發影響
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-            for key, entry in ex.map(fetch_by_key, keys):
-                if entry is None:
-                    print(f"  ⚠️  找不到 {key}")
-                    continue
-                print(f"  {key} {entry['title']}  ({len(entry['steps'])} steps)")
-                output.append(entry)
+        index = load_project_index(args.project_id)  # 一次 API call，含 steps
+        for key in keys:
+            case = index.get(key)
+            if not case:
+                print(f"  ⚠️  找不到 {key}")
+                continue
+            entry = build_entry(case["id"], detail=case)  # steps 已在索引，免再打
+            print(f"  {key} {entry['title']}  ({len(entry['steps'])} steps)")
+            output.append(entry)
 
     # 模式 B：從 TCMS Run 抓 cases（--assignee 為可選的「篩人」條件）
     else:

@@ -49,7 +49,12 @@ python3 "$SCRIPT" --run-id 95 --assignee "Eden Lai" --out /tmp/tcms_cases.json
 | `--run-id` | 與 `--cases` 二擇一 | TCMS Run ID |
 | `--cases` | 與 `--run-id` 二擇一 | 逗號分隔 KQT-T ID（如 `KQT-T37253,KQT-T37258`） |
 | `--assignee` | 否（僅 run 模式可用） | **篩人**：Full name / email / username，部分比對。省略＝該 run 全撈 |
+| `--project-id` | 否（僅貼 ID 模式用） | 貼 KQT-T ID 時要查的 TCMS project，預設 `1`（KKday QA） |
 | `--out` | 否 | 輸出 JSON 路徑（預設 `/tmp/tcms_cases.json`） |
+
+> **貼 ID 模式的機制**：TCMS 沒有「用 external_id 查單筆」的 GET 端點（`/cases/?external_id=` 會回 405）。
+> 唯一能拿到 `external_id → case_id` 對應的方式，是撈整個 project（`/cases/project/{id}`，回傳已含 steps）再於 client 端 filter。
+> 因此貼 ID 模式是「**1 次 API call 撈整包 → 本機篩出要的幾筆**」，不會 N+1；此為唯讀查詢，多人同時打無資料風險。
 
 ## 輸出格式（`/tmp/tcms_cases.json`）
 
