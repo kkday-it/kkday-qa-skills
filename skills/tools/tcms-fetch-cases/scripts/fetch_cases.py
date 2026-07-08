@@ -7,7 +7,11 @@ Steps 直接從 TCMS /cases/{id} 取，無需 Zephyr。
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+# 並行抓 case 詳情的併發數（避免 run 內 case 多時 N+1 sequential 卡慢）
+MAX_WORKERS = 8
 
 TCMS_BASE = "http://autotest-service.sit.kkday.com:8081/tcms/api/v1"
 
@@ -103,15 +107,19 @@ def main():
     if args.cases:
         keys = [k.strip() for k in args.cases.split(",") if k.strip()]
         print(f"📋 手動模式：{len(keys)} 個 case")
-        for key in keys:
+
+        def fetch_by_key(key: str) -> tuple:
             case = find_case_by_external_id(key)
-            if not case:
-                print(f"  ⚠️  找不到 {key}")
-                continue
-            entry = build_entry(case["id"])
-            marker = f"  ({len(entry['steps'])} steps)"
-            print(f"  {key} {entry['title']}{marker}")
-            output.append(entry)
+            return key, (build_entry(case["id"]) if case else None)
+
+        # 並行抓取；ex.map 保留輸入順序，輸出結果順序不受併發影響
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            for key, entry in ex.map(fetch_by_key, keys):
+                if entry is None:
+                    print(f"  ⚠️  找不到 {key}")
+                    continue
+                print(f"  {key} {entry['title']}  ({len(entry['steps'])} steps)")
+                output.append(entry)
 
     # 模式 B：從 TCMS Run 抓 cases（--assignee 為可選的「篩人」條件）
     else:
@@ -125,14 +133,12 @@ def main():
             selected = results
             print(f"📋 Run {args.run_id} 共 {len(results)} 個 case（未篩人，全撈）")
 
-        for r in selected:
-            case_id = r.get("case_id")
-            if not case_id:
-                continue
-            entry = build_entry(case_id, r)
-            marker = f"  ({len(entry['steps'])} steps)"
-            print(f"  {entry['external_id']} {entry['title']}{marker}")
-            output.append(entry)
+        rows = [r for r in selected if r.get("case_id")]
+        # 並行抓取每個 case 詳情，解決 N+1 sequential 呼叫
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            for entry in ex.map(lambda r: build_entry(r["case_id"], r), rows):
+                print(f"  {entry['external_id']} {entry['title']}  ({len(entry['steps'])} steps)")
+                output.append(entry)
 
     Path(args.out).write_text(json.dumps(output, indent=2, ensure_ascii=False))
     print(f"\n💾 已儲存至 {args.out}")
