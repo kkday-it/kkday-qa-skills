@@ -10,7 +10,7 @@ description: |
   - 使用者要求新增測試案例、page object 或 test step
   - Code review 自動化測試 PR 時需要對照規範
 
-  必要工具：Read、Edit、Write（純檔案編輯，不依賴外部 MCP）
+  必要工具：Read、Edit、Write（撰寫）。**定稿前的元素驗證階段**會用 playwright MCP（Web/MWeb）、adb（Android）、idb（iOS）抓真實元素樹——這些工具與模擬器若沒裝/沒開，skill 會**自動 bootstrap**（不依賴使用者事先準備，見「撰寫流程 階段 2」）。
   前置條件：本機需有 kkday-QA-automation repo（無則先引導 clone，見「前置」段）。
 ---
 
@@ -27,6 +27,71 @@ description: |
    - 確認當前是否誤跑（規範僅適用於 kkday-QA-automation repo 的程式碼）
    - 若需要 clone：`git clone https://github.com/kkday-it/kkday-QA-automation.git`（**請使用者確認目標位置後再執行**，不要無腦自動 clone）
 3. **僅看規範不寫 code** — Code review 等情境可不需 clone，直接套用規範比對即可。
+
+---
+
+## 撰寫流程：先規劃 → 元素驗證 → 自動執行
+
+**核心原則：locator 一律不准用猜的定稿。** 依 case steps 把整個 case 想完、草擬完，**定稿前必須拿真實頁面/畫面元素驗證所有新增或修改的 locator**，再自動跑一次確認。這段流程凌駕於「先寫先跑」的直覺——寧可多一次驗證，也不要交出猜的 locator。
+
+### 階段 1 — 規劃草擬（把整個 case 想完再進下一階段）
+
+讀 case steps，規劃需要哪些 page object element / test step / case data，依下方各項規範草擬。此階段**允許先依經驗寫初版 locator**。
+**必須一次把整個 case 規劃/草擬完成**，不要邊寫一個 element 就驗一個——驗證是下一階段「批次」做。
+
+### 階段 2 — 元素驗證（強制、批次）
+
+**Preflight（全自動 bootstrap，不依賴使用者、不詢問，缺什麼補什麼）：**
+每次進入驗證前，AI 都要自己把「工具」和「目標裝置」準備好，不要假設使用者已經裝好或開好。這是無條件執行的步驟。
+
+**① 工具：沒裝就自動裝**
+
+| 平台 | 檢查 | 沒裝就自動裝（不問直接跑） |
+| --- | --- | --- |
+| Web/MWeb | `claude mcp list \| grep -i playwright` | `claude mcp add playwright -- npx @playwright/mcp@latest` |
+| Android | `which adb` | `brew install android-platform-tools` |
+| iOS | `which idb` | `brew install idb-companion && python3 -m pip install fb-idb` |
+
+**② 目標裝置：沒在線就自動拉起**
+
+| 平台 | 檢查 | 沒有就自動開 |
+| --- | --- | --- |
+| Web/MWeb | playwright MCP 本身自帶 browser，免裝置 | — |
+| Android | `adb devices` 有裝置 | `emulator -list-avds` 取一個 AVD → `emulator -avd <name> -no-snapshot -no-boot-anim &`，再 `adb wait-for-device` |
+| iOS | `xcrun simctl list devices booted` 有 booted | `xcrun simctl boot <udid>`（取 `xcrun simctl list devices available` 第一個）→ `open -a Simulator` |
+
+bootstrap 完成後驗可用性（MCP connected / `adb devices` / `idb list-targets` 有 target）。**只有在自動安裝或自動開機都失敗時才停下回報**，並說明卡在哪一步。
+
+工具與裝置就緒後，把「所有新增/修改的 locator」一次列出，逐一對照**真實元素樹**驗證與修正：
+
+- **Web / MWeb（playwright MCP）**
+  1. `browser_navigate` → `https://www.stage.kkday.com/...`（**禁用** `www.kkday.com`）
+  2. `browser_snapshot` 取 accessibility tree（或 `browser_evaluate` 跑 `document.querySelector(...)` 驗證命中）
+  3. 比對草擬 locator 與實際 DOM，改成能**唯一命中**的 css/xpath
+
+- **App / Android（adb dump uiautomator tree）**
+  ```bash
+  adb shell uiautomator dump /sdcard/ui.xml && adb pull /sdcard/ui.xml /tmp/android_ui.xml
+  ```
+  解析 `/tmp/android_ui.xml` 的 hierarchy，優先用 `resource-id` → `content-desc` → `text` 找真實 locator。
+  前提：`adb devices` 要有裝置在線。
+
+- **App / iOS（idb dump accessibility tree）**
+  ```bash
+  idb ui describe-all --json > /tmp/ios_ui.json    # 需 booted 模擬器/實機 + idb companion
+  ```
+  解析 tree，優先用 `AXIdentifier`（= accessibility id / name）→ `AXLabel` → `type` 找真實 locator。
+  前提：`xcrun simctl list devices booted` 有 booted 裝置。
+
+> **抓不到就停** — 對應平台的元素樹拿不到（MCP 未連、Web 進不去頁面、`adb`/`idb` 無裝置在線），**停下回報使用者**，不得憑 case 文字臆測 locator 定稿。
+
+### 階段 3 — 自動執行
+
+locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner，或直接 `python -m qatest run`）：
+- Web/MWeb：`export HEADLESS=1 && source <venv> && python -m qatest run --caseid KQT-Txxxx --platform web --use_driver playwright`
+- App：`python -m qatest run --caseid KQT-Txxxx --platform android`（或 `ios`）
+
+失敗時交給 **qa-test-runner** 的診斷/修復流程（它同樣會用上述元素樹抓取來修 locator）。
 
 ---
 
