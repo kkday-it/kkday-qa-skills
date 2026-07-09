@@ -35,6 +35,7 @@ import socket
 import sys
 import threading
 import time
+import uuid
 from typing import Optional
 
 import requests
@@ -149,14 +150,22 @@ def _emit_analytics(
     result,
     exc: Optional[BaseException],
     duration_ms: int,
+    operator: str = USER_NAME,
+    success: Optional[bool] = None,
 ) -> None:
-    """組 payload 並用 daemon thread 送出，任何 exception 全吞。"""
+    """組 payload 並用 daemon thread 送出，任何 exception 全吞。
+
+    operator: 送出這筆的來源標記，預設 ai-studio MCP 的 USER_NAME；QA 平台工具會
+        傳自己的值（kkday_qa_platform_mcp），讓 dashboard 分辨來源。
+    success: 明確標記成功與否；None 時退回「無例外即成功」。QA 平台工具傳入「無例外
+        且非業務失敗」以反映真實結果。
+    """
     try:
         payload = {
             "tool_name": tool_name,
             "client_user": _CLIENT_USER,
-            "operator": USER_NAME,
-            "success": exc is None,
+            "operator": operator,
+            "success": (exc is None) if success is None else success,
             "duration_ms": int(duration_ms),
             "error_msg": (str(exc)[:500] if exc else ""),
             "params": params_snapshot,
@@ -951,6 +960,458 @@ def redeem_voucher(
 def redeem_history(limit: int = 20) -> dict:
     """列出最近的 voucher 兌換紀錄。"""
     return _call("GET", "/api/tools/redeem-history", params={"limit": limit})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# QA Test Platform tools — 下游打 QA 平台 /testtool（:8080），與上方 ai-studio
+# 工具併存於同一個 MCP。埋點沿用上方 _emit_analytics（送 ai-studio dashboard），
+# operator 標記 kkday_qa_platform_mcp、success 反映真實業務結果。
+# 抽象層 _platform_call：env 驗證 + sync/async 輪詢 + 失敗診斷 + 埋點。
+# 重用 ai-studio 既有的 _check_env / _sanitize_params / PROD_TYPE_OPTIONS。
+# ══════════════════════════════════════════════════════════════════════════
+
+_PLATFORM_BASE = os.getenv(
+    "KKDAY_QA_PLATFORM_BASE",
+    "http://autotest-service.sit.kkday.com:8080/api/v1",
+).rstrip("/")
+_PLATFORM_OPERATOR = "kkday_qa_platform_mcp"
+_PLATFORM_TRIGGER = "MCP"
+_PLATFORM_SYNC_TIMEOUT = (10, 300)
+_PLATFORM_POLL_TIMEOUT = (10, 30)
+_PLATFORM_POLL_INTERVAL = 3
+_PLATFORM_POLL_MAX_WAIT = 600
+
+
+def _platform_headers() -> dict:
+    """QA 平台 /testtool 端點無 auth，只需 content-type。"""
+    return {"Content-Type": "application/json"}
+
+
+# ── 失敗診斷（向 qatest-web errorMap.ts / buildBe2ProductEditUrl 對齊）──
+_PLATFORM_ERROR_MAP = {
+    "product_check_fail": {"title": "錯誤的商品", "desc": "請檢查參數，該商品不存在或編號錯誤。"},
+    "package_check_fail": {"title": "錯誤的套餐", "desc": "請檢查參數，該套餐不存在於該商品或編號錯誤。"},
+    "product_not_active": {"title": "商品尚未上架", "desc": "此商品存在但尚未上架。"},
+    "no_sellable_package": {"title": "沒有可下單的套餐", "desc": "請確認是否售罄、下架或超過銷售期。"},
+    "create_redeem_fail": {"title": "兌換券建立失敗", "desc": "創建兌換券 API 失效。"},
+    "extend_item_calendar_fail": {"title": "延長銷售日曆失敗", "desc": "請確認商品或套餐設定正確。"},
+    "create_product_fail": {"title": "商品創建失敗", "desc": ""},
+}
+
+
+def _platform_be2_base(env: str) -> Optional[str]:
+    """env → BE2 base URL（同步自 qatest-web utils.ts getBe2BaseUrl）。"""
+    if env == "stage":
+        return "https://be2.stage.kkday.com"
+    if env == "sit":
+        return "https://be2.sit.kkday.com"
+    if env.startswith("sit") and len(env) > 3:
+        return f"https://be2-{env[3:]}.sit.kkday.com"
+    return None
+
+
+def _platform_be2_edit_url(env: str, prod_oid) -> Optional[str]:
+    """組 BE2 商品編輯頁 URL，讓使用者手動調整（環境差異失敗很常見）。"""
+    base = _platform_be2_base(env)
+    return f"{base}/v2/product/{prod_oid}/edit-product-detail" if base else None
+
+
+def _platform_is_failure(result: dict) -> bool:
+    """判斷 QA 平台 tool 回傳是否為失敗（涵蓋 copy / guard / preview / async 包裝）。"""
+    if not isinstance(result, dict):
+        return False
+    if str(result.get("copy_status", "")).lower() == "fail":
+        return True
+    if str(result.get("publish_status", "")).lower() == "fail":
+        return True
+    return result.get("status") in ("error", "failed", "timeout")
+
+
+def _platform_extract_why(result: dict) -> list:
+    """蒐集失敗原因 raw detail（不吞資訊，去重保序）。"""
+    whys = []
+    for e in result.get("errors") or []:
+        if isinstance(e, dict) and e.get("detail"):
+            whys.append(e["detail"])
+    if result.get("detail"):
+        whys.append(result["detail"])
+    if not whys and result.get("message"):
+        whys.append(result["message"])
+    seen, out = set(), []
+    for w in whys:
+        if w not in seen:
+            seen.add(w)
+            out.append(w)
+    return out
+
+
+def _platform_diagnose(result: dict, env: str) -> dict:
+    """QA 平台 tool 失敗時附加 _diagnosis（分類 + 原因 + prod_oid + BE2 URL）。成功原樣回。"""
+    if not _platform_is_failure(result):
+        return result
+    diag: dict = {}
+    cfg = _PLATFORM_ERROR_MAP.get(result.get("message"))
+    if cfg:
+        diag["title"] = cfg["title"]
+        if cfg["desc"]:
+            diag["desc"] = cfg["desc"]
+    why = _platform_extract_why(result)
+    if why:
+        diag["why"] = why
+    prod_oid = (result.get("target") or {}).get("prod_oid") or result.get("prod_oid")
+    if prod_oid:
+        diag["created_prod_oid"] = prod_oid
+        url = _platform_be2_edit_url(env, prod_oid)
+        if url:
+            diag["be2_edit_url"] = url
+            diag["hint"] = (
+                f"此類失敗常因環境差異造成，並非工具 bug。商品已建立於 {env}"
+                f"（prod_oid={prod_oid}），多半可到 BE2 手動調整後再定版：{url}"
+            )
+    if result.get("status") == "timeout":
+        diag.setdefault("hint", result.get("message"))
+    if not diag:
+        return result
+    enriched = dict(result)
+    enriched["_diagnosis"] = diag
+    return enriched
+
+
+# ── copy_product 兩段式 confirm-token（進程內一次性 nonce）──
+# preview 發、execute 單次消費、TTL 15 分自清、綁 (target_env, source_env, prod_oid)。
+# 硬性保證「execute 前一定先 preview」，防跳過供應商覆核導致靜默 fallback。
+_platform_preview_cache: dict = {}
+_platform_preview_lock = threading.Lock()
+_PLATFORM_PREVIEW_TTL = 900.0
+
+
+def _platform_purge_previews_locked() -> None:
+    """清掉過期 token（呼叫前須持有 _platform_preview_lock）。"""
+    now = time.monotonic()
+    dead = [k for k, v in _platform_preview_cache.items() if now - v["ts"] > _PLATFORM_PREVIEW_TTL]
+    for k in dead:
+        _platform_preview_cache.pop(k, None)
+
+
+# ── 平台呼叫（sync / async 進程內輪詢）──
+def _platform_sync(payload: dict) -> dict:
+    """同步打 /testtool/run，回傳 data。業務失敗仍 HTTP 200，資訊在 dict 內。"""
+    resp = requests.post(
+        f"{_PLATFORM_BASE}/testtool/run",
+        headers=_platform_headers(),
+        json=payload,
+        timeout=_PLATFORM_SYNC_TIMEOUT,
+    )
+    if not resp.ok:
+        raise RuntimeError(
+            f"POST /testtool/run ({payload['tool_name']}) → {resp.status_code}: {resp.text[:500]}"
+        )
+    return resp.json().get("data", {})
+
+
+def _platform_async(payload: dict) -> dict:
+    """非同步打 /testtool/run_async，進程內輪詢 /progress 到完成。逾時 ≠ 失敗。"""
+    resp = requests.post(
+        f"{_PLATFORM_BASE}/testtool/run_async",
+        headers=_platform_headers(),
+        json=payload,
+        timeout=_PLATFORM_POLL_TIMEOUT,
+    )
+    if not resp.ok:
+        raise RuntimeError(
+            f"POST /testtool/run_async ({payload['tool_name']}) → {resp.status_code}: {resp.text[:500]}"
+        )
+    task_id = (resp.json().get("data") or {}).get("task_id")
+    if not task_id:
+        raise RuntimeError(f"run_async ({payload['tool_name']}) 未回傳 task_id")
+    waited = 0
+    while waited < _PLATFORM_POLL_MAX_WAIT:
+        time.sleep(_PLATFORM_POLL_INTERVAL)
+        waited += _PLATFORM_POLL_INTERVAL
+        pr = requests.get(
+            f"{_PLATFORM_BASE}/testtool/progress/{task_id}",
+            headers=_platform_headers(),
+            timeout=_PLATFORM_POLL_TIMEOUT,
+        )
+        if pr.status_code == 404 or not pr.ok:
+            continue
+        data = pr.json().get("data") or {}
+        status = data.get("status")
+        if status in ("completed", "failed"):
+            result = data.get("result")
+            if status == "failed":
+                return {"status": "failed", "detail": result, "task_id": task_id}
+            return result
+    return {
+        "status": "timeout",
+        "message": (
+            f"後端仍在執行（已等 {_PLATFORM_POLL_MAX_WAIT}s），逾時 ≠ 失敗；"
+            "請稍後用對應 *_history 或商品頁查證是否已完成。"
+        ),
+        "task_id": task_id,
+    }
+
+
+def _platform_call(
+    platform_tool: str,
+    environment: str,
+    tool_kwargs: dict,
+    async_: bool = False,
+    mcp_name: Optional[str] = None,
+) -> dict:
+    """QA 平台工具統一入口：env 驗證 → sync/async 打 :8080 → 失敗診斷 → 埋點。
+
+    埋點沿用 ai-studio 的 _emit_analytics（operator=kkday_qa_platform_mcp、
+    success 反映真實業務結果）。mcp_name 是對外 tool 名（供埋點），platform_tool
+    是平台 ToolMap 的 key（進 payload）。
+    """
+    _check_env(environment)
+    source_env = (tool_kwargs or {}).get("source_environment")
+    if source_env is not None:
+        _check_env(source_env)
+    payload = {
+        "environment": environment,
+        "tool_name": platform_tool,
+        "tool_kwargs": tool_kwargs,
+        "trigger_point": _PLATFORM_TRIGGER,
+    }
+    label = mcp_name or platform_tool
+    params_snap = _sanitize_params(tool_kwargs)
+    start = time.monotonic()
+    try:
+        result = _platform_async(payload) if async_ else _platform_sync(payload)
+        result = _platform_diagnose(result, environment)
+        _emit_analytics(
+            label, params_snap, result, None, (time.monotonic() - start) * 1000,
+            operator=_PLATFORM_OPERATOR, success=not _platform_is_failure(result),
+        )
+        return result
+    except BaseException as exc:
+        _emit_analytics(
+            label, params_snap, None, exc, (time.monotonic() - start) * 1000,
+            operator=_PLATFORM_OPERATOR, success=False,
+        )
+        raise
+
+
+# ── QA 平台 tools（對外名與 ai-studio 併存；create_product/redeem_voucher 用
+#    name= 覆寫，避開與上方休眠函式的 Python module 撞名）──
+@mcp.tool(name="create_product")
+def platform_create_product(env: str, prod_type: str) -> dict:
+    """建立測試商品（QA 平台，一併建 package + item，較慢約 3 分鐘）。
+
+    呼叫前先向使用者確認 env / prod_type。env 只有 sit / stage；選 sit 必須追問哪一台
+    （sit0x / sit20x，如 sit206），不得自行預設或編造。使用者沒指明種類時，把
+    PROD_TYPE_OPTIONS 列給他挑，別擅自帶 normal。
+
+    Args:
+        env: 環境 sit / stage（例：sit206 / stage）
+        prod_type: 商品種類，20 選 1（見 PROD_TYPE_OPTIONS）
+    """
+    prod_type = (prod_type or "").strip()
+    if prod_type not in PROD_TYPE_OPTIONS:
+        raise ValueError(
+            f"prod_type '{prod_type}' 不是有效值；請把選項列給使用者挑，選定後再帶入。"
+            f"可用值：{', '.join(PROD_TYPE_OPTIONS)}"
+        )
+    return _platform_call(
+        "product", env, {"prod_type": prod_type}, async_=True, mcp_name="create_product"
+    )
+
+
+@mcp.tool(name="redeem_voucher")
+def platform_redeem_voucher(
+    env: str, product_oid: str, package_oid: str, qyt: str = "1"
+) -> dict:
+    """用 voucher 兌換商品訂單（QA 平台）。
+
+    呼叫前先確認參數。env 只有 sit / stage；選 sit 要追問哪一台，不得自行編造。
+
+    Args:
+        env: sit / stage
+        product_oid: 商品 OID
+        package_oid: 套餐 OID
+        qyt: 兌換數量（字串，預設 '1'）
+    """
+    return _platform_call(
+        "redeem", env,
+        {"productOid": str(product_oid), "packageOid": str(package_oid), "qyt": str(qyt)},
+        mcp_name="redeem_voucher",
+    )
+
+
+@mcp.tool()
+def create_order(
+    env: str,
+    product_oid: str,
+    package_oid: str,
+    qty: int = 1,
+    order_count: int = 1,
+    go_date_shift: int = 1,
+) -> dict:
+    """建立測試訂單（QA 平台）。
+
+    Args:
+        env: sit / stage
+        product_oid: 商品 OID
+        package_oid: 套餐 OID
+        qty: 每筆訂單數量（預設 1）
+        order_count: 下單筆數（預設 1）
+        go_date_shift: 出發日為幾天後（預設 1）
+    """
+    return _platform_call(
+        "create_order", env,
+        {
+            "productOid": str(product_oid),
+            "packageOid": str(package_oid),
+            "qty": qty,
+            "order_count": order_count,
+            "go_date_shift": go_date_shift,
+        },
+        async_=True,
+    )
+
+
+@mcp.tool()
+def extend_item_calendar(
+    env: str, product_oid: str, package_oid: str, extend_month: int
+) -> dict:
+    """延長單一 package 的銷售月曆（QA 平台）。
+
+    Args:
+        env: sit / stage
+        product_oid: 商品 OID
+        package_oid: 套餐 OID
+        extend_month: 延長月數 1~12
+    """
+    return _platform_call(
+        "extend_item_calendar", env,
+        {"productOid": str(product_oid), "packageOid": str(package_oid), "extend_month": extend_month},
+    )
+
+
+@mcp.tool()
+def batch_extend_item_calendar(env: str, product_oid: str, extend_month: int) -> dict:
+    """批次延長整個商品所有 package 的月曆（QA 平台）。⚠️ 不適用 OCBT 子母單商品。
+
+    Args:
+        env: sit / stage
+        product_oid: 商品 OID
+        extend_month: 延長月數 1~12
+    """
+    return _platform_call(
+        "batch_extend_item_calendar", env,
+        {"productOid": str(product_oid), "extend_month": extend_month},
+        async_=True,
+    )
+
+
+@mcp.tool()
+def copy_product_preview(target_env: str, source_env: str, prod_oid: str) -> dict:
+    """跨環境複製商品的【第一步】：預覽來源商品 + 檢查供應商在目標環境是否存在，回 confirm_token。
+
+    回傳的 target_suppliers 標出每個來源供應商在目標環境 exists 與否；把 exists=false
+    的列給使用者，確認用 fallback 還是指定 override，再帶 confirm_token 呼叫 copy_product。
+
+    Args:
+        target_env: 要複製到哪個環境（目標）— sit / stage
+        source_env: 從哪個環境讀來源商品 — sit / stage
+        prod_oid: 來源商品 OID
+    """
+    result = _platform_call(
+        "copy_product_preview", target_env,
+        {"source_environment": source_env, "productOid": str(prod_oid), "raise_on_fail": False},
+        mcp_name="copy_product_preview",
+    )
+    if not isinstance(result, dict) or result.get("status") != "success":
+        return result
+    token = uuid.uuid4().hex
+    with _platform_preview_lock:
+        _platform_purge_previews_locked()
+        _platform_preview_cache[token] = {
+            "target_env": target_env,
+            "source_env": source_env,
+            "prod_oid": str(prod_oid),
+            "target_suppliers": result.get("target_suppliers", {}),
+            "pkg_supplier_map": result.get("pkg_supplier_map", {}),
+            "ts": time.monotonic(),
+        }
+    return {
+        "status": "success",
+        "confirm_token": token,
+        "product_name": result.get("product_name"),
+        "package_count": result.get("package_count"),
+        "source_suppliers": result.get("source_suppliers"),
+        "target_suppliers": result.get("target_suppliers"),
+        "_next_step": (
+            "與使用者確認供應商對應：target_suppliers 中 exists=false 的在目標環境不存在，"
+            "可用 fallback_supplier_oid（預設 15247）或在 supplier_override_map 指定替代；"
+            "確認後呼叫 copy_product(...) 並帶入本 confirm_token 完成複製。"
+        ),
+    }
+
+
+@mcp.tool()
+def copy_product(
+    target_env: str,
+    source_env: str,
+    prod_oid: str,
+    confirm_token: str,
+    supplier_override_map: Optional[dict] = None,
+    fallback_supplier_oid: int = 15247,
+) -> dict:
+    """跨環境複製商品的【第二步】：實際執行複製。
+
+    ⚠️ 必須先呼叫 copy_product_preview 取得 confirm_token，否則拒絕 —— 這是為了保證
+    供應商對應有經過使用者覆核（否則供應商會被靜默替換成 fallback）。
+    target_env / source_env / prod_oid 必須與 preview 時完全一致。
+
+    Args:
+        target_env: 目標環境（須與 preview 一致）
+        source_env: 來源環境（須與 preview 一致）
+        prod_oid: 來源商品 OID（須與 preview 一致）
+        confirm_token: copy_product_preview 回傳的 token（不可自行編造）
+        supplier_override_map: 選填。{原供應商oid字串: 改用的oid}
+        fallback_supplier_oid: 選填。目標環境找不到對應供應商時的預設（預設 15247）
+    """
+    with _platform_preview_lock:
+        _platform_purge_previews_locked()
+        entry = _platform_preview_cache.pop(confirm_token, None)
+    if entry is None:
+        return {
+            "status": "error",
+            "message": (
+                "尚未預覽，或 confirm_token 無效 / 已使用 / 已逾時。請先呼叫 "
+                "copy_product_preview(target_env, source_env, prod_oid) 取得新 token，"
+                "與使用者確認供應商後再帶入。"
+            ),
+        }
+    if (entry["target_env"], entry["source_env"], entry["prod_oid"]) != (
+        target_env,
+        source_env,
+        str(prod_oid),
+    ):
+        return {
+            "status": "error",
+            "message": (
+                f"confirm_token 與本次商品/環境不符（token 對應 "
+                f"{entry['source_env']}/{entry['prod_oid']} → {entry['target_env']}）。"
+                "請對同一組商品重新 copy_product_preview。"
+            ),
+        }
+    return _platform_call(
+        "copy_product", target_env,
+        {
+            "source_environment": source_env,
+            "productOid": str(prod_oid),
+            "fallback_supplier_oid": fallback_supplier_oid,
+            "supplier_override_map": supplier_override_map or {},
+            "target_suppliers": entry["target_suppliers"],
+            "pkg_supplier_map": entry["pkg_supplier_map"],
+        },
+        async_=True,
+        mcp_name="copy_product",
+    )
 
 
 def main() -> None:
