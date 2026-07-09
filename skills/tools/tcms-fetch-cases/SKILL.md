@@ -68,6 +68,8 @@ python3 "$SCRIPT" --run-id 95 --assignee "Eden Lai" --out /tmp/tcms_cases.json
     "priority": "Critical",
     "status": "Untested",
     "suite_id": 42,
+    "labels": "[\"FE (Web/mWeb/Android/iOS)\"]",
+    "tags": ["Platform / Service:FE (Web/mWeb/Android/iOS)"],
     "preconditions": "",
     "steps": [
       {"order": 1, "action": "...", "data": "", "expected_result": "..."}
@@ -78,6 +80,9 @@ python3 "$SCRIPT" --run-id 95 --assignee "Eden Lai" --out /tmp/tcms_cases.json
 
 - `result_id` / `status` 只有 run 模式（B）才有；貼 ID 模式（A）為 `null`
 - `steps` 完全來自 TCMS `/cases/{id}`，不需要 Zephyr
+- **`labels` / `tags` 帶平台資訊**（如 `["FE (Web/mWeb/Android/iOS)"]`）；同一平台可能出現在其中任一欄，下游要**兩欄一起看**來判定要寫哪些平台。可能為 `null`。
+
+> **新鮮度：輸出檔是「即時快照」，不是快取。** 腳本每次執行都即時打 TCMS API（無 disk cache、不讀舊檔），跑一次就覆蓋 `--out`。因此 **case 內容以 TCMS 為準；實作前務必重新 fetch，不要沿用上一輪留在 `/tmp` 的舊檔**（使用者可能剛在 UI 上改過內容）。
 
 ## TCMS API 對照
 
