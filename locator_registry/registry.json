@@ -1,0 +1,183 @@
+{
+  "schema_version": 2,
+  "description": "KKday QA 自動化 locator registry。易變資料快取，非真理來源。每個元素存『優先序候選陣列』，用前逐一 cheap-verify 到第一個通過的才用；全 fail 才重挖。相關元素依 flow 分組，GET 用 page/flow 當 key 一次批次取回。詳見 README.md。",
+  "updated_at": "2026-07-09T00:00:00Z",
+  "entries": [
+    {
+      "id": "ttd-landing-search-input-web-stage",
+      "flow": "things-to-do-search",
+      "page": "things-to-do-landing",
+      "component": "landing-search-bar-input",
+      "element": "things-to-do landing 頁自帶搜尋框 input",
+      "semantic": "things-to-do (門票&體驗) landing 頁『自帶』搜尋框的真實 input。從這裡送出才會自動錨定『門票&體驗』tab；首頁 header 搜尋框不會。page object 註解明確標示為非 header 全域搜尋。",
+      "platform": "web",
+      "env": "stage",
+      "selectors": [
+        {"type": "css", "value": "input.things-to-do-search-bar__input", "note": "語意 class 首選"},
+        {"type": "xpath", "value": "//input[contains(@class,'things-to-do-search-bar__input')] | //input[contains(@class,'kk-text-field__native') and @type='search'] | //input[contains(@class,'search-input__keyword')]", "note": "結構 fallback union（landing/category 共用元件）"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/web/experiences_page.py:9"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw/product/ticket",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "ttd-landing-search-submit-web-stage",
+      "flow": "things-to-do-search",
+      "page": "things-to-do-landing",
+      "component": "landing-search-bar-submit",
+      "element": "things-to-do landing 自帶搜尋框送出按鈕",
+      "semantic": "things-to-do landing 頁自帶搜尋框的送出按鈕。",
+      "platform": "web",
+      "env": "stage",
+      "selectors": [
+        {"type": "css", "value": "button.things-to-do-search-bar__search-btn", "note": "語意 class 首選"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/web/experiences_page.py:13"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw/product/ticket",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "ttd-landing-fake-search-trigger-mweb-stage",
+      "flow": "things-to-do-search",
+      "page": "things-to-do-landing",
+      "component": "landing-search-bar-input",
+      "element": "mweb landing 假輸入框觸發器",
+      "semantic": "mweb landing 頁沒有真實 input，是一個『假輸入框』觸發器。點了會開全域搜尋 modal，且該 modal 容器是 things-to-do-search-discovery（不是共用假設的 search-modal）。",
+      "platform": "mweb",
+      "env": "stage",
+      "selectors": [
+        {"type": "css", "value": "div.things-to-do-search-input", "note": "假輸入框容器首選"},
+        {"type": "css", "value": ".things-to-do-search-input__text", "note": "內顯示文字（placeholder / 上次關鍵字）"},
+        {"type": "css", "value": ".things-to-do-search-input__btn", "note": "搜尋 icon 按鈕（只點 icon 直接送出、不開 modal）"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/mweb/experiences_page.py:9"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw/product/ticket",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "ttd-search-modal-input-mweb-stage",
+      "flow": "things-to-do-search",
+      "page": "things-to-do-landing",
+      "component": "search-modal-input",
+      "element": "mweb 從 landing 觸發的全域搜尋 modal input",
+      "semantic": "容器陷阱：header 入口的 modal 容器是 search-modal，但 landing 假輸入框入口的容器是 things-to-do-search-discovery，兩者共用內部元件。KQT-T37931 mweb 第一次 fail 就是因為只假設了 search-modal。首選用 union 同時涵蓋兩種容器。",
+      "platform": "mweb",
+      "env": "stage",
+      "selectors": [
+        {"type": "xpath", "value": "//div[contains(@class,'search-modal') or contains(@class,'things-to-do-search-discovery')]//input[contains(@class,'search-input-field__input')]", "note": "雙容器 union 首選（防容器陷阱）"},
+        {"type": "xpath", "value": "//div[contains(@class,'things-to-do-search-discovery')]//input[contains(@class,'search-input-field__input')]", "note": "只 landing 入口容器 fallback"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/mweb/search_page.py:13-15"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw/product/ticket",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "search-result-header-keyword-web-stage",
+      "flow": "things-to-do-search",
+      "page": "search-result",
+      "component": "header-keyword",
+      "element": "web 結果頁 header 關鍵字（可編輯 input，讀 .value）",
+      "semantic": "搜尋結果頁 header 全域搜尋框，帶入結果頁關鍵字，可讀 .value 驗證。",
+      "platform": "web",
+      "env": "stage",
+      "selectors": [
+        {"type": "css", "value": "#search_experience_value", "note": "id 首選"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/web/search_result_page.py:36"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw/search?keyword=%E5%8F%B0%E5%8C%97",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "search-result-header-keyword-mweb-stage",
+      "flow": "things-to-do-search",
+      "page": "search-result",
+      "component": "header-keyword",
+      "element": "mweb 結果頁 header 關鍵字（靜態文字，讀 .text）",
+      "semantic": "mweb 結果頁 header 顯示關鍵字的靜態文字（非可編輯 input，讀 .text）。與 web 的可編輯 input 不同。",
+      "platform": "mweb",
+      "env": "stage",
+      "selectors": [
+        {"type": "css", "value": ".product-list-header__keyword", "note": "語意 class 首選"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/mweb/search_result_page.py:36"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw/search?keyword=%E5%8F%B0%E5%8C%97",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "search-result-active-tab-web-stage",
+      "flow": "things-to-do-search",
+      "page": "search-result",
+      "component": "active-tab-text",
+      "element": "web 結果頁 active tab 文字",
+      "semantic": "搜尋結果頁 active tab 的文字，用來驗證自動錨定『門票&體驗』。注意實際 tab 文字是『門票&體驗』（& 全形），非規格寫的『門票/體驗』。active 的關鍵 class token 是 kk-tabs__tab--active，web/mweb 完全相同；『門票&體驗』是資料層文案，程式用文字比對取 active tab，selector 本身不含該字串。",
+      "platform": "web",
+      "env": "stage",
+      "selectors": [
+        {"type": "xpath", "value": "//*[contains(@class,'kk-tabs__tab-list')]//*[contains(@class,'kk-tabs__tab--active')]//div[contains(@class,'kk-tabs__tab-text')]", "note": "active tab 文字首選"},
+        {"type": "xpath", "value": "//*[contains(@class,'kk-tabs__tab-list')]//div[contains(@class,'kk-tabs__tab-text')]", "note": "全 tab 清單 fallback（再用文字比對挑 active）"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/web/search_result_page.py:24-28"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw/search?keyword=%E5%8F%B0%E5%8C%97",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "search-result-active-tab-mweb-stage",
+      "flow": "things-to-do-search",
+      "page": "search-result",
+      "component": "active-tab-text",
+      "element": "mweb 結果頁 active tab 文字",
+      "semantic": "mweb 結果頁 active tab 文字，與 web 共用 kk-tabs 結構（class token 相同）。",
+      "platform": "mweb",
+      "env": "stage",
+      "selectors": [
+        {"type": "xpath", "value": "//*[contains(@class,'kk-tabs__tab-list')]//*[contains(@class,'kk-tabs__tab--active')]//div[contains(@class,'kk-tabs__tab-text')]", "note": "active tab 文字首選"},
+        {"type": "xpath", "value": "//*[contains(@class,'kk-tabs__tab-list')]//div[contains(@class,'kk-tabs__tab-text')]", "note": "全 tab 清單 fallback"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/mweb/search_result_page.py:24-28"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw/search?keyword=%E5%8F%B0%E5%8C%97",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "home-header-search-web-stage",
+      "flow": "home-search",
+      "page": "home",
+      "component": "header-search-input",
+      "element": "web 首頁 banner/header 搜尋入口",
+      "semantic": "首頁 banner/header 搜尋入口。與 things-to-do landing 自帶搜尋框行為不同：從這裡送出不會自動錨定『門票&體驗』tab。",
+      "platform": "web",
+      "env": "stage",
+      "selectors": [
+        {"type": "xpath", "value": "//section[@class='home-banner']//*[@id='search_experience_value'] | //div[contains(@class,'search-input__container')]//div[@id='keyword-carousel']", "note": "banner 搜尋入口 union"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/web/home_page.py:12"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    },
+    {
+      "id": "home-header-search-mweb-stage",
+      "flow": "home-search",
+      "page": "home",
+      "component": "header-search-input",
+      "element": "mweb 首頁搜尋框",
+      "semantic": "mweb 首頁搜尋框（search-box 或 search-input-field__input）。從首頁送出不會自動錨定門票&體驗 tab。",
+      "platform": "mweb",
+      "env": "stage",
+      "selectors": [
+        {"type": "xpath", "value": "(//*[@class='search-box'] | //*[@class='search-input-field__input'])[1]", "note": "首頁搜尋框 union"}
+      ],
+      "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/mweb/home_page.py:10"},
+      "verify_url": "https://www.stage.kkday.com/zh-tw",
+      "last_verified": "2026-07-09T00:00:00Z",
+      "status": "verified"
+    }
+  ]
+}
