@@ -880,7 +880,7 @@ def product_types() -> dict:
     }
 
 
-@mcp.tool()
+# @mcp.tool()  # 暫時停用：不在 MCP 註冊（保留實作，需要時取消註解即可）
 def create_product(env: str, prod_type: str) -> dict:
     """建立測試商品（proxy 到 autotest-service，會一併建 package + item，較慢約 3 分鐘）。
 
@@ -920,7 +920,7 @@ def product_create_history(limit: int = 20) -> dict:
     return _call("GET", "/api/tools/product-create-history", params={"limit": limit})
 
 
-@mcp.tool()
+# @mcp.tool()  # 暫時停用：不在 MCP 註冊（保留實作，需要時取消註解即可）
 def redeem_voucher(
     env: str, product_oid: str, package_oid: str, qyt: str = "1"
 ) -> dict:
