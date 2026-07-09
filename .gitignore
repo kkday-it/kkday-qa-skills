@@ -1,5 +1,8 @@
 # Claude Code internal files
-.claude/
+.claude/*
+# 但 team 共享的專案設定（如 Stop hook）要進版控；個人設定放 settings.local.json（下方忽略）
+!.claude/settings.json
+.claude/settings.local.json
 claude-progress.txt
 .claude-progress/
 
