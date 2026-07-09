@@ -4,6 +4,8 @@
 
 你不用記指令、不用自己開瀏覽器、不用管它怎麼跑。用講的就好。
 
+> **這是一條 AI Agent 流程**：你對話的**主對話 Claude 是 AI 總指揮**，它會派出 🤖 **AI Agent `qa-case-automator`**（每個 case 一個）去實際做事。全程有 AI 在跑，你負責出需求 + 最後決定要不要開 PR。
+
 ---
 
 ## 怎麼用（直接把這些話貼給 Claude）
@@ -46,11 +48,11 @@ Run 95 裡 Eden 的 case 自動化
 
 ```mermaid
 flowchart TD
-    A["你：把這批 case 自動化"] --> B["主對話 Claude（總指揮）"]
+    A["👤 你：把這批 case 自動化"] --> B["🤖 主對話 Claude（AI 總指揮）"]
     B --> C["① 撈 case list<br/>（tcms-fetch-cases）"]
-    C --> D["② 逐案 spawn qa-case-automator<br/>（每案一個，可平行）"]
+    C --> D["② 逐案 spawn qa-case-automator<br/>🤖 AI Agent，每案一個，可平行"]
 
-    subgraph W["每個工人 qa-case-automator"]
+    subgraph W["🤖 AI Agent：qa-case-automator（每案一個）"]
         direction TB
         E["取 steps"] --> F["照規範實作<br/>（qa-automation-writer）"]
         F --> G["驗 locator<br/>（stage 真實畫面 / Playwright MCP）"]
@@ -69,13 +71,15 @@ flowchart TD
 
 ### 元件各是什麼
 
-| 元件 | 角色 | 說明 |
+> **型別看這裡**：🤖 **Agent** 是會獨立跑一連串工作的 subagent；📄 **Skill** 只是一份「怎麼做」的規範/腳本，被 Agent 或主對話載來用。這份流程裡**唯一的 Agent 是 `qa-case-automator`**，其餘三個 `tcms-*` / `qa-*` 都是 Skill。
+
+| 元件 | 型別 | 說明 |
 | --- | --- | --- |
 | **主對話 Claude** | 總指揮 | 你直接對話的那個。負責撈 case、分派、彙整、問你開不開 PR。**只有它能開 PR。** |
-| **qa-case-automator** | 單案工人 | 一個 case 開一個，做完就結束。不撈整批、不開 PR、不叫別的 agent。 |
-| `tcms-fetch-cases` | skill | 從 TCMS 撈 case 的 steps。 |
-| `qa-automation-writer` | skill | 寫 code + 驗 locator 的規範。 |
-| `qa-test-runner` | skill | 跑測試 + 失敗診斷/修復的規範。 |
+| **`qa-case-automator`** | 🤖 **Agent（subagent）** | 一個 case 開一個 agent，做完就結束。不撈整批、不開 PR、不叫別的 agent。 |
+| `tcms-fetch-cases` | 📄 Skill | 從 TCMS 撈 case 的 steps。 |
+| `qa-automation-writer` | 📄 Skill | 寫 code + 驗 locator 的規範。 |
+| `qa-test-runner` | 📄 Skill | 跑測試 + 失敗診斷/修復的規範。 |
 | **Playwright MCP** | 工具 | 驗 locator 時開的**真實瀏覽器**，導到 `stage.kkday.com` 比對畫面。**單一共用，不能多案同開。** |
 | **kkday-QA-automation** | 本機 repo | 測試碼真正落地的地方（page object / test step / case yaml）。 |
 
