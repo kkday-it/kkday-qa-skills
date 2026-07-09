@@ -161,6 +161,14 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 
 - 互動前必須呼叫 `.wait()`：`pages.page.element.wait().click()`；禁止直接 `.click()` 不加 wait
 - 禁止用變數暫存 page object（如 `page = pages.xxx_page`），必須每次完整寫 `pages.xxx_page.element`
+- **禁止在 test_step 內 inline 建構 `Element(...)` / `Elements(...)`**：所有 locator 一律定義在對應 page object 的 `@property`，test_step 只透過 `pages.<page>.<element>` 取用（取 `.center`、`.text`、`.wait()` 等也一樣，先在 page object 定義好 element）。
+  ```python
+  # ❌ 錯：locator 寫死在 test_step、繞過 page object
+  center = Element(("accessibility id", "homeTxtSearch"), pages.home_page).wait().center
+  # ✅ 對：element 在 page object 定義，test_step 只取用
+  #   pages/.../home_page.py:  @property def search_bar(self)->Element: return Element(("accessibility id","homeTxtSearch"), self)
+  center = pages.home_page.search_bar.wait().center
+  ```
 - 禁止用 `time.sleep()` 或 `driver.page.wait_for_timeout()` 做硬等待，若需硬等待請用 `common.sleep_by_seconds()` 搭配 `TimeoutConstants`
 - 斷言必須用 hamcrest：`assert_that(actual, equal_to(expected))`
 - 測試資料必須從 `testcase.static_test_data` 或 `testcase.dynamic_test_data` 取得，禁止硬編碼
