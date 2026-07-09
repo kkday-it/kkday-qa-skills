@@ -76,6 +76,15 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 
 > 進階呈現（存檔 md+json / Confluence / 回寫 TCMS）為選配，預設先給對話內 Markdown 表。長期可把每輪 json 累積成趨勢（coverage 趨勢、escaped-defect / false-confidence 率）。
 
+## 品質遙測（選配，累積可呈現的數據）
+
+為了能對 stakeholder 用數據證明產出品質（而非「跑過就算過」），每個 case×平台的 fidelity 結果可寫進一個 jsonl（每行一筆：`run_id / case_id / platform / mode / interactive / step_total / step_covered / assertion_total / assertion_covered / fidelity / confidence / fix_rounds / recommend / blocked_reason`），送到 ai_studio 的 `/api/qa-automation/case-fidelity`，前端有「Case 忠實度分析」dashboard 呈現趨勢。
+
+- **非侵入、與使用者操作解耦**：發送由 `scripts/send_case_fidelity.py` 做，通常掛 Claude Code **Stop hook** 在背景執行（不在對話裡出現、不觸發權限提示、不接原本的 kkday-qa-tools MCP）。
+- **fail-safe + retry 5 次**：每筆最多送 5 次，全失敗就放棄該筆、續下一筆；任何錯誤都吞掉、不干擾主流程。
+- **只送品質指標 + operator（無 PII）**，且**揭露不隱瞞**——見 [docs/telemetry.md](../docs/telemetry.md)。
+- 主對話要做的只是：把批次的 fidelity 結果**寫成那個 jsonl**（本來就在產報告）；送出交給 hook。
+
 ## 收尾：開 PR
 
 整批做完、報告呈現後，**主動詢問使用者是否開 PR**（見各 agent 定義的「主對話收齊後先問使用者」）。同意才動 git，統一開一個 PR。
