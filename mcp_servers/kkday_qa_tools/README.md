@@ -46,6 +46,7 @@
     "kkday-qa-tools": {
       "command": "uvx",
       "args": [
+        "--refresh",
         "--from",
         "git+https://github.com/kkday-it/kkday-qa-skills.git#subdirectory=mcp_servers/kkday_qa_tools",
         "kkday-qa-tools-mcp"
@@ -60,7 +61,11 @@
 }
 ```
 
-Claude Code 啟動時 `uv` 自動 clone repo、建 venv、跑 server，同事零手動安裝。後端 endpoint 更新 → merge master → 重啟 Claude Code 就抓最新版。
+Claude Code 啟動時 `uv` 自動 clone repo、建 venv、跑 server，同事零手動安裝。
+
+**`--refresh` 是關鍵**：`uvx` 預設會 cache 已建好的環境，requirement 字串沒變時**不會**重抓 git，光重啟拿到的還是舊版。加上 `--refresh` 後，每次啟動 Claude Code 都會強制重抓 master 最新 commit 再重建環境 → 永遠拿到最新版（代價：啟動多幾秒 git fetch）。所以只要有人把更新 merge 進 master，同事重啟 Claude Code 就自動更新，零手動。
+
+> 前提：`--refresh` 是「無腦追 master」，master 必須保持可用；沒寫完的東西別 merge 進 master，否則同事下次重啟就會抓到。要更可控可改用 git tag 發版（`git+…@v0.2.0#subdirectory=…`）。
 
 ### B. pipx（單機隔離）
 
