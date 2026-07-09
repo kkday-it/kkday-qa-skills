@@ -112,6 +112,21 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 
 失敗時交給 **qa-test-runner** 的診斷/修復流程（它同樣會用上述元素樹抓取來修 locator）。
 
+### 階段 4 — 產出 step→assertion 可追溯表（供忠實度 review）
+
+**跑過 ≠ 有測對 case。** 定稿時必須產出一張**可追溯表**，把 TCMS case 的每個 step / expected_result 對到實作中的斷言，供 `qa-case-fidelity-reviewer` 比對（也逼自己確認每個 expected 都真的有斷言）。
+
+- 每個 **expected_result 至少對到一個真斷言**（引用到 case 要驗的那個值/元素，非恆真、非「頁面有載入」這種弱檢查）。
+- 多平台逐平台各一張（含 `[PC]/[M]/[APP]/[iOS]/[Android]` 步驟切分）。
+- 格式範例（放在回報，或 test step docstring）：
+
+  | TCMS step / expected | 實作斷言（file:line） |
+  | --- | --- |
+  | step2 expected「顯示原價無劃線」 | `category_page.py:142` `assert_that(...strikethrough is None...)` |
+  | step4 expected「折扣再現」 | `category_page.py:151` `assert_that(...has_discount...)` |
+
+- **對不到斷言的 expected_result 一律列出**（不要藏），交給 fidelity reviewer / 主對話判。
+
 ---
 
 ## Page Object 規範

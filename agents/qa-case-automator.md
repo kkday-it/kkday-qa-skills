@@ -123,8 +123,11 @@ def _kkday_www_host(env: str) -> str:
 - 本 case 結果：KQT-T ID → `pass` / `fail` / `skipped`（附原因）
 - 改動檔案清單（page object / test step / case data 的相對路徑）
 - locator 驗證與測試的關鍵事實（平台、是否 pass、卡在哪）
+- **step→assertion 可追溯表**（每個 TCMS step / expected_result 對到哪個斷言 `file:line`；對不到的 expected 一律列出）——供主對話跑忠實度 review
 - **自動帶入的假設值**（環境 / 語系 / 平台 / 推導出的 oid 等）與**卡住待反問的缺項**，讓主對話能向使用者確認
 - 對外文件用繁體中文；commit message / 程式碼註解可用英文
+
+> **「跑過」不等於「過」。** 你只負責實作 + 跑過 + 產可追溯表；**忠實度把關由主對話在你回報後 spawn `qa-case-fidelity-reviewer`（對抗式、獨立）** 做——它比對 case 規格 vs 你的實作，出覆蓋率/信心，達標才算真的過，不達標退回你修。你**不自己 spawn reviewer**（非本職責）。
 
 ## 禁止事項
 
