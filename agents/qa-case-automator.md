@@ -49,26 +49,24 @@ model: sonnet
 
 先確認本機有 `kkday-QA-automation`（`QATest/src/qatest/__init__.py` 或 `pages/`+`test_steps/`+`case_data/` 同時存在）。找不到 → 回報主對話請先 clone，不要無腦 `git clone`。
 
-### 1. 取 steps
+### 1. 取 steps（每次實作前重新 fetch，不沿用舊檔）
 ```bash
 python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
     --cases <本 case 的 KQT-T ID> --out /tmp/tcms_case.json
 ```
 撈到 0 筆 → 回報主對話後結束。
+輸出檔是**即時快照非快取**，使用者可能剛在 TCMS UI 改過內容 → **實作當下務必重新 fetch，不要沿用上一輪的舊 `/tmp` 檔**。撈回的 `labels`/`tags` 要留著給下一步判定平台。
 
-### 2. 缺資訊處理（自動帶入優先，必要才反問）
+### 2. 判定平台 + 缺資訊（subagent 只帶預設 + 回報，不直接問人、不 hang）
 
-case 常缺實作/跑測試所需的具體資料（商品、帳號、日期、方案代號…）。原則：**這項資訊若用猜的會導致「測到錯的東西」或「假通過 / 假失敗」嗎？**
+判定細則見 `qa-automation-writer` 階段 0。本 agent 的行為界線：
 
-- **能自動帶入的 → 先帶入並繼續做**，做完在回報裡**列出「自動帶入了哪些值」，由主對話主動詢問使用者確認**（事後確認，不阻塞）。可自動帶入的例如：
-  - 環境＝`stage`、語系＝`zh-tw`、平台＝依 case `limit_test_platform`（case 沒標時預設 web，並註明此假設）
-  - 可推導的值：從商品 URL slug 解析 oid、既定測試帳號 / 通用測試資料
-- **完全無法自動帶入、且猜了會測錯的 → 停下反問**（唯一會阻塞的情況）。反問時務必講清楚三件事：**缺哪一項 / 這個 case 為何需要它 / 可接受什麼格式**。典型例子：
-  - case 只寫抽象代號（「商品 A」「PKG_A」「SKU_001」）卻無 oid、無 URL、無可推導來源 → 問使用者要 **oid（如 `9468`）或商品 URL**
-  - 測試資料前置未知（如「該商品是否已配置題述折扣規則 / godate」）→ 問使用者是否已備好，或需另備
-- **不論帶入或反問，回報都要標明哪些值是 agent 自己假設帶入的**，讓使用者一眼看出風險點。
+- **平台**：讀 case `labels`/`tags` 定目標平台；step action 內平台標記逐平台切分（`[PC]→web`、`[M]→mweb`、`[APP]→native app`，含 `[iOS]`/`[Android]`），各平台只取該平台的步驟與 expected_result；**確認要做的每個平台各產一份 auto case**（web/mweb 走 `web_playwright/`，App 走 `mobile/`）。
+- **能安全帶預設就帶入並記錄假設**，繼續做：環境 `stage`、語系 `zh-tw`、商品 URL slug→oid、既定測試帳號、label 標的所有 UI 平台…
+- **需判斷或可能測錯的點**（label 混 API 如 `web/API`、多平台這輪是否全做、平台標記對不上、缺 oid 又推不出、測資前置未知如「該商品是否已配好折扣/godate」）→ **回報主對話**，附「候選平台 + 步驟切分 + 已帶入的假設 + 真正卡住需輸入的點（缺哪項／為何需要／可接受格式，如 oid `9468` 或商品 URL）」。**subagent 不自己拍板、不直接問使用者、不 hang。**
+- **完全無法進行**（如缺 oid 推不出）→ 該平台／該 case 標 `blocked`＋原因，跳過續跑。
 
-> subagent 不能直接與使用者互動：反問＝把缺項回報主對話 → 主對話詢問使用者 → 拿到資料後帶著重跑。與「抓不到元素就停下回報」同一 pattern。
+> **「要不要問使用者」是主 agent 的職責**（subagent 做不到也不該做）：**互動模式** → 主 agent 把待確認點問使用者；**自主／harness 模式** → 主 agent 套預設續跑、`blocked` 的排入待人工佇列，全程不停等輸入。
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。

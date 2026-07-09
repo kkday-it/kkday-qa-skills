@@ -72,6 +72,10 @@ def build_entry(case_id: int, result_row: dict | None = None, detail: dict | Non
         "priority": detail.get("priority") or tc.get("priority"),
         "status": result_row.get("status") if result_row else None,
         "suite_id": detail.get("suite_id"),
+        # labels / tags 帶平台資訊（如 ["FE (Web/mWeb/Android/iOS)"]）；兩欄位都可能有，
+        # 下游（qa-automation-writer）用來判定要寫哪些平台的 auto case
+        "labels": detail.get("labels") or tc.get("labels"),
+        "tags": detail.get("tags") or tc.get("tags"),
         "preconditions": detail.get("preconditions", ""),
         "steps": [
             {

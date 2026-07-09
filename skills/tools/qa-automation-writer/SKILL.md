@@ -30,9 +30,22 @@ description: |
 
 ---
 
-## 撰寫流程：先規劃 → 元素驗證 → 自動執行
+## 撰寫流程：判定平台 → 先規劃 → 元素驗證 → 自動執行
 
 **核心原則：locator 一律不准用猜的定稿。** 依 case steps 把整個 case 想完、草擬完，**定稿前必須拿真實頁面/畫面元素驗證所有新增或修改的 locator**，再自動跑一次確認。這段流程凌駕於「先寫先跑」的直覺——寧可多一次驗證，也不要交出猜的 locator。
+
+### 階段 0 — 判定目標平台與步驟切分（先做）
+
+**平台來源**：看 case 的 `labels` / `tags`（`tcms-fetch-cases` 已輸出，兩欄都可能帶、要一起看）。**不要只照 case 內文寫成單一平台。**
+
+1. **解析平台 token**（大小寫容錯）：`Web→web`、`mWeb`/`Mweb→mweb`、`Android→android`、`iOS→ios`。拆包裝與展開：
+   - `FE (Web/mWeb/Android/iOS)`、`Platform / Service:FE (...)` → 取括號內全部平台
+   - `Web (Web/mWeb)` → `{web, mweb}`；`["Android","iOS","mWeb","Web"]`（拆開列）→ 全取
+2. **step 內的平台標記要切分**：case 步驟常在 action 文字帶標記，同一 case 對不同平台有不同操作與 expected_result（如 KQT-T37935 有 `[APP]`/`[M]`/`[PC]` 各自不同）。對映 `[PC]→web`、`[M]→mweb`、`[APP]→native app`（可能再細分 `[iOS]`/`[Android]`）。**每個平台的 auto case 只取「該平台適用」的步驟與 expected_result**；無標記的步驟視為所有平台共用。標記對不上/看不懂 → 當成待確認點（見 4）。
+3. 確認平台後，**每個平台各寫一份 auto case**（web/mweb 走 `web_playwright/`；App 走 `mobile/` + `test_steps/kkday/app/`），逐一跑後面的規劃 → 驗證 → 執行。
+4. **subagent 不自己拍板、也不 hang、也不直接問人**。碰到需判斷的點（label 混 API 如 `web/API`、多平台是否這輪全做、平台標記對不上、缺 oid 等），一律：**能安全帶預設就帶入並記錄假設**（預設：label 標的所有 UI 平台、環境 stage…），**回報主對話**（候選平台集合／步驟切分結果／已帶入的假設／真正卡住需輸入的點）。真的無法進行的（如缺 oid 又推不出）→ 該平台/該 case 標 `blocked`＋原因、跳過續跑，不 hang。
+
+> **「要不要問使用者」是主 agent 的職責，不是 subagent。** subagent 永遠只「帶預設 + 記錄假設 + 回報待確認點」。主 agent 依模式決定：**互動模式**→ 把待確認點問使用者（這輪做哪些平台？web/API 做哪個？）；**自主/harness 模式**→ 直接套預設繼續、blocked 的排入待人工佇列，全程不停等輸入。
 
 ### 階段 1 — 規劃草擬（把整個 case 想完再進下一階段）
 
@@ -64,10 +77,16 @@ bootstrap 完成後驗可用性（MCP connected / `adb devices` / `idb list-targ
 
 工具與裝置就緒後，把「所有新增/修改的 locator」一次列出，逐一對照**真實元素樹**驗證與修正：
 
-- **Web / MWeb（playwright MCP）**
+- **Web（playwright MCP）**
   1. `browser_navigate` → `https://www.stage.kkday.com/...`（**禁用** `www.kkday.com`）
   2. `browser_snapshot` 取 accessibility tree（或 `browser_evaluate` 跑 `document.querySelector(...)` 驗證命中）
   3. 比對草擬 locator 與實際 DOM，改成能**唯一命中**的 css/xpath
+
+- **MWeb（playwright MCP）— 必須用手機 device profile，不能只縮 viewport**
+  kkday 是靠 **User-Agent**（＋`isMobile`/`hasTouch`）決定回 web 還是 mweb DOM，**不是看 viewport**。所以只 `browser_resize`／只設 `--viewport` 仍是桌面 UA → server 回的是 **web 頁**，你就驗到錯的頁。
+  1. **先確認 MCP 帶手機 UA**：`browser_evaluate` → `() => navigator.userAgent`，要看到 iPhone/Mobile UA；若是桌面 Chrome UA，代表 MCP 沒設 device profile，**停下**先設定，別在錯的頁上驗 locator。
+  2. **設定方式**：Playwright MCP server 啟動要帶行動裝置設定 —— 首選 `--device "iPhone 15"`（＝框架 mweb 用的同一台，見 `QATest/src/lib/fixtures/playwright.py:90` `devices['iPhone 15']`）；或 `--user-agent "<iPhone UA>"` + viewport `375×667`（同檔 :96-97 fallback）。一個 MCP server = 一個 profile，**無法在同一 session 靠 resize 在 web/mweb 間切**；驗 mweb 就用 device=iPhone 15 的 MCP。
+  3. UA 確認為手機後，再 `browser_navigate` → stage → `browser_snapshot`/`browser_evaluate` 比對 mweb DOM（mweb 的 class 常與 web 不同，勿照搬 web locator）。
 
 - **App / Android（adb dump uiautomator tree）**
   ```bash
