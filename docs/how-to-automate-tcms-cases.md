@@ -4,7 +4,7 @@
 
 你不用記指令、不用自己開瀏覽器、不用管它怎麼跑。用講的就好。
 
-> **這是一條 AI Agent 流程**：你對話的**主對話 Claude 是 AI 總指揮**，它會派出 🤖 **AI Agent `qa-case-automator`**（每個 case 一個）去實際做事。全程有 AI 在跑，你負責出需求 + 最後決定要不要開 PR。
+> **這是一條 AI Agent 流程**：你對話的**主對話 Claude 是 AI 總指揮**，它會派兩種 🤖 AI Agent 去做事——`qa-case-automator`（實作）與 `qa-case-fidelity-reviewer`（檢查實作有沒有忠實對到 case）。全程有 AI 在跑，你負責出需求 + 最後決定要不要開 PR。
 
 ---
 
@@ -12,12 +12,12 @@
 
 **單一 case**
 ```
-KQT-T37931 實作
+KQT-T1234 實作
 ```
 
 **一批 case**
 ```
-把 KQT-T37935、KQT-T37938 做成自動化
+把 KQT-T1234、KQT-T5678 做成自動化
 ```
 
 **整個 Run**
@@ -28,90 +28,89 @@ Run 95 的 case 全部自動化
 Run 95 裡 Eden 的 case 自動化
 ```
 
-**想加速一批**
-```
-這批 case 平行處理
-```
-
 **做完想追問**
 ```
-為什麼 KQT-T37938 是 skipped？
+為什麼 KQT-T5678 是 flag-for-human？
 ```
 
-你全程只需要在**最後回答一件事：要不要開 PR**。同意它才會動 git。
+你全程只需要在**最後回答一件事：要不要開 PR**（過程中若有平台/缺資訊要確認，Claude 也會問你，見下）。
 
 ---
 
-## 流程圖
-
-你出需求後，主對話當總指揮、逐案分派給工人，最後回來問你要不要開 PR：
+## 流程圖（「KQT-T1234 實作」實際會跑的）
 
 ```mermaid
 flowchart TD
-    A["👤 你：把這批 case 自動化"] --> B["🤖 主對話 Claude（AI 總指揮）"]
-    B --> C["① 撈 case list<br/>（tcms-fetch-cases）"]
-    C --> D["② 逐案 spawn qa-case-automator<br/>🤖 AI Agent，每案一個，可平行"]
+    A["👤 你：KQT-T1234 實作"] --> B["🤖 主對話（AI 總指揮）"]
+    B --> C["撈 case（tcms-fetch-cases）<br/>steps + expected + labels/tags"]
+    C --> P["判定平台<br/>labels/tags＋step 內 [PC]/[M]/[APP] 切分"]
+    P --> D["每個平台各一份 ↓"]
 
-    subgraph W["🤖 AI Agent：qa-case-automator（每案一個）"]
-        direction TB
-        E["取 steps"] --> F["照規範實作<br/>（qa-automation-writer）"]
-        F --> G["驗 locator<br/>（stage 真實畫面 / Playwright MCP）"]
-        G --> H["跑測試<br/>（qa-test-runner）"]
-        H -->|"失敗，最多修 3 次"| F
-    end
+    D --> E["🤖 qa-case-automator<br/>create 或 fix → 實作 → 驗 locator → 跑過<br/>＋產 step→assertion 可追溯表"]
+    E --> F["🤖 qa-case-fidelity-reviewer<br/>比對 case vs 實作<br/>覆蓋率／信心／建議"]
+    F -->|"needs-fix：把漏的/弱的餵回"| E
+    F -->|"pass"| G["收下 ✅"]
+    F -->|"修不過 or 低信心"| H["標記待人工 ⚠️"]
 
-    D --> E
-    G -->|"抓不到元素"| STOP["停下回報，等你決定"]
-    H -->|"修 3 次還不過"| STOP
-    H --> I["③ 主對話彙整結果<br/>pass / fail / skipped + 改動檔案"]
-    I --> J{"④ 問你：要開 PR 嗎？"}
-    J -->|"好"| K["開 branch → commit → push → PR"]
-    J -->|"先不要"| L["改動留在工作區"]
+    E -.->|"缺資訊/待確認"| M{"模式？"}
+    M -.->|"互動"| Q["問你"] -.-> E
+    M -.->|"自主/harness"| N["套預設續跑<br/>或 blocked 入佇列"] -.-> E
+
+    G --> R["批次報告<br/>rollup ＋ 逐 case×平台 明細表"]
+    H --> R
+    R --> S{"問你：要開 PR 嗎？"}
+    S -->|"好"| T["開 branch → commit → PR"]
+    S -->|"先不要"| L["留在工作區"]
 ```
+
+重點：**「跑得起來」不等於「過」**。每個 case 實作完會經 `qa-case-fidelity-reviewer` 檢查有沒有忠實覆蓋 case（每個 expected 有沒有真的被斷言）；不夠 → **自動丟回去修再檢查**（最多幾輪），還不行才標「待人工」。
 
 ### 元件各是什麼
 
-> **型別看這裡**：🤖 **Agent** 是會獨立跑一連串工作的 subagent；📄 **Skill** 只是一份「怎麼做」的規範/腳本，被 Agent 或主對話載來用。這份流程裡**唯一的 Agent 是 `qa-case-automator`**，其餘三個 `tcms-*` / `qa-*` 都是 Skill。
+> **型別**：🤖 **Agent** 會獨立跑一連串工作（subagent）；📄 **Skill** 是「怎麼做」的規範，被 Agent/主對話載來用。這流程有**兩個 Agent**：`qa-case-automator`、`qa-case-fidelity-reviewer`。
 
 | 元件 | 型別 | 說明 |
 | --- | --- | --- |
-| **主對話 Claude** | 總指揮 | 你直接對話的那個。負責撈 case、分派、彙整、問你開不開 PR。**只有它能開 PR。** |
-| **`qa-case-automator`** | 🤖 **Agent（subagent）** | 一個 case 開一個 agent，做完就結束。不撈整批、不開 PR、不叫別的 agent。 |
-| `tcms-fetch-cases` | 📄 Skill | 從 TCMS 撈 case 的 steps。 |
-| `qa-automation-writer` | 📄 Skill | 寫 code + 驗 locator 的規範。 |
-| `qa-test-runner` | 📄 Skill | 跑測試 + 失敗診斷/修復的規範。 |
-| **Playwright MCP** | 工具 | 驗 locator 時開的**真實瀏覽器**，導到 `stage.kkday.com` 比對畫面。**單一共用，不能多案同開。** |
-| **kkday-QA-automation** | 本機 repo | 測試碼真正落地的地方（page object / test step / case yaml）。 |
+| **主對話 Claude** | 總指揮 | 你直接對話的那個。撈 case、判平台、跑「實作→檢查→重修」閉環、彙整報告、問你開不開 PR。**只有它能開 PR、也只有它會問你。** |
+| **`qa-case-automator`** | 🤖 Agent | 一個平台一份，實作(create)或修現有(fix)+跑過+產可追溯表。不撈整批、不開 PR、不叫別的 agent。 |
+| **`qa-case-fidelity-reviewer`** | 🤖 Agent | 對抗式檢查：比對 case 規格 vs 實作，出覆蓋率/信心/建議。唯讀，只評不改。 |
+| `tcms-fetch-cases` | 📄 Skill | 撈 case steps + `labels`/`tags`（平台資訊）。 |
+| `qa-automation-writer` | 📄 Skill | 寫 code + 驗 locator + 產可追溯表的規範。 |
+| `qa-test-runner` | 📄 Skill | 跑測試 + 失敗診斷/修復。 |
+| **Playwright MCP** | 工具 | 驗 locator 的真實瀏覽器；**單一共用，不能多案同開**；驗 mweb 要用手機 device profile。 |
+| **kkday-QA-automation** | 本機 repo | 測試碼落地處（page object / test step / case yaml）。 |
 
 ---
 
-## 想加速一批：為什麼不是「全平行」
+## 「過」是什麼意思
 
-你可以叫 Claude「平行處理」，但有個先天限制：**驗 locator 那步沒辦法平行**，因為 Playwright MCP 是**單一共用瀏覽器**，多個工人同時開會互相搶頁面。
-
-| 階段 | 能不能平行 |
-| --- | --- |
-| 撈 case steps | ✅ |
-| 寫 code / 改 page object | ✅ |
-| **驗 locator（MCP 共用瀏覽器）** | ❌ 單一 session |
-| 跑測試（qatest 自帶瀏覽器） | ✅ |
-
-所以 Claude 的加速做法是 **「驗證集中、其餘平行」**：主對話一次把整批要驗的 locator 驗完（能沿用既有 locator 的就不重驗），再把「寫 code + 跑測試」分給多個工人平行。整批時間會下降，但不會線性下降——這是工具限制，不是它偷懶。
+一個 case 算「過」= **跑得起來 + 覆蓋 case 規格（每個 expected 都有真斷言）+ 忠實度 reviewer 認可**。只有測試變綠、但沒真的驗到 case 要驗的東西，**不算過**——這正是為了在沒有人工 reviewer 時，也能相信產出跟你寫的 case 一致。
 
 ---
 
-## 前置條件
+## 一次做多平台
 
-- 本機要有 `kkday-QA-automation` clone（沒有的話 Claude 會請你先 clone，不會亂 clone）
-- Web / MWeb 需要 Playwright MCP；App 需要對應模擬器 / 裝置
-- 預設只做**驗證過的平台**（通常 web）。MWeb / App 畫面結構不同，沒實測過它不會亂猜——要補其他平台請明講。
+case 的 `labels`/`tags` 會標它適用哪些平台（如 `FE (Web/mWeb/Android/iOS)`）。Claude 會**依此對每個平台各寫一份**，同一 case 內若有 `[iOS]`/`[Android]`/`[PC]` 不同步驟也會分開處理。**多平台（尤其含 App）Claude 會先問你這輪要做哪些**（可能只先做 web/mweb、App 之後再說）。
+
+## 想加速一批
+
+可以叫 Claude「平行處理」，但**驗 locator 那步沒辦法平行**（Playwright MCP 單一共用瀏覽器）。所以做法是「驗證集中、其餘平行」：整批要驗的 locator 一次驗完，「寫 code + 跑測試」再分開平行。整批時間會降，但不會線性下降——工具限制，不是偷懶。
+
+## 你可能會遇到的狀況
+
+- **中途問你**：多平台要做哪些、`web/API` 混用要做哪個、缺商品 oid → 互動模式會問你；自主/harness 模式則套預設續跑、卡住的排入待人工佇列（不會停著等）。
+- **忠實度不夠會自己重修**：reviewer 說覆蓋不足，Claude 會把漏的餵回去重寫再檢查，不是評完就算。
+- **標「待人工」**：修幾輪還不過、或信心低，會標記出來給你，不硬過。
+- **產品真的有 bug**：修現有 case 時若發現是產品壞（不是測試壞），**不會為了變綠改斷言**，會當產品 bug 回報。
+- **最後問你要不要開 PR**：一定要你點頭才動 git。
 
 ## 常見坑
 
-- **MCP Playwright 不能平行**：單一共用瀏覽器，驗 locator 集中在主對話做。
-- **stage 首頁搜尋框 ≠ landing page 搜尋框**：真實行為以 stage 實測為準，別照 case 字面猜入口（KQT-T37931 踩過）。
-- **agent 不開 PR**：刻意的職責邊界，開 PR 永遠回到主對話 + 你確認。
+- **MCP Playwright 不能平行**：驗 locator 集中在主對話做。
+- **mweb 要用手機 device profile**：kkday 看 User-Agent 判 web/mweb，只縮 viewport 會開到 web 頁。
+- **只信「綠」不夠**：所以才有 fidelity reviewer；沒它把關的綠不算過。
 
 ## 想知道更多
 
-背後的職責邊界、禁止事項、底層指令，看 `agents/qa-case-automator.md`（權威定義）。
+- 主對話完整劇本（閉環/報告/模式）：`prompts/automate-tcms-cases.md`
+- 各 Agent 權威定義：`agents/qa-case-automator.md`、`agents/qa-case-fidelity-reviewer.md`
