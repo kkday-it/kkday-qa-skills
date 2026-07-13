@@ -73,7 +73,11 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 判定細則見 `qa-automation-writer` 階段 0。本 agent 的行為界線：
 
-- **平台**：讀 case `labels`/`tags` 定目標平台；step action 內平台標記逐平台切分（`[PC]→web`、`[M]→mweb`、`[APP]→native app`，含 `[iOS]`/`[Android]`），各平台只取該平台的步驟與 expected_result；**確認要做的每個平台各產一份 auto case**（web/mweb 走 `web_playwright/`，App 走 `mobile/`）。
+- **平台（鐵則：tag 標的全部平台都要涵蓋，且平台間「共用」同一份實作）**：一個 TCMS ID 涵蓋它 `labels`/`tags` 標的所有平台（例：`FE (Web/mWeb/Android/iOS)` → web+mweb+android+ios 全涵蓋）。**關鍵：平台間共用同一份 yaml case + test_step，不是各寫一份獨立的**——只有些許步驟不同（用平台標記/`limit_test_platform` 區分），不至於整份 test_step 都不同。
+  - **web ↔ mweb 共用一份**（`web_playwright/`）：同一個 case + test_step，靠 `limit_test_platform`（web / mweb）與 step 內 `[PC]`/`[M]` 標記分平台差異。**做 web 就一併把 mweb 的 `limit_test_platform:mweb` entry + 差異步驟補上**（反之亦然）——不是只做 web、也不是另開一份 case。
+  - **android ↔ ios 共用一份**（`mobile/`）：同一個 case + test_step，靠 `[iOS]`/`[Android]` 標記分差異。
+  - **不准把「只做 web、mweb/App 另開 case」當預設**——那是漏做涵蓋，不是完成。
+  - 某平台做不了（如缺實體機、缺前置）→ 該平台標 `blocked`＋原因，**共用的其餘平台照做**；只有「tag 全部平台都無法進行」才整個 case 標 blocked。回傳時**逐平台列出** pass/fail/blocked，tag 平台缺任一涵蓋即非「完成」。
 - **能安全帶預設就帶入並記錄假設**，繼續做：環境 `stage`、語系 `zh-tw`、商品 URL slug→oid、既定測試帳號、label 標的所有 UI 平台…
 - **需判斷或可能測錯的點**（label 混 API 如 `web/API`、多平台這輪是否全做、平台標記對不上、缺 oid 又推不出、測資前置未知如「該商品是否已配好折扣/godate」）→ **回報主對話**，附「候選平台 + 步驟切分 + 已帶入的假設 + 真正卡住需輸入的點（缺哪項／為何需要／可接受格式，如 oid `9468` 或商品 URL）」。**subagent 不自己拍板、不直接問使用者、不 hang。**
 - **完全無法進行**（如缺 oid 推不出）→ 該平台／該 case 標 `blocked`＋原因，跳過續跑。
@@ -82,8 +86,21 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。
-2. **強制元素驗證，locator 不准猜定稿**：Web/MWeb 用 playwright MCP（`browser_navigate` → **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`** → `browser_snapshot`/`browser_evaluate` 比對 DOM）；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。
+2. **強制元素驗證，locator 不准猜定稿**（用什麼開瀏覽器**依模式分流**，見 §3.5）：Web/MWeb 驗 DOM（`browser_navigate`/`browser_snapshot`/`browser_evaluate` 或等效的 Python playwright，皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**）；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。
 3. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
+
+### 3.5 驗元素/寫檔的隔離：單獨跑 vs 批次並行跑
+
+主對話/workflow 會在 spawn 你時**告知是否為並行模式**（同時多個 qa-case-automator 各跑不同 case）。依模式選「用什麼開瀏覽器」與「在哪寫檔」，其餘紅線一律沿用。
+
+**驗 Web/MWeb 元素的兩種模式：**
+- **單獨／互動跑（預設，未告知並行時）**：可用**共享的 playwright MCP browser**（`browser_navigate`/`browser_snapshot`/`browser_evaluate`）——方便、可視、可截圖。
+- **批次並行跑（workflow/harness 同時多 case）**：**不可用共享 playwright MCP browser**——多個 automator 會搶同一個瀏覽器互相踩。改用**各自 launch 的 Python playwright 腳本**驗元素：呼叫 `~/.claude/skills/qa-automation-writer` 那套 Python playwright（或 kkday-qa-skills `scripts/verify_locator.py` 模式），**每個 automator 各開各的 headless browser**，天然隔離、可並行。
+
+**檔案隔離：**
+- **批次並行時**各 automator 應在自己的 **git worktree** 內寫檔（由 workflow 用 `isolation: worktree` 提供），避免多 case 同時改同一 repo 互相覆蓋。**你只管在給定的工作目錄實作，不自己開 worktree、不自己做 git 操作。**
+
+**沿用既有約束（不因模式改變）：** locator 不准猜定稿、抓不到元素樹就停下回報、**禁用 prod `www.kkday.com`**、host 依環境組出 `www{suffix}.kkday.com`——這些紅線在兩種模式都成立，模式只決定「用什麼開瀏覽器／在哪寫檔」。
 
 **開頁 URL host 依環境組成、不可寫死**（驗 locator 與測試 URL 皆適用）：
 ```python
