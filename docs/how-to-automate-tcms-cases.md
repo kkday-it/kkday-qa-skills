@@ -41,31 +41,33 @@ Run 95 裡 Eden 的 case 自動化
 
 ```mermaid
 flowchart TD
-    A["👤 你：KQT-T1234 實作"] --> B["🤖 主對話（AI 總指揮）"]
-    B --> C["撈 case（tcms-fetch-cases）<br/>steps + expected + labels/tags"]
-    C --> P["判定平台<br/>labels/tags＋step 內 [PC]/[M]/[APP] 切分"]
-    P --> D["平台間共用一份<br/>web↔mweb 共用、android↔ios 共用 ↓"]
+    A["👤 KQT-T1234 實作"] --> B["🤖 主對話（總指揮）<br/>撈 case → 判平台"]
+    B --> P["平台共用一份<br/>web↔mweb、android↔ios"]
+    P --> E
 
-    D --> E["🤖 qa-case-automator<br/>create 或 fix → 實作 → 驗 locator → 跑過<br/>＋產 step→assertion 可追溯表"]
-    E --> F["🤖 qa-case-fidelity-reviewer<br/>比對 case vs 實作<br/>覆蓋率／信心／建議"]
-    F -->|"needs-fix：把漏的/弱的餵回"| E
-    F -->|"pass"| GATE["per-platform 交付 gate<br/>每個 tag 平台真的有註冊+跑過？(矇混不過)"]
-    GATE -->|"齊"| G["收下 ✅"]
-    GATE -->|"缺平台：補實作"| E
-    F -->|"修不過 or 低信心"| H["標記待人工 ⚠️"]
+    subgraph LOOP["每個 case × 共用組的閉環（達標才收）"]
+        direction TB
+        E["🤖 automator<br/>實作 → 驗 locator → 跑過"]
+        F["🤖 fidelity reviewer<br/>覆蓋率／信心"]
+        GATE["per-platform 交付 gate<br/>每平台真的有註冊+跑過？"]
+        E --> F
+        F -->|"needs-fix"| E
+        F -->|"pass"| GATE
+        GATE -->|"缺平台，補實作"| E
+    end
 
-    E -.->|"缺資訊/待確認"| M{"模式？"}
-    M -.->|"互動"| Q["問你"] -.-> E
-    M -.->|"自主/harness"| N["套預設續跑<br/>或 blocked 入佇列"] -.-> E
-
-    G --> R["批次報告<br/>rollup ＋ 逐 case×平台 明細表"]
+    GATE -->|"齊 ✅"| G["收下"]
+    F -->|"修不過／低信心"| H["待人工 ⚠️"]
+    G --> R["批次報告<br/>rollup ＋ 逐 case×平台"]
     H --> R
-    R --> S{"問你：要開 PR 嗎？"}
-    S -->|"好"| T["開 branch → commit → PR"]
-    S -->|"先不要"| L["留在工作區"]
+    R --> S{"開 PR？"}
+    S -->|"好"| T["branch → commit → 一個 PR"]
+    S -->|"先不要"| L["留工作區"]
 ```
 
 重點：**「跑得起來」不等於「過」**。每個 case 實作完會經 `qa-case-fidelity-reviewer` 檢查有沒有忠實覆蓋 case（每個 expected 有沒有真的被斷言）；不夠 → **自動丟回去修再檢查**（最多幾輪），還不行才標「待人工」。
+
+> **過程中遇缺資訊/待確認**（平台選擇、`web/API` 混用、缺 oid…）：**互動模式** → 問你；**自主/harness 模式** → 套安全預設續跑或標 `blocked`（不停等）。這條旁支不畫進主流程，免得線交錯。
 
 ### 元件各是什麼
 
