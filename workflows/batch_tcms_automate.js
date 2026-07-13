@@ -112,18 +112,14 @@ async function verify(caseId, impl) {
   return await agent(
     `你是 per-platform 交付驗證員（獨立、對抗式，不信 automator 自評）。case=${caseId}，tag 要求平台=${tags}。
 
-步驟 1 — 確定性 gate（Bash，矇混不過）：
-把下列每行寫進 /tmp/results_${caseId}.jsonl：
-${resultsLines || '（automator 未回報任何平台結果）'}
-再執行：
-  python3 ${SKILLS}/scripts/check_platform_delivery.py --caseid ${caseId} --tags ${tags} --repo ${REPO} --results /tmp/results_${caseId}.jsonl
-讀 exit code 與 JSON。missing_registration = 該平台「不能跑」（case 被 limit_test_platform 限死排除、或 driver 不支援）；missing_pass = 該平台沒真的跑 pass。gate 只判「能跑 + 跑過 pass」。
+步驟 1 — 確定性交付 gate（Bash，客觀 parse qatest.log、不靠 automator 自報）：
+執行：
+  python3 ${SKILLS}/scripts/check_platform_delivery.py --caseid ${caseId} --tags ${tags} --repo ${REPO} --qatest-log ~/Documents/QATest_Output/qatest.log
+它靠 \`pid+case+platform\` parse qatest.log，判每個 tag 平台是否真跑出 \`0 failed\`。讀 JSON 的 \`delivered\` / \`missing_pass\`（沒真跑出 pass 的平台）。**「有沒有真跑過 pass」gate 已客觀判定，你不用靠 automator 貼 stdout、也不碰全域 log 對應問題（parser 用 pid 分並行）。**
 
-步驟 2 — 每平台「交付憑據」+ 忠實度（兩者都要）：
-(a) **交付憑據（gate 判不出、靠你）**：automator 對每個 tag 平台,附了「那次 \`--platform X\` 命令自己的 stdout 尾段」嗎?那段有對得上本 case 的 \`KQT-Txxxxx.....Pass\` + \`0 failed, N passed\` 嗎?**只有口頭 pass、拿全域 qatest.log 搪塞、或根本沒跑該平台 → 該平台未交付,標 fidelity_issue。**
-(b) **忠實度**:比對 case 規格 vs 斷言,抓「沒真驗到的 expected」「過弱/恆真斷言」「參數收了沒用」。判準是**該平台每個 expected 有沒有被真斷言驗到**——步驟與 web 相同就共用斷言即可、有差異才要對應斷言;**不是**看有沒有 \`if platform\` 分支(步驟一樣本來就沒分支,不代表沒交付)。
+步驟 2 — 忠實度（gate 判不出、靠你）：對每個 gate 判 pass 的平台，比對 case 規格 vs 實作斷言，抓「沒真驗到的 expected」「過弱/恆真斷言」「參數收了沒用」。判準是**該平台每個 expected 有沒有被真斷言驗到**——步驟與 web 相同就共用斷言、有差異才要對應斷言；**不是**看有沒有 \`if platform\` 分支（步驟一樣本來就沒分支，不代表沒交付）。
 
-回傳：delivered（gate 全過 **且** 每個平台 fidelity 都達標才 true）、gate_missing（gate 缺的平台）、fidelity_issues（各平台忠實度問題）、fix_instructions（要 automator 具體補什麼）。`,
+回傳：delivered（gate \`missing_pass\` 空 **且** 每平台 fidelity 達標才 true）、gate_missing（gate 的 missing_pass）、fidelity_issues、fix_instructions。`,
     { label: `verify:${caseId}`, phase: 'Gate+Review', schema: VERDICT_SCHEMA }
   )
 }
