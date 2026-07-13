@@ -98,7 +98,7 @@ create/fix 要**對每個要做的平台各自判**，不是查「這個 case �
      - **行為根本不符**（不是這個 step、或做的跟本 case 要的不同）→ 別硬套，寫本 case 真正缺的新 step。
    - 一個 case 常是「**重用能用的 + fix 漂移的 + create 缺的**」混合；回報時分開講清楚哪些是哪種。
 1. 規劃草擬（把這個 case 想完再驗）。
-2. **強制元素驗證，locator 不准猜定稿**（用什麼開瀏覽器**依模式分流**，見 §3.5）：Web/MWeb 驗 DOM（`browser_navigate`/`browser_snapshot`/`browser_evaluate` 或等效的 Python playwright，皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**）；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。
+2. **強制元素驗證，locator 不准猜定稿**（用什麼開瀏覽器**依模式分流**，見 §3.5）：Web/MWeb 驗 DOM（`browser_navigate`/`browser_snapshot`/`browser_evaluate` 或等效的 Python playwright，皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**）；Android 用 `adb uiautomator dump`、iOS 用 `idb ui describe-all` **取元素樹**。**App（iOS/Android）的 locator 一律從元素樹 dump 取（accessibility id / label / xpath），截圖只用來「理解畫面／確認狀態」、絕不當 locator 來源** —— LLM 會偏好看圖，但看圖用視覺猜的 xpath 不可靠、違反「locator 不准猜定稿」。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測（不要退回看圖硬猜）。
 3. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
 
 ### 3.5 驗元素/寫檔的隔離：單獨跑 vs 批次並行跑
