@@ -33,8 +33,22 @@ exit code：單元素 verified=0 / stale=2；registry 模式恆 0（除非 playw
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
+
+# 現階段安全紅線：環境只接受 stage / sit0x / sit20x（比照 server _VALID_ENV_RE），禁 prod。
+_VALID_ENV_RE = re.compile(r"stage|sit\d*")
+
+
+def _is_prod_url(url: str) -> bool:
+    """判斷 URL 是否指向 prod 正式站。現階段禁打 prod：非 stage/sit 標記的 kkday 站一律當 prod 擋下。"""
+    if not url:
+        return False
+    u = url.lower()
+    if "stage" in u or ".sit" in u or "sit0" in u or "sit2" in u:
+        return False  # 明確是 stage / sit 環境
+    return "kkday.com" in u  # 無環境標記的 kkday 站 → 視為 prod，擋
 
 try:
     from playwright.sync_api import sync_playwright
@@ -97,6 +111,9 @@ def _mode_single(args) -> int:
     if not candidates:
         print(json.dumps({"error": "no --candidate given"}, ensure_ascii=False))
         return 3
+    if _is_prod_url(args.url):
+        print(json.dumps({"status": "blocked", "error": f"現階段禁打 prod，拒絕開站：{args.url}"}, ensure_ascii=False))
+        return 3
     with sync_playwright() as pw:
         browser, _, page = _open_page(pw, args.device)
         try:
@@ -129,6 +146,9 @@ def _mode_registry(args) -> int:
             device = "iPhone 15" if e.get("platform") == "mweb" else ""
             if not url:
                 results.append({"id": e.get("id"), "status": "skipped", "reason": "no verify_url"})
+                continue
+            if _is_prod_url(url):
+                results.append({"id": e.get("id"), "status": "skipped", "reason": "prod blocked（現階段禁打 prod）"})
                 continue
             browser, _, page = _open_page(pw, device)
             try:
@@ -169,9 +189,13 @@ def main() -> int:
     p.add_argument("--flow", default="", help="registry 模式過濾：flow key")
     p.add_argument("--page", default="", help="registry 模式過濾：page key")
     p.add_argument("--platform", default="", choices=["", "web", "mweb"], help="registry 模式過濾")
-    p.add_argument("--env", default="", choices=["", "stage", "prod"], help="registry 模式過濾")
+    p.add_argument("--env", default="", help="registry 模式過濾：stage / sit0x / sit20x（現階段禁 prod）")
     p.add_argument("--write", action="store_true", help="registry 模式：把驗證結果回寫 status/last_verified")
     args = p.parse_args()
+
+    if args.env and not _VALID_ENV_RE.fullmatch(args.env):
+        print(json.dumps({"error": f"env '{args.env}' 非法或為 prod；現階段只接受 stage / sit0x / sit20x"}, ensure_ascii=False))
+        return 3
 
     if sync_playwright is None:
         print(json.dumps({"error": "playwright 未安裝。請 pip install playwright && playwright install chromium"}, ensure_ascii=False))

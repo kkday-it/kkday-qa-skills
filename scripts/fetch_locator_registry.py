@@ -39,10 +39,14 @@ fail-safe 原則（比照 send_case_fidelity.py）：
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
 import urllib.request
+
+# 現階段安全紅線：環境只接受 stage / sit0x / sit20x（比照 server _VALID_ENV_RE），禁 prod。
+_VALID_ENV_RE = re.compile(r"stage|sit\d*")
 
 BASE = os.getenv("AI_STUDIO_BASE", "http://autotest-service.sit.kkday.com:8081/ai_studio")
 PATH = "/api/qa-automation/locator-registry"
@@ -111,12 +115,15 @@ def main() -> int:
     p.add_argument("--page", default="", help="頁面語意 key，如 things-to-do-landing")
     p.add_argument("--component", default="", help="元件語意 key（可選，縮小範圍）")
     p.add_argument("--platform", default="web", choices=["web", "mweb"])
-    p.add_argument("--env", default="stage", choices=["stage", "prod"])
+    p.add_argument("--env", default="stage", help="stage / sit0x / sit20x（現階段禁 prod）")
     p.add_argument("--outfile", default="", help="同時寫入的 JSON 檔路徑（可選）")
     args = p.parse_args()
 
     if not (args.flow or args.page):
         p.error("需至少提供 --flow 或 --page 其一")
+
+    if args.env and not _VALID_ENV_RE.fullmatch(args.env):
+        p.error(f"env '{args.env}' 非法或為 prod；現階段只接受 stage / sit0x / sit20x")
 
     query = {
         "flow": args.flow,

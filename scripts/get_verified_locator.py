@@ -47,8 +47,24 @@ fetch_localator/verify_locator 為本檔內部依賴（同目錄），agent 不�
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
+
+# 現階段安全紅線：環境只接受 stage / sit0x / sit20x（比照 server _VALID_ENV_RE），禁 prod。
+# 獨立定義,不依賴 verify_locator/playwright import 是否成功 —— prod 紅線不能因缺 playwright 而失效。
+_VALID_ENV_RE = re.compile(r"stage|sit\d*")
+
+
+def _is_prod_url(url: str) -> bool:
+    """判斷 URL 是否指向 prod 正式站。現階段禁打 prod：非 stage/sit 標記的 kkday 站一律當 prod 擋下。"""
+    if not url:
+        return False
+    u = url.lower()
+    if "stage" in u or ".sit" in u or "sit0" in u or "sit2" in u:
+        return False
+    return "kkday.com" in u
+
 
 # 內部依賴（同目錄）——不對 agent 單獨暴露
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -115,7 +131,7 @@ def main() -> int:
     p.add_argument("--component", default="", help="元件語意 key")
     p.add_argument("--element", default="", help="單一元素 id 或 component")
     p.add_argument("--platform", default="web", choices=["web", "mweb"])
-    p.add_argument("--env", default="stage", choices=["stage", "prod"])
+    p.add_argument("--env", default="stage", help="環境：stage / sit0x / sit20x（現階段禁 prod）")
     p.add_argument("--registry", default="", help="本地 registry.json（backend 拿不到時的 fallback 來源）")
     p.add_argument("--url", default="", help="覆寫驗證 URL（預設用 entry 的 verify_url）")
     p.add_argument("--emit", default="", help="把驗證結果寫成 jsonl，供 Stop hook sender 之後 POST 回寫")
@@ -123,6 +139,11 @@ def main() -> int:
 
     if not (args.flow or args.page or args.component or args.element):
         p.error("需至少提供 --flow / --page / --component / --element 其一")
+
+    if args.env and not _VALID_ENV_RE.fullmatch(args.env):
+        print(json.dumps({"error": f"env '{args.env}' 非法或為 prod；現階段只接受 stage / sit0x / sit20x",
+                          "results": [], "must_remine": []}, ensure_ascii=False))
+        return 3
 
     # 沒有 playwright 就無法履行「先驗」的硬約束 —— 明確報錯，不得回未驗 selector
     if sync_playwright is None or _verify_candidates is None:
@@ -146,6 +167,11 @@ def main() -> int:
                 if not url:
                     results.append({**base, "status": "stale", "action": "remine",
                                     "reason": "no verify_url", "tried": []})
+                    continue
+                if _is_prod_url(url):
+                    # 現階段禁打 prod：不開站,直接判 stale/remine
+                    results.append({**base, "status": "stale", "action": "remine",
+                                    "reason": "prod blocked（現階段禁打 prod）", "tried": []})
                     continue
                 browser, _, page = _open_page(pw, device)
                 try:

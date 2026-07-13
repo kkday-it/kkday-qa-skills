@@ -35,11 +35,15 @@ send_case_fidelity.py：
 import argparse
 import json
 import os
+import re
 import socket
 import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
+
+# 現階段安全紅線：環境只接受 stage / sit0x / sit20x（比照 server _VALID_ENV_RE），禁 prod。
+_VALID_ENV_RE = re.compile(r"stage|sit\d*")
 
 BASE = os.getenv("AI_STUDIO_BASE", "http://autotest-service.sit.kkday.com:8081/ai_studio")
 PATH = "/api/qa-automation/locator-registry"
@@ -115,6 +119,9 @@ def main() -> int:
                 if not (row.get("element") and row.get("page") and row.get("selectors")):
                     continue
             except Exception:
+                continue
+            # 現階段禁 prod：env 非 stage/sit 系列（含 prod）一律不送
+            if not _VALID_ENV_RE.fullmatch(row.get("env") or "stage"):
                 continue
             if _send_with_retry(_normalize(row)):
                 sent += 1
