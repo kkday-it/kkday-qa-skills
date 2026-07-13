@@ -63,11 +63,17 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 撈到 0 筆 → 回報主對話後結束。
 輸出檔是**即時快照非快取**，使用者可能剛在 TCMS UI 改過內容 → **實作當下務必重新 fetch，不要沿用上一輪的舊 `/tmp` 檔**。撈回的 `labels`/`tags` 要留著給下一步判定平台。
 
-### 1.5 判定模式：create（新寫）/ fix（修現有）
-查這個 case 是否已有 auto 實作：`grep -rl "<KQT-T ID>:" QATestData/cases/yaml`，並確認它引用的 test step / page object 都在。
-- **查無 → create**：走 §2 → §3 → §4（從零實作）。
-- **查有 → fix**：走 §5（修復現有），先跑一次看它**怎麼壞**再最小修復。
-（主對話若已明確指定 `mode=fix`/`create`，以指定為準。）
+### 1.5 判定模式：create / fix —— **per-platform，不是 per-case**
+create/fix 要**對每個要做的平台各自判**，不是查「這個 case 存不存在」就一概而論。同一 case 的 web/mweb 早做了、iOS 還沒做時：對 iOS 是 **create**、對 web/mweb 才是 fix。
+
+對每個目標平台：
+- 查**該平台**是否已有實作：web/mweb 看 `web_playwright/`、android/ios 看 `mobile/`（該 case 有 entry + 引用的 test step/page object 在，**且該平台 `--platform X` 跑得起來、非空殼**）。
+- **該平台查無 → create**（走 §2→§3→§4，從零實作該平台）。
+- **該平台已有 → fix**（走 §5，先跑該平台看怎麼壞再最小修）。
+- 同一 case 不同平台**可一個 create、一個 fix**（例：補 iOS=create、順手修 web=fix）。
+（主對話若已對某平台明確指定 `mode`，以指定為準。）
+
+⚠️ **不可只因「case（其他平台）已存在」就對所有平台當 fix** —— 那會叫你去「跑/修」一個根本還沒做的平台（如 iOS），結果卡住或亂修。**還沒做的平台一律 create。**
 
 ### 2. 判定平台 + 缺資訊（subagent 只帶預設 + 回報，不直接問人、不 hang）
 
