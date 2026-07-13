@@ -14,13 +14,13 @@
 
 ---
 
-## Tools 一覽（34 個 + 2 個說明工具）
+## Tools 一覽（34 個 + 3 個說明工具）
 
 > 分兩組後端：**ai-studio 工具**（會員/點數/券/等級/…）下游打 `:8081`；**QA 平台工具**（建/複製商品、下單、兌換、月曆）下游打 QA Test Platform `:8080`。兩組併存於同一個 MCP，埋點都送 ai-studio dashboard（QA 平台工具 operator 標記 `kkday_qa_platform_mcp`）。
 
 | 分類 | Tools |
 |---|---|
-| **說明** | `help` — 全 category 一覽<br>`describe_tool(name)` — 拿指定 tool 的欄位說明 + 範例 |
+| **說明** | `help` — 全 category 一覽<br>`describe_tool(name)` — 拿指定 tool 的欄位說明 + 範例<br>`health` — 探兩組後端（:8081 ai-studio + :8080 QA 平台）可達性/auth，唯讀 |
 | **會員** | `lookup_member`, `member_lookup_history`, `register_member`, `register_member_history` |
 | **點數** | `add_kkday_points`, `points_history` |
 | **優惠券** | `coupon_templates`, `create_coupon`, `coupon_history` |
@@ -132,6 +132,11 @@ Config 指到 venv python：
 ---
 
 ## Troubleshooting
+
+**tool 呼叫一直失敗、不確定是後端還是自己的問題**
+- 先呼叫 `health`（唯讀）→ 一次看兩組後端 `:8081`（ai-studio）與 `:8080`（QA 平台）的 `reachable` / `auth_ok` / `latency_ms`。
+- `healthy: false` 且 `ai_studio_api.auth_ok: false` → 是 auth 問題（見下方 401/403）。
+- 某一組 `reachable: false` → 該組後端沒起或網路不通，只有走那組的 tool 會壞（8081/8080 各撐一批 tool）。
 
 **`/mcp` 看不到 kkday-qa-tools**
 - Claude Code config 檔（`~/.claude.json`）改了但沒重啟 → 完全結束再開
