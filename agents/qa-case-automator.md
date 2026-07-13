@@ -92,6 +92,7 @@ create/fix 要**對每個要做的平台各自判**，不是查「這個 case �
 > **「要不要問使用者」是主 agent 的職責**（subagent 做不到也不該做）：**互動模式** → 主 agent 把待確認點問使用者；**自主／harness 模式** → 主 agent 套預設續跑、`blocked` 的排入待人工佇列，全程不停等輸入。
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
+0. **先搜現有、能重用就重用（別重寫已有的）**：動手寫前先 `grep` `test_steps/` 與 `pages/`（含同平台目錄 + `base`/`common`），把 case steps 對到**現成的 test step / page object**——launch / 登入 / 導頁 / 共用元件這類 step 常常已經存在。**能重用的直接引用，只新寫這個 case 真正缺的那幾步**。重複造 framework 已有的 = 浪費、又製造不一致（同功能兩份 step）。
 1. 規劃草擬（把這個 case 想完再驗）。
 2. **強制元素驗證，locator 不准猜定稿**（用什麼開瀏覽器**依模式分流**，見 §3.5）：Web/MWeb 驗 DOM（`browser_navigate`/`browser_snapshot`/`browser_evaluate` 或等效的 Python playwright，皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**）；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。
 3. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
