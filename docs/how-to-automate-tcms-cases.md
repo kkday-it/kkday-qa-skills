@@ -49,11 +49,11 @@ flowchart TD
         direction TB
         E["🤖 automator<br/>實作 → 驗 locator → 跑過"]
         F["🤖 fidelity reviewer<br/>覆蓋率／信心"]
-        GATE["per-platform 交付 gate<br/>每平台真的有註冊+跑過？"]
+        GATE["per-platform 交付 gate<br/>每平台真跑出 0 failed？<br/>(客觀 parse qatest.log)"]
         E --> F
         F -->|"needs-fix"| E
         F -->|"pass"| GATE
-        GATE -->|"缺平台，補實作"| E
+        GATE -->|"缺平台沒 0 failed，補跑"| E
     end
 
     GATE -->|"齊 ✅"| G["收下"]
