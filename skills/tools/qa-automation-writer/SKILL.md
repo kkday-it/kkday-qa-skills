@@ -54,6 +54,44 @@ description: |
 
 ### 階段 2 — 元素驗證（強制、批次）
 
+**分層原則（為什麼這階段這樣設計）：** 具體 locator 是**易變資料**（前端改個 class 就失效），
+所以它永遠是「候選 hint」不是真理。業務語意與驗證方法論才是穩定知識，固化在
+[references/search-frontend-domain.md](references/search-frontend-domain.md)（搜尋/前端 case 起手先讀）。
+真正防腐的不是把 locator 存好，而是「每次用前先驗」這道**死程式閥**——寫死成 API 的唯一形狀，agent
+想繞都繞不過。
+
+#### 階段 2.0 — locator registry 起手（唯一入口，先驗才用）
+
+搜尋/前端等已有累積的 case，**執行前先向 registry 拿「已驗過的候選」當起手 hints**，把重挖從
+「盲找」變「驗證 + 微調」。但**唯一正規用法是 `scripts/get_verified_locator.py`**，不准繞過它直接讀
+`locator_registry/registry.json` 的 selector 來用（`fetch_locator_registry.py` GET、`verify_locator.py`
+是它的內部依賴，不單獨當「拿了直接用」的工具）。這支的固定順序（每次都完整跑）：
+
+1. **GET 候選**：先打 ai_studio（跨人共享 + 趨勢），拿不到退本地 `registry.json`。建議用 `--flow`
+   一次批次拿整組相關元素（例：`things-to-do-search` = landing 搜尋框 + 送出鈕 + 結果頁 header
+   keyword + active tab，常一起改一起用，省往返）。
+2. **逐一 cheap-verify**：在當前 DOM 依優先序驗每個候選 selector 存不存在；mweb 自動套
+   `devices["iPhone 15"]`（不用 viewport 冒充，見下方 MWeb 段與 domain doc B2）。
+3. **判定**：有候選命中 → 回『那個活的 selector』，直接用（省下探索）；**全部候選死 → 回
+   `action=remine`、回傳裡沒有任何可用 selector**，強制回退到下方「從零挖」的原本驗證流程重挖。
+   —— 因為 stale 時 API 結構上就不給你 selector，腐爛 locator 在這步被擋下，不會錯了一直錯、傳染全隊。
+4. **執行後 POST 回寫**：把新挖/確認的 locator + 驗證結果（verified/stale + last_verified）用 `--emit`
+   寫成 jsonl，交給 Stop hook 的 `send_locator_registry.py` 背景 POST 回後端（揭露見
+   `docs/telemetry.md`）。**後端只是共享/趨勢層，不是真理**——下次取回一樣要「用前先驗」。
+
+```bash
+# 一個 case 起手：批次驗整條搜尋流程的候選，結果寫 jsonl 供 hook 回寫
+python3 scripts/get_verified_locator.py \
+    --flow things-to-do-search --platform web --env stage \
+    --registry locator_registry/registry.json --emit /tmp/locator_results.jsonl
+```
+
+registry 格式、三個防腐要件（用前先驗 / 來源+時間戳+失敗回饋 / 版本環境標記）見
+[locator_registry/README.md](../../../locator_registry/README.md)。**沒有 registry 命中或後端不可達，
+就當第一次挖，照下面原本流程從零挖，不受影響。**
+
+---
+
 **Preflight（全自動 bootstrap，不依賴使用者、不詢問，缺什麼補什麼）：**
 每次進入驗證前，AI 都要自己把「工具」和「目標裝置」準備好，不要假設使用者已經裝好或開好。這是無條件執行的步驟。
 

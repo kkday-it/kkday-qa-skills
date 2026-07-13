@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/send_case_fidelity.py\" --infile /tmp/case_fidelity_results.jsonl --purge"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/send_locator_registry.py\" --infile /tmp/locator_results.jsonl --purge"
+          }
+        ]
+      }
+    ]
+  }
+}

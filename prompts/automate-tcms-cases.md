@@ -26,12 +26,16 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 
 2. 逐案處理（每案一個迴圈；可平行的部分見「平行化」）
    for case in batch:
-     判定目標平台（labels/tags + step 內 [PC]/[M]/[APP]/[iOS]/[Android] 切分）
-     for platform in 目標平台:
+     判定 tag 標的所有平台（labels/tags + step 內 [PC]/[M]/[APP]/[iOS]/[Android] 切分）
+     ⚠️ 平台「共用一份」：web↔mweb 共用、android↔ios 共用一份 case+test_step（只些許步驟差異），不是各寫一份
+     for platform in tag 標的所有平台:   # 共用一份、全平台都要涵蓋，缺一不算完成
        attempt = 0
        ┌─► a. spawn qa-case-automator（mode 自動判 create/fix）
        │        → 回傳 result + step→assertion 可追溯表 + 假設 + blocked
        │      若 automator 回報「待確認點」：互動→問使用者；自主→套預設/blocked
+       │   a2. per-platform 交付 gate（check_platform_delivery.py，確定性）：驗 tag 每平台
+       │        真有註冊+跑過（mweb 有 limit_test_platform:mweb、App 有 AppRegression）；
+       │        缺平台 → 餵回 automator 補（「--platform mweb 跑綠」矇混不過）
        │   b. spawn qa-case-fidelity-reviewer
        │        → step_coverage / assertion_coverage / 未覆蓋 / 可疑斷言 / fidelity / confidence / recommend
        │   c. 判 recommend：
@@ -48,11 +52,16 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 
 **關鍵：「過」的定義 = 跑得起來 + 覆蓋規格（assertion_coverage 達標）+ fidelity reviewer 認可。** 只綠不算。needs-fix 一定會**丟回 automator 重修再 review**，不是評完就結束。
 
-## 平行化（MCP 限制）
+## 平行化（批次大用 workflow）
 
-- 可平行：撈 case、寫 code、跑 `qatest`（各自子程序）。
-- **不可平行**：用 Playwright MCP 驗 locator（單一共用瀏覽器）。驗 locator 集中在主對話一次做，其餘 fan-out。
-- 驗 mweb 需 device profile 的 MCP（`--device "iPhone 15"`），與 web 的 MCP 分開。
+一批 10+ case 別逐案序列等閉環。用 **workflow 並行**（`workflows/batch_tcms_automate.js`，入口＝一串 TCMS ID）：
+
+- 每個 case 獨立流過「automator → per-platform gate + fidelity review → 回修」，彼此不等（pipeline），慢的不拖快的。
+- **能真平行的關鍵**：並行模式驗元素用**各自 Python playwright**（各開 headless browser），**不搶**那個單一共用的 MCP 瀏覽器；各 case 在自己的 **git worktree** 寫檔，不互相覆蓋。
+- 舊限制「驗 locator 不能平行、集中主對話做」只在**用 MCP 共用瀏覽器**時成立；並行模式改 Python playwright 已突破。
+- 驗 mweb 一律用手機 device profile（User-Agent 判 web/mweb，非 viewport）。App 平台仍受實體機數限制。
+- workflow 跑完回傳達標清單，main 收攏各 worktree、統一問使用者開一個 PR。
+- **現階段禁打 prod**：驗 locator / 跑測試只用 stage / sit 系列（sit0x / sit20x），不碰 `www.kkday.com`。
 
 ## 批次報告格式（對話內 Markdown，預設呈現）
 
@@ -84,6 +93,40 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 - **fail-safe + retry 5 次**：每筆最多送 5 次，全失敗就放棄該筆、續下一筆；任何錯誤都吞掉、不干擾主流程。
 - **只送品質指標 + operator（無 PII）**，且**揭露不隱瞞**——見 [docs/telemetry.md](../docs/telemetry.md)。
 - 主對話要做的只是：把批次的 fidelity 結果**寫成那個 jsonl**（本來就在產報告）；送出交給 hook。
+
+## 送出前的硬 Gate（確定性、非 LLM）——兩道
+
+真實 session 漏過兩種：(1) 漏 spawn `qa-case-fidelity-reviewer` 就把 case 當過；(2) automator
+自評「web+mweb pass」但**實際只交付 web**（mweb 沒 `limit_test_platform` entry）。為了不靠記憶、不信自評，
+**在「彙整報告 / 送遙測」之前跑兩支死程式把關**：
+
+**Gate A — per-platform 交付（`scripts/check_platform_delivery.py`）**：驗 tag 每個平台真有註冊+跑過
+（mweb 有 `limit_test_platform:mweb`、App 有 AppRegression）。「web case 硬套 `--platform mweb` 跑綠」
+矇混不過；缺平台補實作再過。
+
+**Gate B — 忠實度（`scripts/check_fidelity_gate.py`）**：把「你聲稱跑過的 case×平台」對到 fidelity
+結果，逐一確認每筆都有對應 review 且判定 `pass`。
+
+- 這支**不是 LLM 判斷**，是確定性檢查：把「你聲稱跑過的 case×平台清單」對到 fidelity 結果
+  jsonl，逐一確認每筆都有對應 review 且判定為 `pass`。
+- 判定規則（對齊 `send_case_fidelity.py` 欄位）：有 `recommend` 就唯認 `recommend == "pass"`；
+  沒有才退用 `fidelity == "PASS"`。`needs-fix` / `blocked` / `flag-for-human` / 缺 review / 資料壞 → 一律擋下。
+- **方向與 sender 相反**：sender 是 fail-safe 放行（資料缺就靜默略過）；這支是**守門**，
+  fail-safe 擋下（資料缺、格式壞、拿不到結果檔一律當不合格），**寧可誤擋不可放行**。
+
+用法（先跑 gate，`exit 0` 才准彙整/送遙測；`exit 1` 代表有 case 漏 review 或沒過，去補跑再重跑 gate）：
+
+```bash
+# 用 fidelity 結果檔 + 你聲稱跑過的 case×平台清單
+python3 scripts/check_fidelity_gate.py \
+  --caseids KQT-T34933:web,KQT-T34933:mweb,KQT-T53888:web \
+  --fidelity <results-jsonl>
+# 或用 jsonl 形式的聲稱清單（每行含 case_id，platform 選填）
+python3 scripts/check_fidelity_gate.py --claimed <claimed-jsonl> --fidelity <results-jsonl>
+```
+
+**規則：gate 沒過（exit 1）就不准進「彙整報告 / 送遙測」。** 把 gate 印出的不合格 case
+補跑 review（`needs-fix` 要丟回 automator 重修再 review），全部 `pass` 後再重跑 gate、通過才往下。
 
 ## 收尾：開 PR
 
