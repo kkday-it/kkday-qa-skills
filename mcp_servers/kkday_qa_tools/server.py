@@ -331,12 +331,86 @@ def help() -> dict:
             "redeem_voucher 前先 product_categories → fetch_packages 拿 product_oid / package_oid",
             "update_member_tier 前先 tier_rules 確認該 env 的可用 tier 名稱",
             "任何 tool 想看細節參數 + 範例呼叫 describe_tool(name)",
+            "動手做事前想確認後端通不通 / auth 有沒有效，先呼叫 health()（唯讀）",
         ],
         "notes": [
             f"所有操作 audit log 的 operator 欄 = '{USER_NAME}'（跟 UI 手動操作分辨）",
             "GMBE/PG 帳密相關 endpoint 刻意不暴露（敏感）",
             "預設環境 stage；僅測試環境（sit / stage），不提供 prod",
         ],
+    }
+
+
+@mcp.tool()
+def health() -> dict:
+    """檢查後端服務健康狀態（唯讀、無副作用，任何異常都不拋錯只回報）。
+
+    動手做事前（尤其要跑一長串 chain）可先呼叫，把「事後埋在 tool call 裡才爆」的
+    連線 / auth 失敗提前抓出來。這個 MCP 同時依賴兩個服務（同機不同 port），兩個都探：
+
+    - **ai_studio_api (8081)**：ai-studio 後端，會員 / 點數 / 券 / 經驗 / 等級 / 訂單查詢
+      等 tool 走這裡。探唯讀的 `coupon-templates` 並帶 `X-User-Id`，驗**可達性 + auth**
+      （那組 admin id 被移除/降權會 401/403）。
+    - **qa_platform (8080)**：QA 自動化平台（`_PLATFORM_BASE`），`create_product` /
+      `create_order` / `copy_product` / `redeem_voucher` / `extend_item_calendar` 等
+      QA 平台 tool 走這裡（端點無 auth）。探 host root 驗**可達性**。
+
+    兩個服務各自 gating 依賴它的那批 tool；`healthy` 需兩者皆通（8081 還要 auth_ok）。
+    回傳每個服務的 reachable / auth_ok / http_status / latency_ms / error。
+    """
+    from urllib.parse import urlsplit
+
+    def _probe(url: str, headers: Optional[dict] = None) -> dict:
+        _start = time.monotonic()
+        try:
+            resp = requests.get(url, headers=headers, timeout=(3, 5))
+            return {
+                "reachable": True,
+                "http_status": resp.status_code,
+                "auth_ok": resp.status_code not in (401, 403),
+                "latency_ms": round((time.monotonic() - _start) * 1000, 1),
+                "error": None,
+            }
+        except Exception as exc:  # noqa: BLE001 — 診斷用，任何錯都要回報而非拋出
+            return {
+                "reachable": False,
+                "http_status": None,
+                "auth_ok": None,
+                "latency_ms": round((time.monotonic() - _start) * 1000, 1),
+                "error": f"{type(exc).__name__}: {exc}"[:200],
+            }
+
+    # QA 平台端點無 cheap health API，探 host root（去掉 /api/v1 之類 path）驗可達性。
+    _p = urlsplit(_PLATFORM_BASE)
+    platform_root = f"{_p.scheme}://{_p.netloc}/"
+
+    ai_studio = _probe(f"{BASE}/api/tools/coupon-templates", headers=_headers())
+    qa_platform = _probe(platform_root)
+    return {
+        "server": "kkday-qa-tools",
+        # 兩個服務各自撐一批 tool，任一掛掉都有 tool 不能用 → healthy 需兩者皆通。
+        # 8080 端點無 auth，故只看 reachable；8081 需 reachable + auth_ok。
+        "healthy": bool(
+            ai_studio["reachable"]
+            and ai_studio["auth_ok"]
+            and qa_platform["reachable"]
+        ),
+        "operator": USER_NAME,
+        "services": {
+            "ai_studio_api": {
+                "base_url": BASE,
+                "port": 8081,
+                "serves": "會員/點數/券/經驗/等級/訂單查詢等 ai-studio tool",
+                **ai_studio,
+            },
+            "qa_platform": {
+                "base_url": _PLATFORM_BASE,
+                "probe_url": platform_root,
+                "port": 8080,
+                "serves": "create_product/create_order/copy_product/redeem_voucher/延長月曆等 QA 平台 tool（無 auth）",
+                **qa_platform,
+            },
+        },
     }
 
 
