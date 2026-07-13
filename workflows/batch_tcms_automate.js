@@ -12,14 +12,43 @@ const REPO = '/Users/eden.lai/Downloads/qa_test/test/kkday-QA-automation'
 const SKILLS = '/Users/eden.lai/Downloads/ai/kkday-qa-skills'
 const MAX_FIX_ROUNDS = 3
 
-// ── 入口：args = 一串 TCMS ID（陣列，或空白/逗號分隔字串）──────────────
-const caseIds = Array.isArray(args)
-  ? args
-  : String(args || '').split(/[\s,]+/).filter(Boolean)
-if (!caseIds.length) {
-  throw new Error('需要 args = 一串 TCMS ID，例 ["KQT-T37931","KQT-T37932"] 或 "KQT-T37931 KQT-T37932"')
+// ── 入口：args = 一串 TCMS ID（陣列/字串），或 {cases:[...], platforms:[...]}──────
+// platforms 用於限制本批平台（如無 App 實體機時限 web,mweb）；不給＝用各 case tag 全平台。
+// robust 解析：args 可能是 陣列 / 空白逗號字串 / {cases,platforms} 物件 / 被序列化成 JSON 的字串。
+function _parseInput(a) {
+  if (a == null) return { cases: [], platforms: null }
+  if (typeof a === 'string') {
+    const s = a.trim()
+    if (s.startsWith('{') || s.startsWith('[')) {
+      try {
+        return _parseInput(JSON.parse(s))
+      } catch (e) {
+        /* 非合法 JSON，退為分隔字串 */
+      }
+    }
+    return { cases: s.split(/[\s,]+/).filter(Boolean), platforms: null }
+  }
+  if (Array.isArray(a)) return { cases: a, platforms: null }
+  if (typeof a === 'object') return { cases: a.cases ?? [], platforms: a.platforms ?? null }
+  return { cases: [], platforms: null }
 }
-log(`批次自動化 ${caseIds.length} 個 case：${caseIds.join(', ')}`)
+const _p = _parseInput(args)
+const _rawCases = Array.isArray(_p.cases) ? _p.cases.map((c) => String(c).trim()) : []
+// 防呆白名單：只認合法 TCMS id（KQT-T#####），垃圾一律丟棄——即使 args 傳壞也不會 spawn 一堆垃圾 automator。
+const caseIds = _rawCases.filter((c) => /^KQT-T\d+$/.test(c))
+const _dropped = _rawCases.filter((c) => !/^KQT-T\d+$/.test(c))
+if (_dropped.length) {
+  log(`⚠️ 丟棄 ${_dropped.length} 個非法 caseId（args 可能傳壞）：${_dropped.slice(0, 5).join(' | ')}`)
+}
+const LIMIT_PLATFORMS =
+  Array.isArray(_p.platforms) && _p.platforms.length ? _p.platforms : null
+if (!caseIds.length) {
+  throw new Error('沒有合法 TCMS caseId（KQT-T#####）；args 可能傳壞：' + JSON.stringify(args).slice(0, 200))
+}
+log(
+  `批次自動化 ${caseIds.length} 個 case：${caseIds.join(', ')}` +
+    (LIMIT_PLATFORMS ? `（本批限平台 ${LIMIT_PLATFORMS.join('/')}）` : '')
+)
 
 const IMPL_SCHEMA = {
   type: 'object',
@@ -60,7 +89,7 @@ const VERDICT_SCHEMA = {
 
 function implPrompt(caseId, fixNote) {
   return `你是 qa-case-automator，**並行模式**。case=${caseId}。
-${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}
+${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
 並行模式規則（照 qa-case-automator.md §3.5）：
 - 驗元素用**各自 launch 的 Python playwright**，不用共享 playwright MCP browser（會搶）。
 - 在你所在的 git worktree 內寫檔，不自己做 git 操作。
@@ -76,7 +105,7 @@ ${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n`
 
 // 獨立驗證：確定性 gate（矇混不過）+ per-platform 忠實度 review。不信 automator 自評。
 async function verify(caseId, impl) {
-  const tags = (impl.tags_platforms || []).join(',')
+  const tags = (LIMIT_PLATFORMS || impl.tags_platforms || []).join(',')
   const resultsLines = (impl.per_platform || [])
     .map((p) => JSON.stringify({ caseid: caseId, platform: p.platform, status: p.status }))
     .join('\n')
