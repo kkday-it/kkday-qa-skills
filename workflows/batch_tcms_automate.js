@@ -96,8 +96,8 @@ ${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n`
 - **禁打 prod**：開頁 host 依環境組出 www{suffix}.kkday.com，用 stage / sit，絕不碰 www.kkday.com。
 
 全平台鐵則（照 §2）：撈 case 的 tag，**tag 標的所有平台都要涵蓋，且平台間「共用」同一份 case + test_step**（不是各寫一份，只有些許步驟不同）：
-- web ↔ mweb 共用一份（web_playwright/）：做 web 就**一併**補 mweb 的 limit_test_platform:test_platform:mweb entry + 些許 [M] 差異步驟，不是拿 web case 硬套 --platform mweb、也不是另開一份。
-- android ↔ ios 共用一份（mobile/），靠 [iOS]/[Android] 標記分差異；需實體機，沒設備該平台標 blocked+原因，共用的其餘平台照做。
+- web ↔ mweb 共用一份（web_playwright/）：一份 case + test_step 用 \`if pages.platform == Platform.MWEB:\` 分支處理差異，**絕不加 limit_test_platform**（那會 Skip、把 case 限死只跑單一平台）；用 --platform web 和 --platform mweb 各跑過。
+- android ↔ ios 共用一份（mobile/）：用 \`if platform==Android / iOS\` 分支處理差異，一樣不加 limit；需實體機，沒設備該平台標 blocked+原因，共用的其餘平台照做。
 每個平台逐一跑過（qa-test-runner，HEADLESS=1）。
 
 回傳結構化：caseid、tags_platforms（該 case tag 標的平台）、per_platform（每平台 platform+status(pass/fail/blocked)+files）、traceability（step→assertion 可追溯表）。`
@@ -117,9 +117,11 @@ async function verify(caseId, impl) {
 ${resultsLines || '（automator 未回報任何平台結果）'}
 再執行：
   python3 ${SKILLS}/scripts/check_platform_delivery.py --caseid ${caseId} --tags ${tags} --repo ${REPO} --results /tmp/results_${caseId}.jsonl
-讀 exit code 與 JSON。missing_registration = yaml 沒有正確平台註冊（例：mweb 缺 limit_test_platform:mweb entry）；missing_pass = 該平台沒真的跑 pass。
+讀 exit code 與 JSON。missing_registration = 該平台「不能跑」（case 被 limit_test_platform 限死排除、或 driver 不支援）；missing_pass = 該平台沒真的跑 pass。gate 只判「能跑 + 跑過 pass」。
 
-步驟 2 — 對**每個已交付平台**做忠實度 review：比對 TCMS case 規格 vs 實作斷言，抓「沒真的驗到的 expected」「過弱/恆真斷言」「keyword/參數收了沒用」等自我美化。
+步驟 2 — 每平台「交付憑據」+ 忠實度（兩者都要）：
+(a) **交付憑據（gate 判不出、靠你）**：automator 對每個 tag 平台,附了「那次 \`--platform X\` 命令自己的 stdout 尾段」嗎?那段有對得上本 case 的 \`KQT-Txxxxx.....Pass\` + \`0 failed, N passed\` 嗎?**只有口頭 pass、拿全域 qatest.log 搪塞、或根本沒跑該平台 → 該平台未交付,標 fidelity_issue。**
+(b) **忠實度**:比對 case 規格 vs 斷言,抓「沒真驗到的 expected」「過弱/恆真斷言」「參數收了沒用」。判準是**該平台每個 expected 有沒有被真斷言驗到**——步驟與 web 相同就共用斷言即可、有差異才要對應斷言;**不是**看有沒有 \`if platform\` 分支(步驟一樣本來就沒分支,不代表沒交付)。
 
 回傳：delivered（gate 全過 **且** 每個平台 fidelity 都達標才 true）、gate_missing（gate 缺的平台）、fidelity_issues（各平台忠實度問題）、fix_instructions（要 automator 具體補什麼）。`,
     { label: `verify:${caseId}`, phase: 'Gate+Review', schema: VERDICT_SCHEMA }

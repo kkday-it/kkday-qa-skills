@@ -76,7 +76,7 @@ flowchart TD
 | **主對話 Claude** | 總指揮 | 你直接對話的那個。撈 case、判平台、跑「實作→檢查→重修」閉環、彙整報告、問你開不開 PR。**只有它能開 PR、也只有它會問你。** |
 | **`qa-case-automator`** | 🤖 Agent | tag 標的平台**共用一份**（web↔mweb 共用、android↔ios 共用，只有些許步驟差異）實作(create)/修(fix)+跑過+產可追溯表。並行模式驗元素用各自 Python playwright。不撈整批、不開 PR、不叫別的 agent。 |
 | **`qa-case-fidelity-reviewer`** | 🤖 Agent | 對抗式檢查：比對 case 規格 vs 實作，出覆蓋率/信心/建議。唯讀，只評不改。 |
-| **per-platform 交付 gate** | 📄 確定性腳本 | `scripts/check_platform_delivery.py`——非 LLM，驗每個 tag 平台**真的交付**（mweb 有 `limit_test_platform:mweb` entry、App 有 AppRegression 註冊 + 真跑過）。「web case 硬套 `--platform mweb` 跑綠」矇混不過。 |
+| **per-platform 交付 gate** | 📄 確定性腳本 | `scripts/check_platform_delivery.py`——非 LLM，驗每個 tag 平台**真的用 `--platform X` 跑過、qatest 出 `0 failed`**（能跑該平台 + 有 pass 憑據）。只認 qatest 真跑出的 summary，automator 口頭說 pass 不算。 |
 | `tcms-fetch-cases` | 📄 Skill | 撈 case steps + `labels`/`tags`（平台資訊）。 |
 | `qa-automation-writer` | 📄 Skill | 寫 code + 驗 locator + 產可追溯表的規範。 |
 | `qa-test-runner` | 📄 Skill | 跑測試 + 失敗診斷/修復。 |
@@ -93,9 +93,9 @@ flowchart TD
 
 ## 一次做多平台
 
-一個 TCMS ID **涵蓋它 `labels`/`tags` 標的所有平台**（如 `FE (Web/mWeb/Android/iOS)` → 四平台都要）。關鍵：**平台間共用同一份 case + test_step，不是各寫一份**——只有些許步驟不同（用平台標記/`limit_test_platform` 區分）：
+一個 TCMS ID **涵蓋它 `labels`/`tags` 標的所有平台**（如 `FE (Web/mWeb/Android/iOS)` → 四平台都要）。關鍵：**平台間共用同一份 case + test_step，不是各寫一份**——步驟相同就直接共用，有差異處才用 `if platform==X` 分支：
 
-- **web ↔ mweb 共用一份**（`web_playwright/`）：做 web 就**一併**補 mweb 的 `limit_test_platform:mweb` entry + 些許 `[M]` 差異步驟。不是只做 web、也不是另開一份。
+- **web ↔ mweb 共用一份**（`web_playwright/`）：同一份 case + test_step，用 `--platform web` 和 `--platform mweb` **各跑一次**（**不加 `limit_test_platform`**——那會限死只跑單一平台）；差異處用 `if platform==MWEB` 處理。「交付 mweb」＝ `--platform mweb` 真的跑出 `0 failed`。
 - **android ↔ ios 共用一份**（`mobile/`）：靠 `[iOS]`/`[Android]` 標記分差異。
 
 **tag 標的平台缺任一涵蓋 = 沒做完**（per-platform gate 會擋）。某平台做不了（如 App 缺實體機）→ 標 blocked，共用的其餘平台照做。自主/harness 模式套預設續跑不停等；互動模式若真的不確定會問你。

@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """per-platform 交付 gate（確定性、非 LLM）
 
-驗一個 TCMS case 的**每個 tag 平台**是否真的交付 —— 不信 automator 自評、矇混不過。
-「--platform mweb 跑得綠」不算數（會被 web case 硬套矇混）；要 yaml 真有該平台的正確
-註冊，才算交付。
+驗一個 TCMS case 的**每個 tag 平台**是否真的交付 —— 不信 automator 自評。
 
-依 kkday-QA-automation 框架慣例判定各平台是否有 case 註冊：
-  - web  : cases yaml 有該 caseid 的 entry，platform=web 且未被 limit_test_platform 限成 mweb
-  - mweb : 有該 caseid 帶 `limit_test_platform.test_platform=mweb` 的 entry
-           （框架慣例：mweb 不是獨立 platform，而是 web driver + limit 成 mweb）
-  - android / ios : AppRegression/ 下有該 caseid、platform 對應的 case
-（可選 --results：再要求該平台在測試結果 jsonl 裡有 pass）
+框架：一份 case（platform=web 用 web_playwright driver）天生能跑 web+mweb；mobile driver 能跑
+android+ios。`limit_test_platform` 才把 case「限死只跑單一平台、其餘 Skip」。故判「能跑某平台」：
+  - web / mweb : platform=web 的 entry，且沒被 limit_test_platform 限成別的
+  - android / ios : mobile(AppRegression) 的 entry，且沒被 limit 限死
+「交付」＝ 能跑該平台 **且** 該平台真的 `--platform X` 跑過 pass（--results，來自 qatest 那行 `0 failed`）。
+注意：gate 只判「能跑 + 跑過 pass」；「test_step 是否真對該平台有效（非硬套 web）」是 fidelity review 的事。
 
 缺任一 tag 平台 → 列出未交付平台、exit 1（擋下，不准算完成）。全到齊才 exit 0。
 
@@ -52,26 +50,29 @@ def _covered_platforms(repo: str, caseid: str) -> set:
             continue
         plat = str(entry.get("platform", "")).lower()
 
-        # 找 pre-condition 裡的 limit_test_platform.test_platform
-        test_plat = None
+        # limit_test_platform：把此 case「限死」只跑某平台（framework common.py 的
+        # limit_test_platform：當前 platform 不符就 raise Skip）。沒有它 = 該 driver 的平台都能跑。
+        limit = None
         pre = entry.get("pre-condition", [])
         if isinstance(pre, list):
             for step in pre:
                 if isinstance(step, dict) and "limit_test_platform" in step:
                     lp = step.get("limit_test_platform")
                     if isinstance(lp, dict):
-                        test_plat = str(lp.get("test_platform", "")).lower()
+                        limit = str(lp.get("test_platform", "")).lower()
 
-        if plat in ("android", "ios"):
-            covered.add(plat)
-        elif plat == "web":
-            # web driver：靠 limit_test_platform 區分實際跑 web 還 mweb
-            if test_plat == "mweb":
-                covered.add("mweb")
-            elif test_plat in (None, "", "web"):
-                covered.add("web")
-            else:
-                covered.add(test_plat)
+        # driver 天生能跑的平台群（一份 test_step 用 if platform==X 分支處理各平台差異）
+        if plat == "web":
+            group = {"web", "mweb"}        # web_playwright driver
+        elif plat in ("android", "ios", "app", "mobile"):
+            group = {"android", "ios"}     # mobile(Appium) driver
+        else:
+            group = {plat} if plat else set()
+
+        if limit:
+            covered.add(limit)             # 被 limit 限死 → 只該單一平台能跑
+        else:
+            covered |= group               # 無 limit → 該 driver 的平台都能跑
     return covered
 
 
