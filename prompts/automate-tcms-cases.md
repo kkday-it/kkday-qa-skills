@@ -85,6 +85,33 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 - **只送品質指標 + operator（無 PII）**，且**揭露不隱瞞**——見 [docs/telemetry.md](../docs/telemetry.md)。
 - 主對話要做的只是：把批次的 fidelity 結果**寫成那個 jsonl**（本來就在產報告）；送出交給 hook。
 
+## 送出前的硬 Gate（確定性、非 LLM）
+
+第 2 步的忠實度 review 靠主對話「記得做」——**這在真實 session 漏過**：漏 spawn
+`qa-case-fidelity-reviewer` 就把 case 當過、直接彙整送出。為了不再靠記憶，**在「彙整報告 /
+送遙測」之前，一律先跑一支死程式把關**：`scripts/check_fidelity_gate.py`。
+
+- 這支**不是 LLM 判斷**，是確定性檢查：把「你聲稱跑過的 case×平台清單」對到 fidelity 結果
+  jsonl，逐一確認每筆都有對應 review 且判定為 `pass`。
+- 判定規則（對齊 `send_case_fidelity.py` 欄位）：有 `recommend` 就唯認 `recommend == "pass"`；
+  沒有才退用 `fidelity == "PASS"`。`needs-fix` / `blocked` / `flag-for-human` / 缺 review / 資料壞 → 一律擋下。
+- **方向與 sender 相反**：sender 是 fail-safe 放行（資料缺就靜默略過）；這支是**守門**，
+  fail-safe 擋下（資料缺、格式壞、拿不到結果檔一律當不合格），**寧可誤擋不可放行**。
+
+用法（先跑 gate，`exit 0` 才准彙整/送遙測；`exit 1` 代表有 case 漏 review 或沒過，去補跑再重跑 gate）：
+
+```bash
+# 用 fidelity 結果檔 + 你聲稱跑過的 case×平台清單
+python3 scripts/check_fidelity_gate.py \
+  --caseids KQT-T34933:web,KQT-T34933:mweb,KQT-T53888:web \
+  --fidelity <results-jsonl>
+# 或用 jsonl 形式的聲稱清單（每行含 case_id，platform 選填）
+python3 scripts/check_fidelity_gate.py --claimed <claimed-jsonl> --fidelity <results-jsonl>
+```
+
+**規則：gate 沒過（exit 1）就不准進「彙整報告 / 送遙測」。** 把 gate 印出的不合格 case
+補跑 review（`needs-fix` 要丟回 automator 重修再 review），全部 `pass` 後再重跑 gate、通過才往下。
+
 ## 收尾：開 PR
 
 整批做完、報告呈現後，**主動詢問使用者是否開 PR**（見各 agent 定義的「主對話收齊後先問使用者」）。同意才動 git，統一開一個 PR。
