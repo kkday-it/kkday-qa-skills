@@ -92,7 +92,11 @@ create/fix 要**對每個要做的平台各自判**，不是查「這個 case �
 > **「要不要問使用者」是主 agent 的職責**（subagent 做不到也不該做）：**互動模式** → 主 agent 把待確認點問使用者；**自主／harness 模式** → 主 agent 套預設續跑、`blocked` 的排入待人工佇列，全程不停等輸入。
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
-0. **先搜現有、能重用就重用（別重寫已有的）**：動手寫前先 `grep` `test_steps/` 與 `pages/`（含同平台目錄 + `base`/`common`），把 case steps 對到**現成的 test step / page object**——launch / 登入 / 導頁 / 共用元件這類 step 常常已經存在。**能重用的直接引用，只新寫這個 case 真正缺的那幾步**。重複造 framework 已有的 = 浪費、又製造不一致（同功能兩份 step）。
+0. **先搜現有、能重用就重用（別重寫已有的）**：動手寫前先 `grep` `test_steps/` 與 `pages/`（含同平台目錄 + `base`/`common`），把 case steps 對到**現成的 test step / page object**——launch / 登入 / 導頁 / 共用元件這類常已存在。能重用的直接引用，只新寫真正缺的那幾步。重複造 = 浪費 + 不一致。
+   - **重用 ≠ 盲用：先驗現成 step 能不能用**（locator 在不在、行為符不符本 case）。不能用時分類：
+     - **locator 漂移**（step 對、只是 locator 過時）→ 最小 fix 該共用 step 的 locator（真實元素樹重驗）；**改共用 step 必須確認沒弄壞其他用它的 case**（§5 紅線）。
+     - **行為根本不符**（不是這個 step、或做的跟本 case 要的不同）→ 別硬套，寫本 case 真正缺的新 step。
+   - 一個 case 常是「**重用能用的 + fix 漂移的 + create 缺的**」混合；回報時分開講清楚哪些是哪種。
 1. 規劃草擬（把這個 case 想完再驗）。
 2. **強制元素驗證，locator 不准猜定稿**（用什麼開瀏覽器**依模式分流**，見 §3.5）：Web/MWeb 驗 DOM（`browser_navigate`/`browser_snapshot`/`browser_evaluate` 或等效的 Python playwright，皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**）；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。
 3. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
