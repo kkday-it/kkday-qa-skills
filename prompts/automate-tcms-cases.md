@@ -34,8 +34,8 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
        │        → 回傳 result + step→assertion 可追溯表 + 假設 + blocked
        │      若 automator 回報「待確認點」：互動→問使用者；自主→套預設/blocked
        │   a2. per-platform 交付 gate（check_platform_delivery.py，確定性）：驗 tag 每平台
-       │        真有註冊+跑過（mweb 有 limit_test_platform:mweb、App 有 AppRegression）；
-       │        缺平台 → 餵回 automator 補（「--platform mweb 跑綠」矇混不過）
+       │        真的 --platform X 跑過、有 qatest 那行 0 failed 憑據（能跑 + pass）；
+       │        缺平台 → 餵回 automator 補（口頭 pass、沒那行 0 failed 不算）
        │   b. spawn qa-case-fidelity-reviewer
        │        → step_coverage / assertion_coverage / 未覆蓋 / 可疑斷言 / fidelity / confidence / recommend
        │   c. 判 recommend：
@@ -97,12 +97,12 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 ## 送出前的硬 Gate（確定性、非 LLM）——兩道
 
 真實 session 漏過兩種：(1) 漏 spawn `qa-case-fidelity-reviewer` 就把 case 當過；(2) automator
-自評「web+mweb pass」但**實際只交付 web**（mweb 沒 `limit_test_platform` entry）。為了不靠記憶、不信自評，
+自評「web+mweb pass」但**實際只跑了 web**（沒有 `--platform mweb` 跑出的 `0 failed` 憑據）。為了不靠記憶、不信自評，
 **在「彙整報告 / 送遙測」之前跑兩支死程式把關**：
 
-**Gate A — per-platform 交付（`scripts/check_platform_delivery.py`）**：驗 tag 每個平台真有註冊+跑過
-（mweb 有 `limit_test_platform:mweb`、App 有 AppRegression）。「web case 硬套 `--platform mweb` 跑綠」
-矇混不過；缺平台補實作再過。
+**Gate A — per-platform 交付（`scripts/check_platform_delivery.py`）**：驗 tag 每個平台**能跑（沒被
+`limit_test_platform` 限死排除）且 `--platform X` 真跑出 `0 failed`**。憑據是那次命令的 stdout summary，
+不是 automator 口頭 pass、也不是全域 `qatest.log`（混在一起）；缺該平台的 `0 failed` 就補跑再過。
 
 **Gate B — 忠實度（`scripts/check_fidelity_gate.py`）**：把「你聲稱跑過的 case×平台」對到 fidelity
 結果，逐一確認每筆都有對應 review 且判定 `pass`。

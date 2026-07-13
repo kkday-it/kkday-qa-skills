@@ -73,11 +73,12 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 判定細則見 `qa-automation-writer` 階段 0。本 agent 的行為界線：
 
-- **平台（鐵則：tag 標的全部平台都要涵蓋，且平台間「共用」同一份實作）**：一個 TCMS ID 涵蓋它 `labels`/`tags` 標的所有平台（例：`FE (Web/mWeb/Android/iOS)` → web+mweb+android+ios 全涵蓋）。**關鍵：平台間共用同一份 yaml case + test_step，不是各寫一份獨立的**——只有些許步驟不同（用平台標記/`limit_test_platform` 區分），不至於整份 test_step 都不同。
-  - **web ↔ mweb 共用一份**（`web_playwright/`）：同一個 case + test_step，靠 `limit_test_platform`（web / mweb）與 step 內 `[PC]`/`[M]` 標記分平台差異。**做 web 就一併把 mweb 的 `limit_test_platform:mweb` entry + 差異步驟補上**（反之亦然）——不是只做 web、也不是另開一份 case。
-  - **android ↔ ios 共用一份**（`mobile/`）：同一個 case + test_step，靠 `[iOS]`/`[Android]` 標記分差異。
-  - **不准把「只做 web、mweb/App 另開 case」當預設**——那是漏做涵蓋，不是完成。
-  - 某平台做不了（如缺實體機、缺前置）→ 該平台標 `blocked`＋原因，**共用的其餘平台照做**；只有「tag 全部平台都無法進行」才整個 case 標 blocked。回傳時**逐平台列出** pass/fail/blocked，tag 平台缺任一涵蓋即非「完成」。
+- **平台（鐵則：tag 標的每個平台都要各跑 `--platform X` 且 qatest 出 `0 failed`，才算交付）**：一個 TCMS ID 涵蓋它 `labels`/`tags` 標的所有平台（例：`FE (Web/mWeb/Android/iOS)` → 四平台）。**平台間共用同一份 yaml case + test_step**，不是各寫一份：web ↔ mweb 共用 `web_playwright/` 一份、android ↔ ios 共用 `mobile/` 一份。
+  - 步驟相同的平台 → **直接共用同一套 test_step,不需任何平台分支**；
+  - 步驟有差異處 → 用 `if pages.platform == Platform.MWEB / Android / iOS:` 分支處理那幾步；
+  - **絕不加 `limit_test_platform`** —— 它的作用是「限死只跑單一平台、其餘直接 Skip」（見 framework `common.py`），加了反而讓別的 tag 平台跑不了。
+  - **「交付某平台」的唯一判準 = 真的用 `--platform X` 跑過、且 qatest 尾巴那行是 `0 failed`。** 不是口頭說 pass、不是「case 能跑」、更不是拿別平台硬套跑綠。
+  - 某平台做不了（缺實體機/前置）→ 標 `blocked`＋原因，其餘平台照跑；tag 全部都無法進行才整個 case blocked。**逐平台列出結果,並附每平台那行 qatest summary 原文（見輸出規範）**；tag 平台缺任一「跑出 0 failed」即非完成。
 - **能安全帶預設就帶入並記錄假設**，繼續做：環境 `stage`、語系 `zh-tw`、商品 URL slug→oid、既定測試帳號、label 標的所有 UI 平台…
 - **需判斷或可能測錯的點**（label 混 API 如 `web/API`、多平台這輪是否全做、平台標記對不上、缺 oid 又推不出、測資前置未知如「該商品是否已配好折扣/godate」）→ **回報主對話**，附「候選平台 + 步驟切分 + 已帶入的假設 + 真正卡住需輸入的點（缺哪項／為何需要／可接受格式，如 oid `9468` 或商品 URL）」。**subagent 不自己拍板、不直接問使用者、不 hang。**
 - **完全無法進行**（如缺 oid 推不出）→ 該平台／該 case 標 `blocked`＋原因，跳過續跑。
@@ -140,6 +141,7 @@ def _kkday_www_host(env: str) -> str:
 - 本 case 結果：KQT-T ID → `pass` / `fail` / `skipped`（附原因）
 - 改動檔案清單（page object / test step / case data 的相對路徑）
 - locator 驗證與測試的關鍵事實（平台、是否 pass、卡在哪）
+- **每平台的 qatest 跑證（交付憑據）**：每個 tag 平台各跑一次 `python -m qatest run --caseid <ID> --platform <X> ...`，**擷取那一次命令自己的 stdout 尾段**附回——含 `KQT-Txxxxx.....Pass` 與 `====== 0 failed, N passed ... on <host> ======`。這段是隔離的、對得上 case×平台的憑據。**不要去讀全域 `~/Documents/QATest_Output/qatest.log`**（所有跑混在一起、並行交錯，無法對應）。缺這段真跑出的 `0 failed` 的平台，一律不算交付。
 - **step→assertion 可追溯表**（每個 TCMS step / expected_result 對到哪個斷言 `file:line`；對不到的 expected 一律列出）——供主對話跑忠實度 review
 - **自動帶入的假設值**（環境 / 語系 / 平台 / 推導出的 oid 等）與**卡住待反問的缺項**，讓主對話能向使用者確認
 - 對外文件用繁體中文；commit message / 程式碼註解可用英文
