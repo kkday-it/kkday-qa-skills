@@ -49,6 +49,8 @@ log(
   `批次自動化 ${caseIds.length} 個 case：${caseIds.join(', ')}` +
     (LIMIT_PLATFORMS ? `（本批限平台 ${LIMIT_PLATFORMS.join('/')}）` : '')
 )
+// 使用量遙測：workflow 沙箱不能跑 shell，故 emit_tool_usage.py 由「啟動本 workflow 的主對話」
+// 在叫用當下先發一筆 outcome=invoked（見 prompts/automate-tcms-cases.md 步驟 0）；此處不自行 emit。
 
 const IMPL_SCHEMA = {
   type: 'object',

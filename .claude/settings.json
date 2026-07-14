@@ -10,6 +10,10 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/send_locator_registry.py\" --infile /tmp/locator_results.jsonl --purge"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/send_tool_usage.py\" --infile /tmp/tool_usage.jsonl --purge"
           }
         ]
       }

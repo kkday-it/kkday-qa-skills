@@ -87,7 +87,7 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。
-2. **強制元素驗證，locator 不准猜定稿**（用什麼開瀏覽器**依模式分流**，見 §3.5）：Web/MWeb 驗 DOM（`browser_navigate`/`browser_snapshot`/`browser_evaluate` 或等效的 Python playwright，皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**）；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。
+2. **強制元素驗證，locator 不准猜定稿**（用什麼開瀏覽器**依模式分流**，見 §3.5）：Web/MWeb 驗 DOM（`browser_navigate`/`browser_snapshot`/`browser_evaluate` 或等效的 Python playwright，皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**）；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
 3. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
 
 ### 3.5 驗元素/寫檔的隔離：單獨跑 vs 批次並行跑
