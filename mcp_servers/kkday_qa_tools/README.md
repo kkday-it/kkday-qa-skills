@@ -75,18 +75,11 @@
 
 Claude Code 啟動時 `uv` 自動 clone repo、建 venv、跑 server，同事零手動安裝。
 
-#### 設定檔放哪（依 client）
+#### 用哪個 client：**團隊統一 Claude Code**
 
-上面那段 JSON 要貼進**你用的 client 的 MCP 設定檔**——位置不同，別放錯：
+本 MCP 要打 kkday 內網後端，**請用 Claude Code**（server 以一般子行程跑、有完整網路，也是團隊統一的工具）。上面那段 JSON 貼進 Claude Code 的 MCP 設定：`~/.claude.json`（全域）或專案根的 `.mcp.json`（團隊共用）——但**建議用下方 CLI 指令加，別手改**。
 
-| Client | 設定檔位置 | 說明 |
-|---|---|---|
-| **Claude Code** | `~/.claude.json`（全域）或專案根的 `.mcp.json`（團隊共用） | 建議用下方 CLI 指令加，不用手改 |
-| **Claude Desktop** | macOS：`~/Library/Application Support/Claude/claude_desktop_config.json`<br>Windows：`%APPDATA%\Claude\claude_desktop_config.json` | 手動編輯後**完全結束再開** app |
-| **Cursor** | `~/.cursor/mcp.json`（全域）或專案 `.cursor/mcp.json` | 結構同上（`mcpServers`） |
-| **Zed** | `~/.config/zed/settings.json` | key 是 `context_servers`（**不是** `mcpServers`），內層 `command`/`args`/`env` 同 |
-
-> 三種以 `mcpServers` 為 key 的 client（Claude Code / Desktop / Cursor）直接貼上面整段；Zed 把外層 key 換成 `context_servers`。
+> **不要用 Claude Desktop**：它把 MCP server 跑在沙盒裡、**連不到內網**，即使設定對也會 `connected` 但每個 tool 都失敗、且改不了。其他 client（Cursor / Zed 等）非團隊標準、不在此支援範圍，一律以 Claude Code 為準。
 
 #### Claude Code 一鍵加（推薦，免手改 JSON、避免改壞設定檔）
 
