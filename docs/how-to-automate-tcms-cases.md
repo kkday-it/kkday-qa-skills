@@ -102,6 +102,8 @@ flowchart TD
 
 **tag 標的平台缺任一涵蓋 = 沒做完**（per-platform gate 會擋）。某平台做不了（如 App 缺實體機）→ 標 blocked，共用的其餘平台照做。自主/harness 模式套預設續跑不停等；互動模式若真的不確定會問你。
 
+**App 裝置選擇**：tag 含 android/ios 時，主對話在 spawn mobile automator「前」先跑 `scripts/list_mobile_devices.py --json --pick` 列在線實體機——**互動模式問你要用哪隻**（接多隻時很重要，避免抓到別人正在用的）；**自主 / harness 模式直接取第一隻在線實體機、不問、多隻也不 block**（無人可問，卡住比選錯更糟），完全沒在線裝置才 blocked。選定的 udid 傳進 automator，automator 不自己挑裝置。
+
 ## 想加速一批
 
 一批（10+ case 很常見）用 **workflow 並行**跑，不必一個個等閉環：

@@ -13,13 +13,32 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 
 ## 模式：互動 vs 自主（決定「要不要問使用者」）
 
-- **互動模式**（有人在）：碰到待確認點（平台選擇、`web/API` 混用、缺 oid…）→ **問使用者**。
-- **自主 / harness 模式**（無人）：**不停等輸入** → 套安全預設續跑（label 標的所有 UI 平台、env=stage…），把 `blocked` / 低信心排入**待人工佇列**。
+- **互動模式**（有人在）：碰到待確認點（平台選擇、**App 裝置選擇**、`web/API` 混用、缺 oid…）→ **問使用者**。
+- **自主 / harness 模式**（無人）：**不停等輸入** → 套安全預設續跑（label 標的所有 UI 平台、env=stage、**裝置用唯一在線實體機**…），把 `blocked` / 低信心排入**待人工佇列**。
+
+### App 裝置選擇（spawn mobile automator「前」，主對話做）
+
+接多隻裝置時 subagent 不能問人，「隨便抓一隻」可能跑到別人正在用的、或錯的 OS 版本。故 tag 含 android/ios 時，**主對話在 spawn 前先列裝置**：
+
+```bash
+python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android 走 adb
+```
+
+- **互動模式**：把在線實體機列給使用者 → 問「這個 case 的 {ios|android} 要用哪隻」→ 拿選定 udid。
+- **自主 / harness 模式**：讀 `auto_pick`——**直接取第一隻在線實體機、不問、多隻也不 block**（harness 無人可問，卡住比選錯更糟）；完全沒在線實體機才標 `blocked`。
+- 選定後，把 udid 寫進 automator prompt（automator 用 `--udid <值>`、不自己挑，見 `qa-case-automator.md §3`）。
 - 模式由主對話依情境（或啟動時的參數）決定，並在報告開頭註明用了哪個模式。
 
 ## 流程（閉環）
 
 ```
+0. 記使用量（工具一被叫用就做，與成敗脫鉤）
+   python3 scripts/emit_tool_usage.py --tool automate-tcms-cases \
+       --run-id <本批 run id> --outcome invoked \
+       --cases <逗號分隔 case> --platforms <逗號分隔平台> [--interactive]
+   ⚠️ 一定要在「開始跑」的當下就 emit invoked，這樣即使中途放棄/卡住，也記得到「有人用過」
+   （送出由 Stop hook 的 send_tool_usage.py 背景處理，不阻塞、無 PII）
+
 1. 撈批次
    tcms-fetch-cases（--cases / --run-id [--assignee]）→ 每案含 steps + expected_result + labels/tags
    ⚠️ 即時快照，實作當下才 fetch，不沿用舊 /tmp
@@ -46,6 +65,9 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
                  - blocked（缺資訊等）→ 標 blocked，續下一個
 
 3. 彙整 → 批次 Markdown 報告（見下）
+   收尾再 emit 一筆收官狀態（串同一 run id，供 dashboard 算「叫用→交付」轉化率）：
+   python3 scripts/emit_tool_usage.py --tool automate-tcms-cases --run-id <同上> \
+       --outcome <delivered|blocked|abandoned> --cases <...> --platforms <...>
 
 4. 依規則問使用者是否開 PR（同意才開 branch → commit → 一個 PR）
 ```
