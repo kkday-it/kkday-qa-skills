@@ -14,7 +14,7 @@
 
 ---
 
-## Tools 一覽（34 個 + 3 個說明工具）
+## Tools 一覽（共 38 個，含 `help` / `describe_tool` / `health` 3 個說明工具）
 
 > 分兩組後端：**ai-studio 工具**（會員/點數/券/等級/…）下游打 `:8081`；**QA 平台工具**（建/複製商品、下單、兌換、月曆）下游打 QA Test Platform `:8080`。兩組併存於同一個 MCP，埋點都送 ai-studio dashboard（QA 平台工具 operator 標記 `kkday_qa_platform_mcp`）。
 
@@ -37,9 +37,15 @@
 
 ---
 
+## 前置需求（裝之前先確認，否則會「connected 但一呼叫就失敗」）
+
+1. **內網可達**：兩組後端都在 kkday 內網（`autotest-service.sit.kkday.com` 的 `:8081` / `:8080`）。**必須連到公司內網 / VPN** 才呼叫得動。沒內網時 MCP 仍會顯示 `connected`（server 本身有起），但**每個 tool 都會失敗** → 裝好後務必先呼叫 `health` 確認 `reachable: true`。
+2. **`uv`（方案 A 用）**：`curl -LsSf https://astral.sh/uv/install.sh | sh`（裝完可能要重開 terminal 讓 `uvx` 進 PATH）。
+3. 認得 MCP 的 client 一個：Claude Code / Claude Desktop / Cursor / Zed 等。
+
 ## 安裝
 
-依你想要的部署方式選一種：
+依你想要的部署方式選一種（**方案 A 最推薦**）。下面 JSON 都用同一組 SIT env，直接複製即可。
 
 ### A. uvx from git（**推薦，零手動 setup**）
 
@@ -68,6 +74,31 @@
 ```
 
 Claude Code 啟動時 `uv` 自動 clone repo、建 venv、跑 server，同事零手動安裝。
+
+#### 用哪個 client：**團隊統一 Claude Code**
+
+本 MCP 要打 kkday 內網後端，**請用 Claude Code**（server 以一般子行程跑、有完整網路，也是團隊統一的工具）。上面那段 JSON 貼進 Claude Code 的 MCP 設定：`~/.claude.json`（全域）或專案根的 `.mcp.json`（團隊共用）——但**建議用下方 CLI 指令加，別手改**。
+
+> **不要用 Claude Desktop**：它把 MCP server 跑在沙盒裡、**連不到內網**，即使設定對也會 `connected` 但每個 tool 都失敗、且改不了。其他 client（Cursor / Zed 等）非團隊標準、不在此支援範圍，一律以 Claude Code 為準。
+
+#### Claude Code 一鍵加（推薦，免手改 JSON、避免改壞設定檔）
+
+不要手改 `~/.claude.json`（易改壞），用內建 CLI：
+
+```bash
+claude mcp add-json kkday-qa-tools '{
+  "command": "uvx",
+  "args": ["--refresh","--from","git+https://github.com/kkday-it/kkday-qa-skills.git#subdirectory=mcp_servers/kkday_qa_tools","kkday-qa-tools-mcp"],
+  "env": {
+    "KKDAY_TOOLS_BASE": "http://autotest-service.sit.kkday.com:8081/ai_studio",
+    "KKDAY_TOOLS_USER_ID": "mr8l9126-d483lhd1gto",
+    "KKDAY_TOOLS_USER_NAME": "kkday_qa_mcp",
+    "KKDAY_QA_PLATFORM_BASE": "http://autotest-service.sit.kkday.com:8080/api/v1"
+  }
+}'
+```
+
+加 `-s user` 裝成跨專案的全域設定；預設是當前專案。加完重啟 Claude Code。
 
 **`--refresh` 是關鍵**：`uvx` 預設會 cache 已建好的環境，requirement 字串沒變時**不會**重抓 git，光重啟拿到的還是舊版。加上 `--refresh` 後，每次啟動 Claude Code 都會強制重抓 master 最新 commit 再重建環境 → 永遠拿到最新版（代價：啟動多幾秒 git fetch）。所以只要有人把更新 merge 進 master，同事重啟 Claude Code 就自動更新，零手動。
 
@@ -120,7 +151,9 @@ Config 指到 venv python：
 | 「幫 xxx@ 拉到 gold」 | chain `lookup_member` → `add_experience` → `update_member_tier` |
 | 「建一張 5% 折扣券給 xxx@」 | 先 `coupon_templates()` → 選模板 → `create_coupon(...)` |
 
-**驗證有沒有裝好**：在 Claude Code 跑 `/mcp`（內建指令）→ 看得到 `kkday-qa-tools ✓ connected` + 29 tools 就 OK。
+**驗證有沒有裝好**（兩步都要過）：
+1. **連上**：在 Claude Code 跑 `/mcp`（內建指令）→ 看得到 `kkday-qa-tools ✓ connected`（約 38 tools）。
+2. **打得動**：呼叫 `health`（唯讀）→ 兩組後端 `reachable: true` / `auth_ok: true`。**只到步驟 1 不算裝好** —— 沒內網時它一樣顯示 connected，但 tool 全打不動（見前置需求）。
 
 ---
 
@@ -137,6 +170,7 @@ Config 指到 venv python：
 - 先呼叫 `health`（唯讀）→ 一次看兩組後端 `:8081`（ai-studio）與 `:8080`（QA 平台）的 `reachable` / `auth_ok` / `latency_ms`。
 - `healthy: false` 且 `ai_studio_api.auth_ok: false` → 是 auth 問題（見下方 401/403）。
 - 某一組 `reachable: false` → 該組後端沒起或網路不通，只有走那組的 tool 會壞（8081/8080 各撐一批 tool）。
+- **兩組都 `reachable: false`（最常見）** → 你**不在內網 / 沒連 VPN**。後端都在 `autotest-service.sit.kkday.com` 內網，連上公司網路 / VPN 再呼叫（MCP 顯示 connected 不代表打得到後端）。
 
 **`/mcp` 看不到 kkday-qa-tools**
 - Claude Code config 檔（`~/.claude.json`）改了但沒重啟 → 完全結束再開
