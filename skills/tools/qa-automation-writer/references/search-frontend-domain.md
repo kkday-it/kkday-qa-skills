@@ -56,14 +56,10 @@ mweb 驗證法。把可複用的部分固化，讓下一個搜尋/前端 case �
 ### B2. mweb 必須用 device profile，不能用 viewport resize 冒充
 
 - kkday 靠 **User-Agent**（＋`isMobile`/`hasTouch`）決定回 web 還是 mweb DOM，**不是看 viewport**。
-  只 `browser_resize` / 只設 `--viewport` 仍是桌面 UA → server 回的是 **web 頁**，會驗到錯的頁。
-- playwright MCP 的桌面 session **無法中途切手機 profile**（一個 server = 一個 profile）。要驗
-  mweb 真實 DOM，用**框架同一份 `devices["iPhone 15"]`**（`QATest/src/lib/fixtures/playwright.py`
-  裡 mweb 用的同一台）的設定：
-  - 首選：Playwright 起 context 時 `**pw.devices["iPhone 15"]`（本 repo 的 `verify_locator.py`
-    / `get_verified_locator.py` 對 mweb entry 已自動套這台）。
-  - MCP 情境：啟動 server 帶 `--device "iPhone 15"`，或 `--user-agent "<iPhone UA>"` + viewport
-    375×667（framework fallback，見同檔）。
+  只設 `--viewport` 仍是桌面 UA → server 回的是 **web 頁**，會驗到錯的頁。
+- 驗 mweb 真實 DOM 用 **Python playwright** 搭**框架同一份 `devices["iPhone 15"]`**
+  （`QATest/src/lib/fixtures/playwright.py` 裡 mweb 用的同一台）：`verify_locator.py --device "iPhone 15"`
+  會在起 context 時自動套 `pw.devices["iPhone 15"]`（手機 UA + `isMobile`/`hasTouch`）。**不用 playwright MCP。**
   - 進頁前先 `navigator.userAgent` 確認是 iPhone/Mobile UA，是桌面 Chrome UA 就停、別在錯的頁上驗。
 - 注意：`iPhone 15` 的確切 UA / isMobile / hasTouch 是 Playwright 內建 device registry 動態載入，
   框架原始碼不硬編碼這些字面值（fallback 路徑才有硬編 UA + viewport，且無 isMobile/hasTouch）。

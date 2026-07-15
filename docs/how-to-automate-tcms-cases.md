@@ -82,7 +82,7 @@ flowchart TD
 | `tcms-fetch-cases` | 📄 Skill | 撈 case steps + `labels`/`tags`（平台資訊）。 |
 | `qa-automation-writer` | 📄 Skill | 寫 code + 驗 locator + 產可追溯表的規範。 |
 | `qa-test-runner` | 📄 Skill | 跑測試 + 失敗診斷/修復。 |
-| **Playwright MCP** | 工具 | 驗 locator 的真實瀏覽器；**單一共用，不能多案同開**——僅**單獨/互動**模式用。**批次並行**改用各自 launch 的 Python playwright（各開 headless browser，可平行、不搶）。驗 mweb 都要手機 device profile。 |
+| **Python playwright**（`scripts/verify_locator.py`） | 工具 | 驗 locator 的真實瀏覽器；**headless、無彈窗、各自 launch**——單案與批次並行**都用它**（不用 playwright MCP，避免彈窗/搶共用瀏覽器）。驗 mweb 加 `--device 'iPhone 15'`。 |
 | **kkday-QA-automation** | 本機 repo | 測試碼落地處（page object / test step / case yaml）。 |
 
 ---
@@ -110,10 +110,10 @@ flowchart TD
 
 - **入口**：一串 TCMS ID（`KQT-T37931 KQT-T37932 …`）→ `workflows/batch_tcms_automate.js`。
 - **每個 case 獨立**流過「automator → gate + 忠實度 review → 回修」，彼此不等，慢的不拖快的（`pipeline`）。
-- **能真平行的關鍵**：批次模式驗元素用**各自 Python playwright**（各開 browser），不搶那個單一共用的 MCP 瀏覽器；各 case 在自己的 **git worktree** 寫檔，不互相覆蓋。
+- **能真平行的關鍵**：驗元素一律用**各自 launch 的 Python playwright**（各開 headless browser），沒有「單一共用瀏覽器」可搶；各 case 在自己的 **git worktree** 寫檔，不互相覆蓋。
 - 並行度自動壓在資源上限（≈ CPU 核數）；wall-clock 從「10× 序列」降到「≈ 最慢單一 case」。App 平台仍受實體機數限制。
 
-> 舊限制「驗 locator 不能平行、要集中主對話做」已被**並行模式的 Python playwright** 突破——那個限制只在「用 MCP 共用瀏覽器」時成立。
+> 舊限制「驗 locator 不能平行、要集中主對話做」已解除——因為改用各自 launch 的 Python playwright（不再有共用瀏覽器），單案與並行都能各開各的、天然隔離。
 
 ## 你可能會遇到的狀況
 
@@ -125,7 +125,7 @@ flowchart TD
 
 ## 常見坑
 
-- **MCP Playwright 不能多案同開**：單獨/互動跑用它；**批次並行**改用各自 Python playwright（各開 browser）才不搶。
+- **一律用 Python playwright 驗元素、不用 MCP**：MCP 會彈可見瀏覽器、佔資源、且單一共用不能多案同開；`verify_locator.py` headless、各自 launch，單案與並行都適用。
 - **mweb 要用手機 device profile**：kkday 看 User-Agent 判 web/mweb，只縮 viewport 會開到 web 頁。
 - **只信「綠」不夠**：所以才有 fidelity reviewer + per-platform gate；沒把關的綠、或漏做平台，都不算過。
 - **平台不是各寫一份**：web↔mweb、android↔ios 各共用一份 case+test_step，做一個要一併補共用平台，別漏。

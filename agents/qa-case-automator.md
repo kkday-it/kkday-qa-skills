@@ -20,12 +20,6 @@ tools:
   - Bash
   - Glob
   - Grep
-  - mcp__plugin_playwright_playwright__browser_navigate
-  - mcp__plugin_playwright_playwright__browser_snapshot
-  - mcp__plugin_playwright_playwright__browser_evaluate
-  - mcp__plugin_playwright_playwright__browser_click
-  - mcp__plugin_playwright_playwright__browser_take_screenshot
-  - mcp__plugin_playwright_playwright__browser_close
 model: sonnet
 ---
 
@@ -87,21 +81,17 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。
-2. **強制元素驗證，locator 不准猜定稿**（用什麼開瀏覽器**依模式分流**，見 §3.5）：Web/MWeb 驗 DOM（`browser_navigate`/`browser_snapshot`/`browser_evaluate` 或等效的 Python playwright，皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**）；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
+2. **強制元素驗證，locator 不准猜定稿**（一律用 **Python playwright** 驗，不用 MCP，見 §3.5）：Web/MWeb 驗 DOM 用 `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`），皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
 3. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
 
-### 3.5 驗元素/寫檔的隔離：單獨跑 vs 批次並行跑
+### 3.5 驗元素/寫檔的隔離：一律 Python playwright（不用 MCP）
 
-主對話/workflow 會在 spawn 你時**告知是否為並行模式**（同時多個 qa-case-automator 各跑不同 case）。依模式選「用什麼開瀏覽器」與「在哪寫檔」，其餘紅線一律沿用。
-
-**驗 Web/MWeb 元素的兩種模式：**
-- **單獨／互動跑（預設，未告知並行時）**：可用**共享的 playwright MCP browser**（`browser_navigate`/`browser_snapshot`/`browser_evaluate`）——方便、可視、可截圖。
-- **批次並行跑（workflow/harness 同時多 case）**：**不可用共享 playwright MCP browser**——多個 automator 會搶同一個瀏覽器互相踩。改用**各自 launch 的 Python playwright 腳本**驗元素：呼叫 `~/.claude/skills/qa-automation-writer` 那套 Python playwright（或 kkday-qa-skills `scripts/verify_locator.py` 模式），**每個 automator 各開各的 headless browser**，天然隔離、可並行。
+**驗 Web/MWeb 元素一律用 Python playwright，不用 playwright MCP。** MCP 會彈出可見瀏覽器、佔資源、影響使用者體驗，且並行時多個 automator 會搶同一個共享瀏覽器互相踩——所以無論單案或批次並行，統一走 **各自 launch 的 headless Python playwright**：用 kkday-qa-skills `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`）或 `~/.claude/skills/qa-automation-writer` 那套 Python playwright。**每個 automator 各開各的 headless browser**，天然隔離、可並行、無彈窗。
 
 **檔案隔離：**
 - **批次並行時**各 automator 應在自己的 **git worktree** 內寫檔（由 workflow 用 `isolation: worktree` 提供），避免多 case 同時改同一 repo 互相覆蓋。**你只管在給定的工作目錄實作，不自己開 worktree、不自己做 git 操作。**
 
-**沿用既有約束（不因模式改變）：** locator 不准猜定稿、抓不到元素樹就停下回報、**禁用 prod `www.kkday.com`**、host 依環境組出 `www{suffix}.kkday.com`——這些紅線在兩種模式都成立，模式只決定「用什麼開瀏覽器／在哪寫檔」。
+**沿用既有紅線：** locator 不准猜定稿、抓不到元素樹就停下回報、**禁用 prod `www.kkday.com`**、host 依環境組出 `www{suffix}.kkday.com`。
 
 **開頁 URL host 依環境組成、不可寫死**（驗 locator 與測試 URL 皆適用）：
 ```python
