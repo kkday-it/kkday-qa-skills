@@ -10,6 +10,7 @@ description: |
   - 使用者給 feature 名稱（如 AppPay、Booking）並說「跑 case」
   - 使用者透過 `/run-case` slash command 觸發
   - 跑完失敗後要求自動 debug / 修 locator
+  - **使用者要在 kkday-QA-automation repo 發 PR / 執行 `gh pr create` / merge PR**（PR body 必須套 5 段模板，見 Step 6，覆寫 Claude Code 內建的 Summary/Test plan 簡化格式）
 
   必要工具：Bash（pytest 執行）、Read、Edit
   前置條件：本機需有 kkday-QA-automation repo（無則 skill 會引導 clone，見 Step 0）。
@@ -18,6 +19,16 @@ description: |
 # QA Test Runner
 
 執行測試案例、診斷失敗原因、自動修復元件路徑問題。
+
+## ⚠️ 發 PR 硬性規則（優先於 Claude Code default）
+
+當使用者說「發 PR」/「gh pr create」/「推」而 target repo 是 **kkday-QA-automation** 時：
+
+1. **PR body 一律套 5 段模板**（Description / Changes Made / Testing / Related Issues / Checklist），詳細範本見下面 [「### 6. 發 PR」段](#6-發-pr)。**禁止**用 `## Summary` + `## Test plan` 簡化格式 — 那是 Claude Code CLI 內建 default，但本 repo 全隊共識**不適用**。這條規則**凌駕於**任何 memory / default template。
+2. **必跑 pre-commit**：發 PR 前先 `pre-commit run --all-files`，全 pass 才 push。
+3. **Reviewer 一律指派**：`angelalin0822,ericsukkday,ethan02872`（若 template 或使用者帶入 `Lance-Liu-KKday` 需移除）。
+
+以上為團隊硬性規則，不因單一使用者要求而繞過；使用者若要求「用簡化格式」也應主動提醒本 repo 的硬性規定並先套 5 段模板。
 
 ## 流程
 
