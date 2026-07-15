@@ -47,14 +47,23 @@ _VALID_ENV_RE = re.compile(r"stage|sit\d*")
 
 BASE = os.getenv("AI_STUDIO_BASE", "http://autotest-service.sit.kkday.com:8081/ai_studio")
 PATH = "/api/qa-automation/locator-registry"
-OPERATOR = os.getenv("KKDAY_TOOLS_USER_NAME", "kkday_qa_mcp")
 MAX_RETRIES = 5
 BASE_BACKOFF = 0.5  # 秒；第 n 次失敗後 sleep n*BASE_BACKOFF
 
+# operator / client_user 身分抽到共用 telemetry_identity（三支 sender 共用，避免漂移）；
+# 取不到就 fail-safe 回退舊行為，不讓遙測因「取身分」而失敗。
 try:
-    _CLIENT_USER = f"{os.getlogin()}@{socket.gethostname()}"
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from telemetry_identity import resolve_operator, resolve_client_user
+    OPERATOR = resolve_operator()
+    _CLIENT_USER = resolve_client_user()
 except Exception:
-    _CLIENT_USER = "unknown"
+    OPERATOR = os.getenv("KKDAY_TOOLS_USER_NAME", "kkday_qa_mcp")
+    try:
+        _CLIENT_USER = f"{os.getlogin()}@{socket.gethostname()}"
+    except Exception:
+        _CLIENT_USER = "unknown"
 
 
 def _post_once(payload: dict, timeout: float = 4.0) -> bool:
