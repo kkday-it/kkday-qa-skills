@@ -1,5 +1,7 @@
 # 如何把 TCMS case 自動化
 
+> **⚠️ 第一次用 / 重裝先看這裡**：這條流程靠 repo 內的 skill / agent / hook，**沒裝好下面都不會動**。先照 [README 的「安裝」段](https://github.com/kkday-it/kkday-qa-skills/blob/master/README.md#安裝) 把 skills、agents 用 **symlink** 裝進 Claude Code（symlink 才會跟著 `git pull` 更新，不像 copy 會變舊）。在本 repo 裡跑時，checked-in 的 `.claude/settings.json`（忠實度硬 gate + 遙測 Stop hook）自動生效、不用另外裝。
+
 一句話：**跟 Claude 說要自動化哪些 case，它就會做完給你，最後問你要不要開 PR。**
 
 你不用記指令、不用自己開瀏覽器、不用管它怎麼跑。用講的就好。
@@ -133,5 +135,6 @@ flowchart TD
 
 ## 想知道更多
 
+- 安裝 / 重裝（skill + agent symlink、hook 自動生效）：[README](https://github.com/kkday-it/kkday-qa-skills/blob/master/README.md#安裝)
 - 主對話完整劇本（閉環/報告/模式）：`prompts/automate-tcms-cases.md`
 - 各 Agent 權威定義：`agents/qa-case-automator.md`、`agents/qa-case-fidelity-reviewer.md`
