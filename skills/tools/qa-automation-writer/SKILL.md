@@ -9,6 +9,7 @@ description: |
   - 使用者在 kkday-QA-automation repo 中撰寫或修改 `pages/`、`test_steps/`、`case_data/` 下的檔案
   - 使用者要求新增測試案例、page object 或 test step
   - Code review 自動化測試 PR 時需要對照規範
+  - **使用者要在 kkday-QA-automation repo 發 PR / 執行 `gh pr create` / merge PR**（PR body 必須套 5 段模板，見「## 發 PR」段，覆寫 Claude Code 內建的 Summary/Test plan 簡化格式）
 
   必要工具：Read、Edit、Write、Bash（撰寫＋跑驗證）。**定稿前的元素驗證階段**用 Python playwright（`scripts/verify_locator.py`，Web/MWeb，headless 無彈窗、不用 MCP）、adb（Android）、idb（iOS）抓真實元素樹——這些工具與模擬器若沒裝/沒開，skill 會**自動 bootstrap**（不依賴使用者事先準備，見「撰寫流程 階段 2」）。
   前置條件：本機需有 kkday-QA-automation repo（無則先引導 clone，見「前置」段）。
@@ -17,6 +18,16 @@ description: |
 # QA Automation Coding Standards
 
 在 kkday-QA-automation repo 中撰寫或修改自動化測試程式碼時，**必須遵守以下規範**。
+
+## ⚠️ 發 PR 硬性規則（優先於 Claude Code default）
+
+當使用者說「發 PR」/「gh pr create」/「推」而 target repo 是 **kkday-QA-automation** 時：
+
+1. **PR body 一律套 5 段模板**（Description / Changes Made / Testing / Related Issues / Checklist），詳細範本見下面 [「## 發 PR」段](#發-pr)。**禁止**用 `## Summary` + `## Test plan` 簡化格式 — 那是 Claude Code CLI 內建 default，但本 repo 全隊共識**不適用**。這條規則**凌駕於**任何 memory / default template。
+2. **必跑 pre-commit**：發 PR 前先 `pre-commit run --all-files`，全 pass 才 push。
+3. **Reviewer 一律指派**：`angelalin0822,ericsukkday,ethan02872`（若 template 或使用者帶入 `Lance-Liu-KKday` 需移除）。
+
+以上為團隊硬性規則，不因單一使用者要求而繞過；使用者若要求「用簡化格式」也應主動提醒本 repo 的硬性規定並先套 5 段模板。
 
 ## 前置：確認 framework repo 存在
 
@@ -211,6 +222,7 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 - 所有函式必須加 `@function_recorder()` 裝飾器
 - 參數必須有 type hint（`pages: Pages`、`testcase: TestCase` 等），return 也必須標註型別（如 `-> None`）
 - `pages`、`uidriver`、`test_run_config`、`testcase`、`api_request`、`api_response` 等參數由框架 fixture 自動注入，呼叫時不需手動傳入
+- 🔴 **私有共用 helper（被其他 test step 呼叫、抽出來的斷言/操作）也一律加 `@function_recorder()`**——`function_recorder` 靠參數名注入 fixture（見 `lib/decorators/function_recorder.py`），有 decorator 才會自動注入 `pages`/`uidriver`。**禁止**寫成「沒 decorator 的普通函式，再從呼叫端手動傳 `pages`/`uidriver`」——那會噴 `missing positional argument`、也違反「所有函式都要 decorator」。正解二擇一：① helper 也 `@function_recorder()`，呼叫時只傳業務參數（`_assert_xxx(keyword=...)`，不傳 fixture）；② 不抽 helper，把斷言 inline 進每個 decorated step。
 - Docstring 使用 Google style + 雙引號，包含 Args 和 Returns 區塊
 
 ### 命名
