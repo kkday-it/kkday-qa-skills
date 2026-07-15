@@ -19,12 +19,13 @@ CLAIMED="${CASE_FIDELITY_CLAIMED:-/tmp/case_fidelity_claimed.jsonl}"
 FID="${CASE_FIDELITY_RESULTS:-/tmp/case_fidelity_results.jsonl}"
 GATE="${CLAUDE_PROJECT_DIR:-.}/scripts/check_fidelity_gate.py"
 
-# 這輪不是 TCMS 批次 → 放行
+# 這輪不是 TCMS 批次（沒有 claimed 檔）→ 放行。這不是繞過：本來就沒有批次要擋。
 [ -f "$CLAIMED" ] || exit 0
 
-# gate script 不在：把關功能缺失，但不該卡死所有 session → fail-open 放行 + 提示
+# 到這裡代表「這輪真的跑了 TCMS 批次」。守門一律 fail-CLOSED：任何讓 gate 跑不成的狀況
+# （腳本遺失、路徑錯、python 掛）都必須擋下，否則把關能被「刪掉/改名腳本」輕易繞過。
 if [ ! -f "$GATE" ]; then
-  printf '{"systemMessage":"[fidelity-gate] 找不到 %s，本輪略過忠實度把關"}\n' "$GATE"
+  printf '{"decision":"block","reason":"忠實度 gate 腳本找不到（%s），為避免把關被繞過，擋下結束。請確認 scripts/check_fidelity_gate.py 存在且路徑正確後再繼續。"}\n' "$GATE"
   exit 0
 fi
 
