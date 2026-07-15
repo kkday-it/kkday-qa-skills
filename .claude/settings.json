@@ -5,6 +5,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/fidelity_gate_stop_hook.sh\""
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/send_case_fidelity.py\" --infile /tmp/case_fidelity_results.jsonl --purge"
           },
           {

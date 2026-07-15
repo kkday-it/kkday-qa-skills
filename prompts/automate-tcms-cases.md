@@ -79,8 +79,8 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
 一批 10+ case 別逐案序列等閉環。用 **workflow 並行**（`workflows/batch_tcms_automate.js`，入口＝一串 TCMS ID）：
 
 - 每個 case 獨立流過「automator → per-platform gate + fidelity review → 回修」，彼此不等（pipeline），慢的不拖快的。
-- **能真平行的關鍵**：並行模式驗元素用**各自 Python playwright**（各開 headless browser），**不搶**那個單一共用的 MCP 瀏覽器；各 case 在自己的 **git worktree** 寫檔，不互相覆蓋。
-- 舊限制「驗 locator 不能平行、集中主對話做」只在**用 MCP 共用瀏覽器**時成立；並行模式改 Python playwright 已突破。
+- **能真平行的關鍵**：驗元素一律用**各自 launch 的 Python playwright**（各開 headless browser，不用 MCP），沒有單一共用瀏覽器可搶；各 case 在自己的 **git worktree** 寫檔，不互相覆蓋。
+- 舊限制「驗 locator 不能平行、集中主對話做」已解除——改用各自 launch 的 Python playwright 後（不再有共用瀏覽器），單案與並行都各開各的、天然隔離。
 - 驗 mweb 一律用手機 device profile（User-Agent 判 web/mweb，非 viewport）。App 平台仍受實體機數限制。
 - workflow 跑完回傳達標清單，main 收攏各 worktree、統一問使用者開一個 PR。
 - **現階段禁打 prod**：驗 locator / 跑測試只用 stage / sit 系列（sit0x / sit20x），不碰 `www.kkday.com`。
@@ -146,6 +146,12 @@ python3 scripts/check_fidelity_gate.py \
 # 或用 jsonl 形式的聲稱清單（每行含 case_id，platform 選填）
 python3 scripts/check_fidelity_gate.py --claimed <claimed-jsonl> --fidelity <results-jsonl>
 ```
+
+> **自動 enforce（不靠記憶）：** `.claude/settings.json` 已掛 Stop hook `scripts/fidelity_gate_stop_hook.sh`，
+> 每次 turn 結束時**條件式**跑上面的 gate——**只要 `/tmp/case_fidelity_claimed.jsonl` 存在**（＝這輪跑了 TCMS 批次）
+> 就對 `/tmp/case_fidelity_results.jsonl` 逐筆驗，不過就 `decision:block` 擋下結束、逼你補跑 review；過了才放行並清掉 claimed 檔。
+> **所以主對話的契約只有一條：把「這輪聲稱跑過的 case×平台」逐行寫進 `/tmp/case_fidelity_claimed.jsonl`**（每行 JSON 含 `case_id`，`platform` 選填），
+> fidelity 結果寫進 `/tmp/case_fidelity_results.jsonl`。非 TCMS 的一般對話不寫 claimed 檔 → hook 自動放行、不干擾。
 
 **規則：gate 沒過（exit 1）就不准進「彙整報告 / 送遙測」。** 把 gate 印出的不合格 case
 補跑 review（`needs-fix` 要丟回 automator 重修再 review），全部 `pass` 後再重跑 gate、通過才往下。

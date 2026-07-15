@@ -93,7 +93,7 @@ function implPrompt(caseId, fixNote) {
   return `你是 qa-case-automator，**並行模式**。case=${caseId}。
 ${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
 並行模式規則（照 qa-case-automator.md §3.5）：
-- 驗元素用**各自 launch 的 Python playwright**，不用共享 playwright MCP browser（會搶）。
+- 驗元素用**各自 launch 的 headless Python playwright**（scripts/verify_locator.py），不用 MCP（避免彈窗/搶共用瀏覽器）。
 - 在你所在的 git worktree 內寫檔，不自己做 git 操作。
 - **禁打 prod**：開頁 host 依環境組出 www{suffix}.kkday.com，用 stage / sit，絕不碰 www.kkday.com。
 

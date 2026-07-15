@@ -10,7 +10,7 @@ description: |
   - 使用者要求新增測試案例、page object 或 test step
   - Code review 自動化測試 PR 時需要對照規範
 
-  必要工具：Read、Edit、Write（撰寫）。**定稿前的元素驗證階段**會用 playwright MCP（Web/MWeb）、adb（Android）、idb（iOS）抓真實元素樹——這些工具與模擬器若沒裝/沒開，skill 會**自動 bootstrap**（不依賴使用者事先準備，見「撰寫流程 階段 2」）。
+  必要工具：Read、Edit、Write、Bash（撰寫＋跑驗證）。**定稿前的元素驗證階段**用 Python playwright（`scripts/verify_locator.py`，Web/MWeb，headless 無彈窗、不用 MCP）、adb（Android）、idb（iOS）抓真實元素樹——這些工具與模擬器若沒裝/沒開，skill 會**自動 bootstrap**（不依賴使用者事先準備，見「撰寫流程 階段 2」）。
   前置條件：本機需有 kkday-QA-automation repo（無則先引導 clone，見「前置」段）。
 ---
 
@@ -99,7 +99,7 @@ registry 格式、三個防腐要件（用前先驗 / 來源+時間戳+失敗回
 
 | 平台 | 檢查 | 沒裝就自動裝（不問直接跑） |
 | --- | --- | --- |
-| Web/MWeb | `claude mcp list \| grep -i playwright` | `claude mcp add playwright -- npx @playwright/mcp@latest` |
+| Web/MWeb | `python3 -c "import playwright"` 且 `python3 -m playwright install --dry-run chromium` | `python3 -m pip install playwright && python3 -m playwright install chromium` |
 | Android | `which adb` | `brew install android-platform-tools` |
 | iOS | `which idb` | `brew install idb-companion && python3 -m pip install fb-idb` |
 
@@ -107,24 +107,32 @@ registry 格式、三個防腐要件（用前先驗 / 來源+時間戳+失敗回
 
 | 平台 | 檢查 | 沒有就自動開 |
 | --- | --- | --- |
-| Web/MWeb | playwright MCP 本身自帶 browser，免裝置 | — |
+| Web/MWeb | Python playwright（`verify_locator.py`）自帶 headless browser，免裝置、無彈窗 | 缺 chromium → `python3 -m playwright install chromium` |
 | Android | `adb devices` 有裝置 | `emulator -list-avds` 取一個 AVD → `emulator -avd <name> -no-snapshot -no-boot-anim &`，再 `adb wait-for-device` |
 | iOS | `xcrun simctl list devices booted` 有 booted | `xcrun simctl boot <udid>`（取 `xcrun simctl list devices available` 第一個）→ `open -a Simulator` |
 
-bootstrap 完成後驗可用性（MCP connected / `adb devices` / `idb list-targets` 有 target）。**只有在自動安裝或自動開機都失敗時才停下回報**，並說明卡在哪一步。
+bootstrap 完成後驗可用性（`verify_locator.py` 能跑 / `adb devices` / `idb list-targets` 有 target）。**只有在自動安裝或自動開機都失敗時才停下回報**，並說明卡在哪一步。
 
 工具與裝置就緒後，把「所有新增/修改的 locator」一次列出，逐一對照**真實元素樹**驗證與修正：
 
-- **Web（playwright MCP）**
-  1. `browser_navigate` → `https://www.stage.kkday.com/...`（**禁用** `www.kkday.com`）
-  2. `browser_snapshot` 取 accessibility tree（或 `browser_evaluate` 跑 `document.querySelector(...)` 驗證命中）
-  3. 比對草擬 locator 與實際 DOM，改成能**唯一命中**的 css/xpath
+> **一律用 Python playwright（`scripts/verify_locator.py`），不用 playwright MCP。** MCP 會彈出可見瀏覽器、佔資源、影響使用者體驗，且並行時多個 automator 會搶同一個共享瀏覽器互踩。`verify_locator.py` 是 headless、無彈窗、各自獨立、天然可並行。
 
-- **MWeb（playwright MCP）— 必須用手機 device profile，不能只縮 viewport**
-  kkday 是靠 **User-Agent**（＋`isMobile`/`hasTouch`）決定回 web 還是 mweb DOM，**不是看 viewport**。所以只 `browser_resize`／只設 `--viewport` 仍是桌面 UA → server 回的是 **web 頁**，你就驗到錯的頁。
-  1. **先確認 MCP 帶手機 UA**：`browser_evaluate` → `() => navigator.userAgent`，要看到 iPhone/Mobile UA；若是桌面 Chrome UA，代表 MCP 沒設 device profile，**停下**先設定，別在錯的頁上驗 locator。
-  2. **設定方式**：Playwright MCP server 啟動要帶行動裝置設定 —— 首選 `--device "iPhone 15"`（＝框架 mweb 用的同一台，見 `QATest/src/lib/fixtures/playwright.py:90` `devices['iPhone 15']`）；或 `--user-agent "<iPhone UA>"` + viewport `375×667`（同檔 :96-97 fallback）。一個 MCP server = 一個 profile，**無法在同一 session 靠 resize 在 web/mweb 間切**；驗 mweb 就用 device=iPhone 15 的 MCP。
-  3. UA 確認為手機後，再 `browser_navigate` → stage → `browser_snapshot`/`browser_evaluate` 比對 mweb DOM（mweb 的 class 常與 web 不同，勿照搬 web locator）。
+- **Web（Python playwright / `verify_locator.py`）**
+  1. 對 `https://www.stage{suffix}.kkday.com/...`（**禁用** prod `www.kkday.com`）逐一驗候選 locator：
+     ```bash
+     python3 scripts/verify_locator.py --url "https://www.stage.kkday.com/..." \
+       --candidate "css:.things-to-do-search-bar__input" --candidate "css:..."
+     ```
+  2. 它 headless 開頁、回報每個候選有沒有**唯一命中**；沒命中就依真實 DOM 改成能唯一命中的 css/xpath 再驗。
+
+- **MWeb（Python playwright / `verify_locator.py` — 必須用手機 device profile，不能只縮 viewport）**
+  kkday 是靠 **User-Agent**（＋`isMobile`/`hasTouch`）決定回 web 還是 mweb DOM，**不是看 viewport**。只縮 viewport 仍是桌面 UA → server 回 **web 頁**，就驗到錯的頁。
+  - 加 `--device "iPhone 15"`（＝框架 mweb 用的同一台，見 `QATest/src/lib/fixtures/playwright.py:90` `devices['iPhone 15']`），`verify_locator.py` 會套該 device profile（手機 UA + `isMobile`/`hasTouch`）：
+    ```bash
+    python3 scripts/verify_locator.py --url "https://www.stage.kkday.com/..." \
+      --device "iPhone 15" --candidate "css:..."
+    ```
+  - mweb 的 class 常與 web 不同，勿照搬 web locator。
 
 - **App / Android（adb dump uiautomator tree）**
   ```bash
@@ -140,7 +148,7 @@ bootstrap 完成後驗可用性（MCP connected / `adb devices` / `idb list-targ
   解析 tree，優先用 `AXIdentifier`（= accessibility id / name）→ `AXLabel` → `type` 找真實 locator。
   前提：`xcrun simctl list devices booted` 有 booted 裝置。
 
-> **抓不到就停** — 對應平台的元素樹拿不到（MCP 未連、Web 進不去頁面、`adb`/`idb` 無裝置在線），**停下回報使用者**，不得憑 case 文字臆測 locator 定稿。
+> **抓不到就停** — 對應平台的元素樹拿不到（`verify_locator.py` 進不去頁面、`adb`/`idb` 無裝置在線），**停下回報使用者**，不得憑 case 文字臆測 locator 定稿。
 
 ### 階段 3 — 自動執行
 
