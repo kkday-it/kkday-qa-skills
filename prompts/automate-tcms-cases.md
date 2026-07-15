@@ -87,6 +87,21 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
 - workflow 跑完回傳達標清單，main 收攏各 worktree、統一問使用者開一個 PR。
 - **現階段禁打 prod**：驗 locator / 跑測試只用 stage / sit 系列（sit0x / sit20x），不碰 `www.kkday.com`。
 
+## 建 worktree 的固定步驟（主對話 / workflow 做，別丟給 automator）
+
+新開 kkday-QA-automation 的 worktree 後，**建完就 provision 執行期 .env 與 venv**，automator 才不用自己搬機密：
+
+```bash
+# 1) 建 worktree（branch 基於 origin/master）
+git -C <framework-main> worktree add -b test/<case-branch> <worktree> origin/master
+# 2) venv：symlink 主 checkout 的（省一次 pip 安裝）
+ln -s <framework-main>/venv <worktree>/venv
+# 3) .env：用固定 script provision（有參考 .env → symlink 不複製機密；沒有 → 生非機密骨架、AUTOMATION_TOKEN 留空請人補）
+bash scripts/provision_worktree_env.sh <worktree>
+```
+
+qatest 一 import 就需要 `SERVICE_URL`（非機密）+ `AUTOMATION_TOKEN`（master 機密，去 secret 服務撈 zephyr_token）才開得了機；`JIRA_TOKEN`/`OPENAI_API_KEY` 只有 Jira/AI 功能才用到，web/app UI case 不需要。**automator 不該自己 `cp` 含機密的 .env 進 worktree**——那步由這個 script 用 symlink 完成、不複製機密。
+
 ## 批次報告格式（對話內 Markdown，預設呈現）
 
 先 rollup、再逐 case×平台明細，最後列出需人工/待修：
