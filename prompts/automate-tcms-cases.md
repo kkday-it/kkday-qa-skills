@@ -89,6 +89,8 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
 
 ## 建 worktree 的固定步驟（主對話 / workflow 做，別丟給 automator）
 
+> **case worktree 一律開在測試框架 repo `kkday-QA-automation`**（本機路徑因人而異，用你 clone 的位置），**不是** `kkday-qa-skills` / `kkday-qa-ai`（那兩個是工具 / 儀表板 repo，不放 case）。要列 / 找 case worktree：`git -C <你的 kkday-QA-automation 路徑> worktree list`。別因為 session 的工作目錄剛好是 qa-skills / qa-ai 就往那兩個找。
+
 新開 kkday-QA-automation 的 worktree 後，**建完就 provision 執行期 .env 與 venv**，automator 才不用自己搬機密：
 
 ```bash
