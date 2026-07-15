@@ -153,7 +153,8 @@ printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "web" >> /tmp/case_fide
 **② 記錄工具使用量** — 把「這次處理的 case×平台」直接 append 一行到 `/tmp/tool_usage.jsonl`（跟 ① 一樣直接寫檔，不呼叫 script——你 cwd 在框架 worktree、叫不到 kkday-qa-skills 的 `scripts/`，也**不准寫死個人路徑**）。送出由 Stop hook `send_tool_usage.py` 背景處理，餵 ai_studio「MCP 呼叫分析 / 工具使用量」dashboard：
 
 ```bash
-printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":"%s","platforms":"%s","case_count":1}\n' \
+# ⚠️ case_ids / platforms 必須是 JSON 陣列（後端 model 是 List[str]，傳字串會被 422 拒收、不落地）
+printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":["%s"],"platforms":["%s"],"case_count":1}\n' \
     "delivered" "KQT-Txxxxx" "web" >> /tmp/tool_usage.jsonl
 # 交付成功用 outcome=delivered；blocked/fail 用 outcome=blocked（「有人用過但沒交付」也要記）
 ```
