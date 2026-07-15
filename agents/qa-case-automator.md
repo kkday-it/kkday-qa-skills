@@ -138,18 +138,30 @@ def _kkday_www_host(env: str) -> str:
 
 > **「跑過」不等於「過」。** 你只負責實作 + 跑過 + 產可追溯表；**忠實度把關由主對話在你回報後 spawn `qa-case-fidelity-reviewer`（對抗式、獨立）** 做——它比對 case 規格 vs 你的實作，出覆蓋率/信心，達標才算真的過，不達標退回你修。你**不自己 spawn reviewer**（非本職責）。
 
-## 收尾必做：武裝忠實度 gate（強制，讓後段流程不可被略過）
+## 收尾必做：武裝忠實度 gate + 記錄工具使用量（強制，讓流程不靠記憶、團隊都遵守）
 
-回報**之前**，把「這次真的跑出 `0 failed` 交付的每個 case×平台」各追加一行到 `/tmp/case_fidelity_claimed.jsonl`（**append 不覆蓋**）：
+這兩件是**遙測與把關的觸發點**，過去都靠「主對話記得手動做」而反覆被漏。把它們綁在**你**身上（你一定會跑、且知道自己的 case×平台），全隊用這個 agent 就都會執行，不再是某人某台環境才有。回報**之前**做：
+
+**① 武裝忠實度 gate** — 把「這次真的跑出 `0 failed` 交付的每個 case×平台」各追加一行到 `/tmp/case_fidelity_claimed.jsonl`（**append 不覆蓋**）：
 
 ```bash
 printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "web" >> /tmp/case_fidelity_claimed.jsonl
 ```
 
-**為什麼強制你做這步**：忠實度 review→gate 是主對話「要記得做」的後段流程，真實 session 反覆被漏（看到測試綠就當過）。這個 claimed 檔是 Stop hook `check_fidelity_gate.py` 的觸發條件——**你一寫，主對話就再也不能不跑 review 就結束**（gate 會 `decision:block` 逼它補跑 review 到 pass）。把「arm gate」綁在你身上（你一定會跑、且知道自己的 case×平台），而不是主對話的記憶，流程才真正不可略過。
+這個 claimed 檔是 Stop hook `check_fidelity_gate.py` 的觸發條件——**你一寫，主對話就再也不能不跑 `qa-case-fidelity-reviewer` 就結束**（gate `decision:block` 逼它補跑 review 到 pass）。
 
-- **只 arm 你「已交付（該平台真跑出 `0 failed`）」的 case×平台**；`fail` / `blocked` / `skipped` 的**不要寫**（那些是回報給人處理，不是宣稱做完）。
-- fix 模式重修後同樣照此規則（該平台重跑 `0 failed` 才 arm）。
+**② 記錄工具使用量** — 把「這次處理的 case×平台」直接 append 一行到 `/tmp/tool_usage.jsonl`（跟 ① 一樣直接寫檔，不呼叫 script——你 cwd 在框架 worktree、叫不到 kkday-qa-skills 的 `scripts/`，也**不准寫死個人路徑**）。送出由 Stop hook `send_tool_usage.py` 背景處理，餵 ai_studio「MCP 呼叫分析 / 工具使用量」dashboard：
+
+```bash
+printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":"%s","platforms":"%s","case_count":1}\n' \
+    "delivered" "KQT-Txxxxx" "web" >> /tmp/tool_usage.jsonl
+# 交付成功用 outcome=delivered；blocked/fail 用 outcome=blocked（「有人用過但沒交付」也要記）
+```
+
+**規則（兩者共通）**：
+- **① 只 arm 你「已交付（該平台真跑出 `0 failed`）」的**；`fail`/`blocked`/`skipped` **不 arm** gate（那些回報給人處理，不是宣稱做完）。
+- **② tool_usage 一律 emit**（delivered 或 blocked 都記），因為「有人用過這工具」本身就是要追蹤的數據。
+- fix 模式重修後同樣照此規則。
 
 ## 禁止事項
 

@@ -3,6 +3,8 @@
 這份是**主對話（orchestrator）**在「把一批 TCMS case 變成自動化」時要跑的完整劇本。
 subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、開 PR 都是主對話的事**。
 
+> **鐵則：整條閉環一路跑完再回報，中途不要每一關停下來問「要繼續嗎」。** 派了 automator 就接著 spawn `qa-case-fidelity-reviewer` → 跑 gate → 送紀錄；review 判 needs-fix 就自己丟回 automator 修再 review，直到 pass。每關停一次不只拖慢，更會讓後段流程被略過（看到 automator 綠就當過是真實踩過的坑）。**只在真正的人類決策點才停**：開 PR 前問、或真的 `blocked` 缺輸入。這條對所有用此劇本的人都適用，不是靠個人記憶。
+
 ## 角色分工
 
 | 角色 | 職責 | 能不能問人 / 迴圈 / 開 PR |
