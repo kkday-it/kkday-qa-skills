@@ -147,11 +147,15 @@ python3 scripts/check_fidelity_gate.py \
 python3 scripts/check_fidelity_gate.py --claimed <claimed-jsonl> --fidelity <results-jsonl>
 ```
 
-> **自動 enforce（不靠記憶）：** `.claude/settings.json` 已掛 Stop hook `scripts/fidelity_gate_stop_hook.sh`，
-> 每次 turn 結束時**條件式**跑上面的 gate——**只要 `/tmp/case_fidelity_claimed.jsonl` 存在**（＝這輪跑了 TCMS 批次）
+> **自動 enforce（不靠記憶，流程不可略過）：** `.claude/settings.json` 已掛 Stop hook `scripts/fidelity_gate_stop_hook.sh`，
+> 每次 turn 結束時**條件式**跑上面的 gate——**只要 `/tmp/case_fidelity_claimed.jsonl` 存在**（＝這輪有交付 TCMS case）
 > 就對 `/tmp/case_fidelity_results.jsonl` 逐筆驗，不過就 `decision:block` 擋下結束、逼你補跑 review；過了才放行並清掉 claimed 檔。
-> **所以主對話的契約只有一條：把「這輪聲稱跑過的 case×平台」逐行寫進 `/tmp/case_fidelity_claimed.jsonl`**（每行 JSON 含 `case_id`，`platform` 選填），
-> fidelity 結果寫進 `/tmp/case_fidelity_results.jsonl`。非 TCMS 的一般對話不寫 claimed 檔 → hook 自動放行、不干擾。
+>
+> **關鍵：arm gate 的 claimed 檔由 `qa-case-automator` 交付時自己寫（見其 agent 定義「收尾必做」），不是靠主對話記憶。**
+> automator 每交付一個 `0 failed` 的 case×平台就 append 一行到 claimed。所以只要你派了 automator 去實作，
+> gate 就被武裝——主對話**不可能**不跑 `qa-case-fidelity-reviewer` 就結束（會被 block）。主對話的職責變成：
+> 收到 automator 回報後 **spawn reviewer → 把 fidelity 結果寫進 `/tmp/case_fidelity_results.jsonl`**（needs-fix 丟回 automator 修再 review），全部 pass 後 gate 才放行。
+> 真正 `blocked`/`fail` 的 case automator 不會 arm（那些回報給人處理）。非 TCMS 的一般對話沒有 claimed 檔 → hook 自動放行、不干擾。
 
 **規則：gate 沒過（exit 1）就不准進「彙整報告 / 送遙測」。** 把 gate 印出的不合格 case
 補跑 review（`needs-fix` 要丟回 automator 重修再 review），全部 `pass` 後再重跑 gate、通過才往下。

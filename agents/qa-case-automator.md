@@ -138,6 +138,19 @@ def _kkday_www_host(env: str) -> str:
 
 > **「跑過」不等於「過」。** 你只負責實作 + 跑過 + 產可追溯表；**忠實度把關由主對話在你回報後 spawn `qa-case-fidelity-reviewer`（對抗式、獨立）** 做——它比對 case 規格 vs 你的實作，出覆蓋率/信心，達標才算真的過，不達標退回你修。你**不自己 spawn reviewer**（非本職責）。
 
+## 收尾必做：武裝忠實度 gate（強制，讓後段流程不可被略過）
+
+回報**之前**，把「這次真的跑出 `0 failed` 交付的每個 case×平台」各追加一行到 `/tmp/case_fidelity_claimed.jsonl`（**append 不覆蓋**）：
+
+```bash
+printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "web" >> /tmp/case_fidelity_claimed.jsonl
+```
+
+**為什麼強制你做這步**：忠實度 review→gate 是主對話「要記得做」的後段流程，真實 session 反覆被漏（看到測試綠就當過）。這個 claimed 檔是 Stop hook `check_fidelity_gate.py` 的觸發條件——**你一寫，主對話就再也不能不跑 review 就結束**（gate 會 `decision:block` 逼它補跑 review 到 pass）。把「arm gate」綁在你身上（你一定會跑、且知道自己的 case×平台），而不是主對話的記憶，流程才真正不可略過。
+
+- **只 arm 你「已交付（該平台真跑出 `0 failed`）」的 case×平台**；`fail` / `blocked` / `skipped` 的**不要寫**（那些是回報給人處理，不是宣稱做完）。
+- fix 模式重修後同樣照此規則（該平台重跑 `0 failed` 才 arm）。
+
 ## 禁止事項
 
 - ❌ 撈整批 case、開 PR、指派 reviewer（非本職責，交主對話）
