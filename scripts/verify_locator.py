@@ -18,7 +18,7 @@ QATest/src/lib/fixtures/playwright.py 的 devices["iPhone 15"]），**不能只�
 需要 playwright（Python）：`pip install playwright && playwright install chromium`。
 
 用法 A — 單一元素，直接給候選（type:value，可重複，依優先序）：
-    python3 verify_locator.py --url https://www.stage.kkday.com/zh-tw/product/ticket \\
+    python3 verify_locator.py --url https://www.stage.kkday.com/zh-tw/category/global/things-to-do \\
         --candidate "css:input.things-to-do-search-bar__input" \\
         --candidate "xpath://input[contains(@class,'search-input__keyword')]" \\
         [--device "iPhone 15"]
@@ -80,8 +80,21 @@ def _open_page(pw, device: str):
     return browser, context, context.new_page()
 
 
-def _verify_candidates(page, candidates: list, timeout_ms: int = 8000) -> dict:
-    """逐一驗候選，回第一個 count>0 的。candidates: [{'type','value',...}, ...] 依優先序。"""
+def _settle(page, timeout_ms: int = 6000) -> None:
+    """SPA 頁面 goto 後 best-effort 等 networkidle，讓 hydration 有機會跑完。
+    networkidle 常不會真的 idle（長輪詢 / 分析腳本），所以逾時就算了、不讓它擋住驗證。"""
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout_ms)
+    except Exception:
+        pass
+
+
+def _verify_candidates(page, candidates: list, per_wait_ms: int = 3000) -> dict:
+    """逐一驗候選，回第一個存在的。candidates: [{'type','value',...}, ...] 依優先序。
+
+    SPA 頁面在 domcontentloaded、甚至 networkidle 後可能仍在 hydrate，元素晚點才掛上 DOM；
+    直接 count() 會誤判 stale。每個候選改用有界 wait_for(state='attached') 等它出現，逾時才
+    當不存在（逾時後仍補查一次 count 保險，避免「其實已掛上、只是 wait 判定慢」）。"""
     checked = []
     for c in candidates:
         sel_type = c.get("type", "css")
@@ -91,6 +104,10 @@ def _verify_candidates(page, candidates: list, timeout_ms: int = 8000) -> dict:
         exists = False
         try:
             loc = page.locator(_to_locator_str(sel_type, value))
+            try:
+                loc.first.wait_for(state="attached", timeout=per_wait_ms)
+            except Exception:
+                pass  # 逾時不代表一定不存在，下面再補查一次 count
             exists = loc.count() > 0
         except Exception as e:
             checked.append({"type": sel_type, "value": value, "exists": False, "error": str(e)[:120]})
@@ -118,6 +135,7 @@ def _mode_single(args) -> int:
         browser, _, page = _open_page(pw, args.device)
         try:
             page.goto(args.url, wait_until="domcontentloaded", timeout=20000)
+            _settle(page)
             result = _verify_candidates(page, candidates)
         finally:
             browser.close()
@@ -153,6 +171,7 @@ def _mode_registry(args) -> int:
             browser, _, page = _open_page(pw, device)
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                _settle(page)
                 r = _verify_candidates(page, e.get("selectors", []))
             except Exception as ex:
                 r = {"status": "stale", "hit": None, "checked": [], "error": str(ex)[:120]}
