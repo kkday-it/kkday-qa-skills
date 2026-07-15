@@ -17,7 +17,7 @@
         {"type": "xpath", "value": "//input[contains(@class,'things-to-do-search-bar__input')] | //input[contains(@class,'kk-text-field__native') and @type='search'] | //input[contains(@class,'search-input__keyword')]", "note": "結構 fallback union（landing/category 共用元件）"}
       ],
       "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/web/experiences_page.py:9"},
-      "verify_url": "https://www.stage.kkday.com/zh-tw/product/ticket",
+      "verify_url": "https://www.stage.kkday.com/zh-tw/category/global/things-to-do",
       "last_verified": "2026-07-09T00:00:00Z",
       "status": "verified"
     },
@@ -34,7 +34,7 @@
         {"type": "css", "value": "button.things-to-do-search-bar__search-btn", "note": "語意 class 首選"}
       ],
       "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/web/experiences_page.py:13"},
-      "verify_url": "https://www.stage.kkday.com/zh-tw/product/ticket",
+      "verify_url": "https://www.stage.kkday.com/zh-tw/category/global/things-to-do",
       "last_verified": "2026-07-09T00:00:00Z",
       "status": "verified"
     },
@@ -53,7 +53,7 @@
         {"type": "css", "value": ".things-to-do-search-input__btn", "note": "搜尋 icon 按鈕（只點 icon 直接送出、不開 modal）"}
       ],
       "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/mweb/experiences_page.py:9"},
-      "verify_url": "https://www.stage.kkday.com/zh-tw/product/ticket",
+      "verify_url": "https://www.stage.kkday.com/zh-tw/category/global/things-to-do",
       "last_verified": "2026-07-09T00:00:00Z",
       "status": "verified"
     },
@@ -71,7 +71,7 @@
         {"type": "xpath", "value": "//div[contains(@class,'things-to-do-search-discovery')]//input[contains(@class,'search-input-field__input')]", "note": "只 landing 入口容器 fallback"}
       ],
       "source": {"case": "KQT-T37931", "origin": "page_object", "ref": "QATest/src/pages/web_playwright/kkday/mweb/search_page.py:13-15"},
-      "verify_url": "https://www.stage.kkday.com/zh-tw/product/ticket",
+      "verify_url": "https://www.stage.kkday.com/zh-tw/category/global/things-to-do",
       "last_verified": "2026-07-09T00:00:00Z",
       "status": "verified"
     },
