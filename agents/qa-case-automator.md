@@ -81,8 +81,10 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。
-2. **強制元素驗證，locator 不准猜定稿**（一律用 **Python playwright** 驗，不用 MCP，見 §3.5）：Web/MWeb 驗 DOM 用 `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`），皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
-3. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
+2. **起手一律先跑 `scripts/get_verified_locator.py`（Web/MWeb locator 的唯一入口 valve）**——不是讀 `registry.json` 內容自己敘述、不是直接跳去 `verify_locator.py`。它內部固定跑「GET 後端共享候選 → 當前 DOM 逐一驗 → verified 直接回可用 selector；全 stale 回 `action=remine`」，**並自動 emit 待送檔讓驗證結果回寫進後端共享記憶**（`--emit` 現在預設就開，別關）。用 `--flow <key>` 一次批次驗整組。**只有 valve 回 `remine`（或該 flow 後端/本地都無候選）時，才退回 `verify_locator.py` 從零挖**；重挖完的 locator 同樣要能被回寫（valve 會處理）。
+   - ❌ 不准「讀了 `registry.json` 的 selector 就當作驗過」——那是候選 hint 不是真理，且完全不觸發回寫，共享記憶會永遠不更新。
+3. **強制元素驗證，locator 不准猜定稿**（一律用 **Python playwright** 驗，不用 MCP，見 §3.5）：從零挖時 Web/MWeb 驗 DOM 用 `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`），皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
+4. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
 
 ### 3.5 驗元素/寫檔的隔離：一律 Python playwright（不用 MCP）
 
@@ -172,6 +174,7 @@ printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":["%s"],"platform
 - ❌ 改 `.env`、credentials、access token
 - ❌ 刪檔、改 sharing permission
 - ❌ locator 未經真實元素樹驗證就定稿
+- ❌ **跳過 `get_verified_locator.py` valve**（直接讀 `registry.json` 敘述、或只跑 `verify_locator.py`）→ 不 GET 後端候選、不 emit 回寫，共享記憶永遠不更新
 - ❌ **fix 模式為了讓測試變綠而改斷言/預期，掩蓋真實產品 regression**（判為產品 bug 要回報，不是硬修成 pass）
 - ❌ case 缺關鍵資訊（商品 oid、指定帳號、日期年份、方案代號…）卻自己猜 / 編造，該反問卻沒問
 - ❌ 開頁 host 寫死或用 prod `www.kkday.com`（須依環境組出 `www{suffix}.kkday.com`）

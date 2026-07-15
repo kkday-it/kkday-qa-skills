@@ -20,6 +20,7 @@ send_case_fidelity.py：
     python3 send_locator_registry.py --infile /path/to/locator_results.jsonl [--purge]
 
 每行 JSON 欄位（缺的用預設；* 為必填）：
+    id               —— 穩定 slug（如 ttd-landing-search-input-web-stage），供 remine 辨識
     element*         —— 元素語意名稱（如 things-to-do landing 搜尋框 input）
     page*            —— 所屬頁面語意 key（如 things-to-do-landing）
     component        —— 元件語意 key（如 landing-search-bar-input）
@@ -95,7 +96,7 @@ def _send_with_retry(payload: dict) -> bool:
 def _normalize(row: dict) -> dict:
     """挑白名單欄位，補預設，附 operator / client_user。不帶任何額外資料（無 PII）。"""
     keys = (
-        "element", "page", "component", "flow", "selectors",
+        "id", "element", "page", "component", "flow", "selectors",
         "semantic", "platform", "env", "source", "last_verified", "status",
         "verify_url",
     )

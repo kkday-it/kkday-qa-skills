@@ -38,6 +38,20 @@ def test_default_emit_path_matches_stop_hook_infile():
     assert gvl.DEFAULT_EMIT_PATH == "/tmp/locator_results.jsonl"
 
 
+def test_source_case_from_dict():
+    # registry.json 的 source 是 {case,origin,ref} dict
+    assert gvl._source_case({"case": "KQT-T37931", "origin": "x"}) == "KQT-T37931"
+
+
+def test_source_case_from_str_does_not_crash():
+    # 後端回存後 source 可能是純字串；不可對 str 呼叫 .get 而炸
+    assert gvl._source_case("KQT-T37931") == "KQT-T37931"
+
+
+def test_source_case_from_none():
+    assert gvl._source_case(None) == ""
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

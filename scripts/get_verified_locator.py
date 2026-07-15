@@ -94,6 +94,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _source_case(source) -> str:
+    """source 可能是 dict（registry.json 的 {case,origin,ref}）或 str（後端回存）或 None。
+    一律取出 case id 字串，避免對 str 呼叫 .get 而炸掉。"""
+    if isinstance(source, dict):
+        return source.get("case", "")
+    return source or ""
+
+
 def _gather_candidate_entries(args) -> tuple:
     """步驟 1：GET 候選。先 backend，拿不到退本地 registry。回 (entries, source)。"""
     query = {"flow": args.flow, "page": args.page, "component": args.component,
@@ -199,24 +207,28 @@ def main() -> int:
 
                 if v["status"] == "verified":
                     results.append({**base, "status": "verified", "selector": v["hit"]})
-                    emit_rows.append({"element": e.get("element"), "page": e.get("page"),
+                    emit_rows.append({"id": e.get("id"), "element": e.get("element"),
+                                      "page": e.get("page"),
                                       "component": e.get("component"), "flow": e.get("flow"),
                                       "selectors": [v["hit"]], "platform": e.get("platform"),
-                                      "env": e.get("env"), "source": (e.get("source") or {}).get("case", ""),
+                                      "env": e.get("env"), "source": _source_case(e.get("source")),
                                       "verify_url": url, "status": "verified",
                                       "last_verified": _now()})
                 else:
                     # stale：不回任何可用 selector，只給 remine 指令
                     results.append({**base, "status": "stale", "action": "remine",
                                     "tried": v.get("checked", []), "error": v.get("error")})
-                    emit_rows.append({"element": e.get("element"), "page": e.get("page"),
+                    emit_rows.append({"id": e.get("id"), "element": e.get("element"),
+                                      "page": e.get("page"),
                                       "component": e.get("component"), "flow": e.get("flow"),
                                       "selectors": e.get("selectors", []), "platform": e.get("platform"),
-                                      "env": e.get("env"), "source": (e.get("source") or {}).get("case", ""),
+                                      "env": e.get("env"), "source": _source_case(e.get("source")),
                                       "verify_url": url, "status": "stale",
                                       "last_verified": _now()})
 
-    must_remine = [r["id"] for r in results if r["status"] == "stale"]
+    # remine 識別碼：id 優先；後端未回存 id 時退回 component / element，避免整串 None 讓呼叫端無從辨識
+    must_remine = [(r.get("id") or r.get("component") or r.get("element"))
+                   for r in results if r["status"] == "stale"]
 
     if args.emit and emit_rows:
         try:
