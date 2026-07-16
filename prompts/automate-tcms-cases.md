@@ -46,32 +46,18 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
    tcms-fetch-cases（--cases / --run-id [--assignee]）→ 每案含 steps + expected_result + labels/tags
    ⚠️ 即時快照，實作當下才 fetch，不沿用舊 /tmp
 
-2. 逐案處理（每案一個迴圈；可平行的部分見「平行化」）
-   for case in batch:
-     判定 tag 標的所有平台（labels/tags + step 內 [PC]/[M]/[APP]/[iOS]/[Android] 切分）
-     ⚠️ 平台「共用一份」：web↔mweb 共用、android↔ios 共用一份 case+test_step（只些許步驟差異），不是各寫一份
-     for platform in tag 標的所有平台:   # 共用一份、全平台都要涵蓋，缺一不算完成
-       p. spawn qa-case-planner（實作前規劃，先研究既有做法）
-              → 計畫：解讀（要測的真正邏輯）/ 前置用哪個既有 flow 建真實資源（禁捏假 id）/
-                     specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / 假設 / 待確認點
-          🔴 意圖確認（治「不是我要的」的關鍵）：
-              - 互動模式 → 把計畫攤給使用者確認/改，**確認後才往下**（別自帶假設就衝）
-              - 自主/harness 模式 → 套計畫帶的假設續跑、把待確認點記錄，真卡住才 blocked
-       attempt = 0
-       ┌─► a. spawn qa-case-automator（**照確認過的計畫**實作，mode 自動判 create/fix）
-       │        → 回傳 result + step→assertion 可追溯表 + 假設 + blocked
-       │      若 automator 回報「待確認點」：互動→問使用者；自主→套預設/blocked
-       │   a2. per-platform 交付 gate（check_platform_delivery.py，確定性）：驗 tag 每平台
-       │        真的 --platform X 跑過、有 qatest 那行 0 failed 憑據（能跑 + pass）；
-       │        缺平台 → 餵回 automator 補（口頭 pass、沒那行 0 failed 不算）
-       │   b. spawn qa-case-fidelity-reviewer
-       │        → step_coverage / assertion_coverage / 未覆蓋 / 可疑斷言 / fidelity / confidence / recommend
-       │   c. 判 recommend：
-       │        - pass          → 收下，跳出迴圈
-       │        - needs-fix     → 把「未覆蓋清單 + 可疑斷言」餵回 automator（fix 模式）
-       └───────  attempt += 1；attempt < 上限(預設 3) → 回 a 重修再 review
-                 - 到達上限仍未過 / flag-for-human → 標記 flag-for-human，收下最後狀態
-                 - blocked（缺資訊等）→ 標 blocked，續下一個
+2. 🔴 一律跑 batch-tcms-automate workflow（**不管 1 個還是 N 個 case 都走這套**，不要自己手動 for-loop 串 agent）
+   2a. 出計畫給人確認（互動預設，mode=plan）：
+       Workflow('batch-tcms-automate', {cases:[...], platforms:[...可選]})
+       → 每案跑 qa-case-planner，回傳計畫：解讀（真正要測的邏輯）/ 前置用哪個既有 flow 建真實資源（禁捏假 id）/
+         specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority 對照 / 假設 / 待確認點
+       → **把計畫攤給使用者確認/改**（治「不是我要的」的關鍵；別跳過）
+   2b. 確認後執行（mode=execute，帶確認過的計畫）：
+       Workflow('batch-tcms-automate', {mode:'execute', cases:[...], plans:{caseId:確認過的計畫}})
+       → workflow 內部（每案獨立、worktree 隔離、彼此不等）：automator 照計畫實作 → per-platform 交付 gate
+         (check_platform_delivery.py，客觀 parse qatest.log) + qa-case-fidelity-reviewer → needs-fix 自動回修（≤3 輪）
+   （自主 / harness 無人確認 → 一次 Workflow('batch-tcms-automate', {mode:'auto', cases:[...])}，planner 現場出計畫直接接實作，不停等）
+   為什麼一律 workflow：**一條路徑、一致 enforcement**（planner→確認→gate→review→回修全在裡面），1 個 case 也不跳關；不會有「單案手動串」的分岔漏掉某道把關。
 
 3. 彙整 → 批次 Markdown 報告（見下）
    收尾再 emit 一筆收官狀態（串同一 run id，供 dashboard 算「叫用→交付」轉化率）：
@@ -83,11 +69,11 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
 
 **關鍵：「過」的定義 = 跑得起來 + 覆蓋規格（assertion_coverage 達標）+ fidelity reviewer 認可。** 只綠不算。needs-fix 一定會**丟回 automator 重修再 review**，不是評完就結束。
 
-## 平行化（批次大用 workflow）
+## 執行引擎：batch-tcms-automate workflow（任何數量都走它）
 
-一批 10+ case 別逐案序列等閉環。用 **workflow 並行**（`workflows/batch_tcms_automate.js`，入口＝一串 TCMS ID）：
+`workflows/batch_tcms_automate.js` 是**唯一執行路徑**——1 個 case 也走（N=1），不要自己手動串 agent。平行只是它的附帶好處：
 
-- 每個 case 獨立流過「automator → per-platform gate + fidelity review → 回修」，彼此不等（pipeline），慢的不拖快的。
+- 每個 case 獨立流過「（計畫→）automator → per-platform gate + fidelity review → 回修」，彼此不等（pipeline），慢的不拖快的。
 - **能真平行的關鍵**：驗元素一律用**各自 launch 的 Python playwright**（各開 headless browser，不用 MCP），沒有單一共用瀏覽器可搶；各 case 在自己的 **git worktree** 寫檔，不互相覆蓋。
 - 舊限制「驗 locator 不能平行、集中主對話做」已解除——改用各自 launch 的 Python playwright 後（不再有共用瀏覽器），單案與並行都各開各的、天然隔離。
 - 驗 mweb 一律用手機 device profile（User-Agent 判 web/mweb，非 viewport）。App 平台仍受實體機數限制。

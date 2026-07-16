@@ -2,7 +2,8 @@ export const meta = {
   name: 'batch-tcms-automate',
   description: '吃一串 TCMS ID，並行把每個 case 全平台實作到閉環達標（per-platform 交付 gate + 忠實度 review + 回修）。harness 未來只丟一串 TCMS ID 進來。',
   phases: [
-    { title: 'Implement', detail: '每個 case 一個 qa-case-automator（worktree 隔離、並行模式）全平台實作' },
+    { title: 'Plan', detail: '每個 case 一個 qa-case-planner：抓 spec + 查 flow-registry + 出計畫（前置/斷言/假設），供人確認意圖' },
+    { title: 'Implement', detail: '每個 case 一個 qa-case-automator（worktree 隔離、並行模式）照確認的計畫全平台實作' },
     { title: 'Gate+Review', detail: 'per-platform 交付 gate + 忠實度 review，未達標回修（最多 3 輪）' },
   ],
 }
@@ -29,7 +30,13 @@ function _parseInput(a) {
     return { cases: s.split(/[\s,]+/).filter(Boolean), platforms: null }
   }
   if (Array.isArray(a)) return { cases: a, platforms: null }
-  if (typeof a === 'object') return { cases: a.cases ?? [], platforms: a.platforms ?? null }
+  if (typeof a === 'object')
+    return {
+      cases: a.cases ?? [],
+      platforms: a.platforms ?? null,
+      mode: a.mode ?? null, // plan | execute | auto
+      plans: a.plans ?? null, // execute 模式：{caseId: 已確認計畫}
+    }
   return { cases: [], platforms: null }
 }
 const _p = _parseInput(args)
@@ -51,6 +58,32 @@ log(
 )
 // 使用量遙測：workflow 沙箱不能跑 shell，故 emit_tool_usage.py 由「啟動本 workflow 的主對話」
 // 在叫用當下先發一筆 outcome=invoked（見 prompts/automate-tcms-cases.md 步驟 0）；此處不自行 emit。
+
+// ── 模式：workflow headless、不能中途等人，故意圖確認做成兩段 ──────────────
+//   mode=plan（預設，互動）：只跑 planner 回計畫 → 主對話攤給使用者確認 → 再用 execute 跑。
+//   mode=execute：帶主對話確認過的 plans（{caseId:計畫}）→ automator 照計畫實作 → gate+review。
+//   mode=auto（自主/harness，無人確認）：現場 spawn planner → 直接接 automator，不停等。
+const MODE = _p.mode || 'plan'
+const CONFIRMED_PLANS = _p.plans || {}
+
+const PLAN_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    caseid: { type: 'string' },
+    platform: { type: 'string' },
+    plan: { type: 'string' },
+  },
+  required: ['caseid', 'plan'],
+}
+function planPrompt(caseId) {
+  return `你是 qa-case-planner。case=${caseId}。框架 repo=${REPO}。
+依你的職責產出實作前計畫（唯讀、不寫 code）：
+1. 抓 TCMS spec（tcms-fetch-cases）→ 讀懂要測的真正邏輯。
+2. 起手先查 flow-registry：\`python3 ${SKILLS}/scripts/get_verified_flow.py --q "<前置語意>" --platform <平台> --repo-path ${REPO} --registry ${SKILLS}/flow_registry/registry.json\`（用前先驗；只信 verified）。沒命中才 grep repo，挖到新可重用 flow **當下**用 \`${SKILLS}/scripts/send_flow_registry.py\` 寫回。
+3. 出計畫：解讀 / 平台 / 前置用哪個既有 flow 建真實資源（禁捏假 id）/ 關鍵 specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority（TCMS→框架：Critical→RAT/High→FAST/Medium→TOFT/Low→FET）/ 假設 / 待確認點。
+回傳結構化：caseid、platform、plan（完整計畫文字，供人確認）。`
+}
 
 const IMPL_SCHEMA = {
   type: 'object',
@@ -89,9 +122,10 @@ const VERDICT_SCHEMA = {
   required: ['caseid', 'delivered'],
 }
 
-function implPrompt(caseId, fixNote) {
+function implPrompt(caseId, fixNote, plan) {
+  const planStr = plan ? (typeof plan === 'string' ? plan : JSON.stringify(plan, null, 2)) : ''
   return `你是 qa-case-automator，**並行模式**。case=${caseId}。
-${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
+${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 flow 建真實資源、關鍵 specific 斷言、沿用哪些現成、priority 都在裡面；別自己另生一套）：\n${planStr}\n` : ''}${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
 並行模式規則（照 qa-case-automator.md §3.5）：
 - 驗元素用**各自 launch 的 headless Python playwright**（scripts/verify_locator.py），不用 MCP（避免彈窗/搶共用瀏覽器）。
 - 在你所在的 git worktree 內寫檔，不自己做 git 操作。
@@ -126,17 +160,56 @@ async function verify(caseId, impl) {
   )
 }
 
-// ── pipeline：每個 case 獨立流過 實作 → gate+review+回修，彼此不等 ──────
+// ── mode=plan：只跑 planner 出計畫給人確認，不實作（互動預設）──────────
+if (MODE === 'plan') {
+  phase('Plan')
+  const plans = await parallel(
+    caseIds.map((caseId) => () =>
+      agent(planPrompt(caseId), {
+        label: `plan:${caseId}`,
+        phase: 'Plan',
+        agentType: 'qa-case-planner',
+        schema: PLAN_SCHEMA,
+      })
+    )
+  )
+  const out = caseIds
+    .map((caseId, i) => ({ caseId, plan: plans[i] }))
+    .filter((x) => x.plan != null)
+  log(`已產出 ${out.length}/${caseIds.length} 份計畫，待主對話攤給使用者確認`)
+  return {
+    mode: 'plan',
+    plans: out,
+    note:
+      '計畫已產出。主對話請把每份計畫攤給使用者確認/修正；確認後用 {mode:"execute", cases:[...], plans:{caseId:計畫}} 再跑本 workflow 執行。無人可確認的自主/harness 情境改用 mode:"auto"（現場 spawn planner 直接接實作，不停等）。',
+  }
+}
+
+// ── mode=execute / auto：計畫 → 實作 → gate+review+回修，每案獨立不等 ──
 const results = await pipeline(
   caseIds,
-  (caseId) =>
-    agent(implPrompt(caseId), {
+  // stage 0：取得計畫（auto=現場 spawn planner；execute=用主對話確認過的）
+  async (caseId) => {
+    if (MODE === 'auto') {
+      return await agent(planPrompt(caseId), {
+        label: `plan:${caseId}`,
+        phase: 'Plan',
+        agentType: 'qa-case-planner',
+        schema: PLAN_SCHEMA,
+      })
+    }
+    return CONFIRMED_PLANS[caseId] || null
+  },
+  // stage 1：照計畫實作
+  (plan, caseId) =>
+    agent(implPrompt(caseId, null, plan), {
       label: `impl:${caseId}`,
       phase: 'Implement',
       isolation: 'worktree',
       agentType: 'qa-case-automator',
       schema: IMPL_SCHEMA,
     }),
+  // stage 2：gate + 忠實度 review + 回修
   async (impl, caseId) => {
     if (!impl) return { caseId, delivered: false, error: 'automator 無回傳（可能中途失敗）' }
     let cur = impl
