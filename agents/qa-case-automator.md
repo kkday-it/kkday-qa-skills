@@ -141,7 +141,7 @@ def _kkday_www_host(env: str) -> str:
 
 > **「跑過」不等於「過」。** 你只負責實作 + 跑過 + 產可追溯表；**忠實度把關由主對話在你回報後 spawn `qa-case-fidelity-reviewer`（對抗式、獨立）** 做——它比對 case 規格 vs 你的實作，出覆蓋率/信心，達標才算真的過，不達標退回你修。你**不自己 spawn reviewer**（非本職責）。
 
-## 收尾必做：武裝忠實度 gate + 記錄工具使用量（強制，讓流程不靠記憶、團隊都遵守）
+## 收尾必做：武裝忠實度 gate + locator gate（含收成）+ 記錄工具使用量（強制，讓流程不靠記憶、團隊都遵守）
 
 這兩件是**遙測與把關的觸發點**，過去都靠「主對話記得手動做」而反覆被漏。把它們綁在**你**身上（你一定會跑、且知道自己的 case×平台），全隊用這個 agent 就都會執行，不再是某人某台環境才有。回報**之前**做：
 
@@ -153,7 +153,30 @@ printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "web" >> /tmp/case_fide
 
 這個 claimed 檔是 Stop hook `check_fidelity_gate.py` 的觸發條件——**你一寫，主對話就再也不能不跑 `qa-case-fidelity-reviewer` 就結束**（gate `decision:block` 逼它補跑 review 到 pass）。
 
-**② 記錄工具使用量** — 把「這次處理的 case×平台」直接 append 一行到 `/tmp/tool_usage.jsonl`（跟 ① 一樣直接寫檔，不呼叫 script——你 cwd 在框架 worktree、叫不到 kkday-qa-skills 的 `scripts/`，也**不准寫死個人路徑**）。送出由 Stop hook `send_tool_usage.py` 背景處理，餵 ai_studio「MCP 呼叫分析 / 工具使用量」dashboard：
+**② 武裝 locator gate + 收成 locator（UI case 才做）** — 對「這次交付的每個 **UI**（web/mweb/android/ios）case×平台」：
+
+先確保**該 case 的 locator emit 證據存在**於 `/tmp/locator_results.d/`（Stop hook `check_locator_gate.py` 會驗）：
+- **web/mweb**：你起手跑的 `get_verified_locator.py` valve 已自動 emit（source=case），證據就有了。
+- **app（android/ios）/ from-scratch（valve 無候選、從零挖）**：valve 不涵蓋 app，且從零挖不會經過 registry。**測試通過後**，把你這個 case 實際用到、已驗證的 locator **收成一行行** emit 到 per-process 檔（`source` 一定要是本 case id，`status:"verified"`）：
+
+```bash
+mkdir -p /tmp/locator_results.d
+F="/tmp/locator_results.d/$$-harvest.jsonl"   # per-process，避免並行互覆
+# 每個實際用到的元素一行；app 用 resource-id / accessibility-id / native xpath
+printf '{"id":"%s","element":"%s","page":"%s","component":"%s","flow":"%s","selectors":[{"type":"%s","value":"%s"}],"platform":"%s","env":"%s","source":"%s","status":"verified"}\n' \
+    "ttd-search-android" "搜尋入口" "home" "home-search" "home-search" "resource-id" "com.kkday:id/search_bar" "android" "stage" "KQT-Txxxxx" \
+    >> "$F"
+```
+
+接著 arm `/tmp/locator_claimed.jsonl`（**只 arm UI case；純 API case 不 arm**，避免假擋）：
+
+```bash
+printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "android" >> /tmp/locator_claimed.jsonl
+```
+
+你一 arm，主對話就**不能在「該 UI case 沒有 locator emit 證據」時結束**（gate `decision:block`）——這把「真的跑 valve / 真的收成」從軟指令變成硬約束，堵掉「讀 registry.json 敘述冒充」。
+
+**③ 記錄工具使用量** — 把「這次處理的 case×平台」直接 append 一行到 `/tmp/tool_usage.jsonl`（跟上面一樣直接寫檔，不呼叫 script——你 cwd 在框架 worktree、叫不到 kkday-qa-skills 的 `scripts/`，也**不准寫死個人路徑**）。送出由 Stop hook `send_tool_usage.py` 背景處理，餵 ai_studio「MCP 呼叫分析 / 工具使用量」dashboard：
 
 ```bash
 # ⚠️ case_ids / platforms 必須是 JSON 陣列（後端 model 是 List[str]，傳字串會被 422 拒收、不落地）
@@ -162,10 +185,12 @@ printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":["%s"],"platform
 # 交付成功用 outcome=delivered；blocked/fail 用 outcome=blocked（「有人用過但沒交付」也要記）
 ```
 
-**規則（兩者共通）**：
-- **① 只 arm 你「已交付（該平台真跑出 `0 failed`）」的**；`fail`/`blocked`/`skipped` **不 arm** gate（那些回報給人處理，不是宣稱做完）。
-- **② tool_usage 一律 emit**（delivered 或 blocked 都記），因為「有人用過這工具」本身就是要追蹤的數據。
+**規則（共通）**：
+- **① / ② 只 arm 你「已交付（該平台真跑出 `0 failed`）」的**；`fail`/`blocked`/`skipped` **不 arm**（回報給人處理，不是宣稱做完）。
+- **② 只對 UI case 做**（web/mweb/android/ios）；純 API case 不 arm locator gate、不用收成 locator。
+- **③ tool_usage 一律 emit**（delivered 或 blocked 都記）。
 - fix 模式重修後同樣照此規則。
+- **收成即驗證**：case 綠 + fidelity 過，代表這些 locator 在真實環境確實解析成功、且被有意義地用到 → 收成 emit 的 `status` 才標 `verified`；反之未達交付不要 emit verified。
 
 ## 禁止事項
 

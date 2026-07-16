@@ -86,3 +86,21 @@ Stop hook 的 `send_locator_registry.py --indir` 背景逐檔 POST 回後端，�
 
 從 ai_studio GET 回來的 locator 一樣要「用前先驗」，驗不過標 stale 重挖。後端幫的是**跨人共享 +
 趨勢**，不是讓大家盲信快取。就算後端存了腐爛 locator，也會在 cheap-verify 那步被擋下。
+
+## App（android / ios）：驗證模型不同 —— 靠「測試通過」收成，不用事前 valve
+
+web/mweb 的 `get_verified_locator.py` valve 能「先驗才回」，是因為它可以 `goto(url)` 開頁驗 DOM。
+**app 沒有可導航的 URL** —— 一個 `resource-id`/`accessibility-id` 只有在 app 已被 driven 到該畫面
+時才驗得到。所以 app **不走 playwright valve**，改用：
+
+- **取 hints**：直接 GET 後端/本地 registry（`platform=android|ios`）當候選，寫進 page object。
+- **驗證＝測試本身**：跑測試；locator 定位不到 → 測試 fail → 走既有 locator 修復流程重挖。
+- **收成回寫**：case 達「綠 + fidelity 過」時，把實際用到的 app locator emit 成 `verified`
+  （`source=<case>`、`selectors` 用 `resource-id`/`accessibility-id`/native `xpath`）到
+  `/tmp/locator_results.d/`，由 Stop hook `send_locator_registry.py` 推回後端。
+- **硬約束**：交付 UI case（含 app）卻沒對應 emit 證據 → Stop hook `check_locator_gate.py` 擋下
+  （見 automate-tcms-cases 的 Gate C）。
+
+> 「綠 + fidelity 過 ⇒ 這些 locator 當下在真實環境解析成功、且被有意義地用到」是 app 驗證的核心依據；
+> 但仍帶 `last_verified`、rot 照樣會發生，取回端一樣不可盲信。selector `type` 對 app 用
+> `resource-id` / `accessibility-id` / `xpath`（native tree），不是 css。

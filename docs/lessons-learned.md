@@ -21,6 +21,8 @@
 
 **通則**：**「best-effort 遙測 / 共享層」讀出來是空的，不代表寫入端有在寫。** 驗證一條回寫鏈要兩頭都戳：POST 完立刻 GET 撈回同一筆（round-trip），別只看其中一端。
 
+**後續（軟指令 → 硬 gate）**：上面「automator 沒真的跑 valve」一開始只用「回報附憑據」的**軟**方式補，但軟指令 agent 照樣會跳、且失敗靜默。後來升級成**硬 gate**：`check_locator_gate.py`（Stop hook）要求「交付的每個 UI case×平台」在 `/tmp/locator_results.d/` 有 `source==case` 的 emit 證據，否則擋下（見 automate-tcms-cases Gate C）。app 沒有可導航 URL、不能事前驗，改用「綠 + fidelity 過 ⇒ 收成 emit verified」當驗證來源。**判準：失敗靜默且累積的規則要用硬 gate，不能只靠軟指令。**
+
 ---
 
 ## 單一固定 emit 檔在並行下會被 purge 掃掉（靜默丟資料）
