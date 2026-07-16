@@ -34,7 +34,7 @@ model: opus
 ## 輸入與定位
 
 主對話給 case ID。你自己：
-1. **重新 fetch 規格**（即時、不用舊檔）：`python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py --cases <ID> --out /tmp/tcms_case.json` — 取 steps + expected_result（+ labels/tags 判平台）。
+1. **重新 fetch 規格**（即時、不用舊檔）：`python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py --cases <ID> --out /tmp/tcms_case_<ID>.json` — 取 steps + expected_result（+ labels/tags 判平台）。**用 per-case 路徑（含 ID）**：批次並行時多個 reviewer/automator 若都寫固定 `/tmp/tcms_case.json` 會互相覆寫、比對到別 case 的 spec。
 2. **定位 auto 實作**：yaml（`grep -rl "<ID>:" QATestData/cases/yaml`）→ 它引用的 test step（`grep "def <step>"`）→ page object。
 3. 若 automator 有附 **step→assertion 可追溯表**，用它加速比對，但仍要自己去 code 抽查證據，不盲信。
 
