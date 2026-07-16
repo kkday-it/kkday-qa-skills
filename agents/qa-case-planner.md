@@ -53,6 +53,23 @@ code、不開 PR、不 spawn 其他 agent**。你的價值＝**把假設攤在�
 ### 3. 🔴 研究 repo 既有做法（不准重造、不准憑空發明）
 **這是這個 agent 最核心的一步。** 前置與資料一律**先看 repo 既有怎麼做、能不能沿用**，不要自己發明：
 
+**起手先查 flow-registry（省重複 grep、跨人共享）**：
+```bash
+python3 ~/.claude/.../kkday-qa-skills/scripts/get_verified_flow.py \
+    --q "<你要的前置語意，如 訂購頁 / 登入 / 建商品>" --platform <app|web|...> \
+    --repo-path <kkday-QA-automation 路徑> --registry <kkday-qa-skills>/flow_registry/registry.json \
+    --emit /tmp/flow_results.jsonl
+```
+- 它回 `verified`（已**用前先驗**：grep 確認 function 名還在的）候選 → **直接沿用**，不用重挖。
+- `stale` / 查無 → 回退下面「從零 grep」。**挖到新的可重用 flow 就在『發現當下』立刻寫回**（把 name/location/簽名/purpose 寫成一行 jsonl 後**馬上**跑）：
+  ```bash
+  python3 <kkday-qa-skills>/scripts/send_flow_registry.py --infile /tmp/flow_new.jsonl --purge
+  ```
+  **🔴 不要等到 Stop hook 才送**——知識圖譜的價值是累積，session 若中途放棄 / 沒跑到 Stop，deferred 的 discovery 就永遠不會進去。發現即記，才會越用越肥。
+- ⚠️ registry 是 hint 不是真理：只信 `verified` 的；沒命中不代表沒有，還是要 grep。
+
+**從零 grep（registry 沒命中時）**：
+
 - **前置需要的資源**（帳號權限、真實商品 / 訂單 / 票券、登入憑證…）→ grep 既有 case / test_step / `test_tools` / `case_data`：
   - 同類前置別的 case 怎麼建的？有沒有現成 **setup flow / helper / fixture** 可直接引用？
   - 例：需要「有效商品」就找既有的建商品流程來拿真 id；需要「某權限帳號」就找既有的註冊/登入該權限帳號的做法。
