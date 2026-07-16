@@ -14,7 +14,7 @@
 
 ---
 
-## Tools 一覽（共 38 個，含 `help` / `describe_tool` / `health` 3 個說明工具）
+## Tools 一覽（共 37 個，含 `help` / `describe_tool` / `health` 3 個說明工具）
 
 > 分兩組後端：**ai-studio 工具**（會員/點數/券/等級/…）下游打 `:8081`；**QA 平台工具**（建/複製商品、下單、兌換、月曆）下游打 QA Test Platform `:8080`。兩組併存於同一個 MCP，埋點都送 ai-studio dashboard（QA 平台工具 operator 標記 `kkday_qa_platform_mcp`）。
 
@@ -152,7 +152,7 @@ Config 指到 venv python：
 | 「建一張 5% 折扣券給 xxx@」 | 先 `coupon_templates()` → 選模板 → `create_coupon(...)` |
 
 **驗證有沒有裝好**（兩步都要過）：
-1. **連上**：在 Claude Code 跑 `/mcp`（內建指令）→ 看得到 `kkday-qa-tools ✓ connected`（約 38 tools）。
+1. **連上**：在 Claude Code 跑 `/mcp`（內建指令）→ 看得到 `kkday-qa-tools ✓ connected`（約 37 tools）。
 2. **打得動**：呼叫 `health`（唯讀）→ 兩組後端 `reachable: true` / `auth_ok: true`。**只到步驟 1 不算裝好** —— 沒內網時它一樣顯示 connected，但 tool 全打不動（見前置需求）。
 
 ---
