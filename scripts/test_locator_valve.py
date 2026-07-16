@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-get_verified_locator 的最小單元測試（不需 playwright / 不打網路）。
+locator_valve 的最小單元測試（不需 playwright / 不打網路）。
 
 驗兩條底層邏輯：
 1. 回寫預設：--emit 省略時落在 DEFAULT_EMIT_DIR 下的 per-process 檔（並行安全），
    空字串可停用；且該目錄與 Stop hook 的 --indir 對齊。
 2. _source_case：source 是 dict / str / None 都能安全取出 case id。
 
-跑法：python3 scripts/test_get_verified_locator.py
+跑法：python3 scripts/test_locator_valve.py
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import get_verified_locator as gvl  # noqa: E402
+import locator_valve as gvl  # noqa: E402
 
 
 def test_emit_flag_defaults_to_none():

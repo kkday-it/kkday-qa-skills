@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-get_verified_locator —— agent/skill 端取用 locator 的【唯一正規入口】
+locator_valve —— agent/skill 端取用 locator 的【唯一正規入口】
 
 硬約束（設計繞著它走）：**沒有「只拿不驗」這條路。** 驗證不是 agent 要「記得」做的習慣，
 而是寫死在這支程式裡的閥。agent 端不准直接呼叫 fetch（GET）或直接吃 registry 的 selector 來用；
@@ -29,10 +29,10 @@ fetch_localator/verify_locator 為本檔內部依賴（同目錄），agent 不�
 
 用法（一個 case 起手，建議用 flow 一次批次驗整組相關元素）：
     # 回寫預設就開（寫到 /tmp/locator_results.d/<pid>-<ts>.jsonl），不必帶 --emit
-    python3 get_verified_locator.py --flow things-to-do-search --platform web --env stage \\
+    python3 locator_valve.py --flow things-to-do-search --platform web --env stage \\
         --registry locator_registry/registry.json
     # 或指定單一 element / component
-    python3 get_verified_locator.py --element search-result-active-tab-web-stage \\
+    python3 locator_valve.py --element search-result-active-tab-web-stage \\
         --platform web --env stage --registry locator_registry/registry.json
 
 輸出 JSON（stdout）：
@@ -171,7 +171,7 @@ def _gather_candidate_entries(args) -> tuple:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="get_verified_locator: 取用 locator 的唯一入口（先驗才回）")
+    p = argparse.ArgumentParser(description="locator_valve: 取用 locator 的唯一入口（先驗才回）")
     p.add_argument("--flow", default="", help="流程/區域 key（建議：一次批次驗整組）")
     p.add_argument("--page", default="", help="頁面語意 key")
     p.add_argument("--component", default="", help="元件語意 key")

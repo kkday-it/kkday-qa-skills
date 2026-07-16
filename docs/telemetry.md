@@ -56,7 +56,7 @@ ai_studio 前端「**Case 忠實度分析**」dashboard（權限與 MCP 呼叫�
 
 # 品質遙測揭露（Locator Registry）
 
-QA 自動化流程會**選配性地**與內部 ai_studio 後端交換「locator 候選」，做跨人共享 + 趨勢。**此為公開揭露、非隱藏蒐集。** 後端只是**儲存與共享層，不是真理來源**：取回的 locator 一律要「用前先驗」，驗不過標 stale 重挖（唯一入口 `scripts/get_verified_locator.py`，見 `locator_registry/README.md`）。
+QA 自動化流程會**選配性地**與內部 ai_studio 後端交換「locator 候選」，做跨人共享 + 趨勢。**此為公開揭露、非隱藏蒐集。** 後端只是**儲存與共享層，不是真理來源**：取回的 locator 一律要「用前先驗」，驗不過標 stale 重挖（唯一入口 `scripts/locator_valve.py`，見 `locator_registry/README.md`）。
 
 ## 收什麼 / 送什麼（POST）
 
@@ -72,12 +72,12 @@ QA 自動化流程會**選配性地**與內部 ai_studio 後端交換「locator 
 
 ## 取什麼（GET）
 
-`scripts/fetch_locator_registry.py` 打 `GET {AI_STUDIO_BASE}/api/qa-automation/locator-registry?flow=…&page=…&platform=…&env=…`，回已知候選 + 業務語意 note + 該區域驗證方法論，當 skill 執行前的起手 hints。GET 由 `get_verified_locator.py` 內部呼叫，**agent 不單獨當「拿了直接用」**——拿回的候選一律先在當前 DOM cheap-verify。
+`scripts/fetch_locator_registry.py` 打 `GET {AI_STUDIO_BASE}/api/qa-automation/locator-registry?flow=…&page=…&platform=…&env=…`，回已知候選 + 業務語意 note + 該區域驗證方法論，當 skill 執行前的起手 hints。GET 由 `locator_valve.py` 內部呼叫，**agent 不單獨當「拿了直接用」**——拿回的候選一律先在當前 DOM cheap-verify。
 
 ## 怎麼運作
 
-- **POST**：由 **Claude Code Stop hook** 在 agent 停止後**背景執行** `send_locator_registry.py`，讀主對話（經 `get_verified_locator.py --emit`）產出的 jsonl 送出。
-- **GET**：在 case 執行**前**由 `get_verified_locator.py` 內部觸發，取回候選後強制逐一驗證。
+- **POST**：由 **Claude Code Stop hook** 在 agent 停止後**背景執行** `send_locator_registry.py`，讀主對話（經 `locator_valve.py --emit`）產出的 jsonl 送出。
+- **GET**：在 case 執行**前**由 `locator_valve.py` 內部觸發，取回候選後強制逐一驗證。
 - **不接原本的 `kkday-qa-tools` MCP**（獨立腳本），**不會出現在對話裡、不觸發權限提示、不干擾使用者操作**。
 - **fail-safe**：POST 每筆最多 retry 5 次、全失敗放棄該筆；GET 後端不可達/查無資料回空、當第一次挖照原流程跑；任何錯誤靜默、`exit 0`，絕不影響主流程。
 
@@ -109,7 +109,7 @@ emit 檔是 locator gate 的證據，生命週期交給 gate（pass 才清；後
 ## 關閉
 
 - 移除上面的 Stop hook 即完全停止 POST 回寫。
-- 不呼叫 `get_verified_locator.py` 即不觸發 GET；沒有 registry 時流程照跑，只是每次都從零挖、不享共享候選。
+- 不呼叫 `locator_valve.py` 即不觸發 GET；沒有 registry 時流程照跑，只是每次都從零挖、不享共享候選。
 
 ## 呈現
 

@@ -9,14 +9,14 @@
 **症狀**：跑完 case，automator 回報「起手用 registry 拿到 N 個候選命中」，但用 MCP `get_verified_locator` / 直接打 ai_studio GET 撈 `things-to-do-search`，後端一直是空的（`entries: []`）。
 
 **根因（兩個獨立缺口，且互相掩蓋）**：
-1. **automator 沒真的跑 valve**：agent 指令原本只叫用 `verify_locator.py`（單顆驗、不 GET 後端、不 emit 回寫），根本沒提 `get_verified_locator.py` 這個唯一入口。automator 實際是**讀了本地 `locator_registry/registry.json` 的內容來敘述**，不是執行 valve → 完全不觸發回寫。
+1. **automator 沒真的跑 valve**：agent 指令原本只叫用 `verify_locator.py`（單顆驗、不 GET 後端、不 emit 回寫），根本沒提 `locator_valve.py` 這個唯一入口。automator 實際是**讀了本地 `locator_registry/registry.json` 的內容來敘述**，不是執行 valve → 完全不觸發回寫。
 2. **本地 registry 與後端從沒同步**：那些候選只活在 checked-in 的 `registry.json`（本地 fallback 來源），沒人把它 seed 到後端。
 
 **為什麼難發現**：後端 GET 讀出來是空的，「沒資料」和「client 根本沒推」從結果上看不出差別——缺口 #2 掩蓋了缺口 #1。診斷時一度誤判「後端是不落地的 stub」，實際後端 POST/GET 都正常，只是沒東西被推上去。
 
 **對策（已落地）**：
-- `agents/qa-case-automator.md`：**起手強制先跑 `get_verified_locator.py` valve**，明令禁止「讀 registry.json 敘述當驗過」或只跑 `verify_locator.py`；並要求回報**附 valve 執行憑據**（`source` / verified·stale / emit 檔路徑），沒憑據＝視同沒跑、退回補跑。
-- `scripts/get_verified_locator.py`：`--emit` **預設就開**（忘帶旗標也會回寫）。
+- `agents/qa-case-automator.md`：**起手強制先跑 `locator_valve.py` valve**，明令禁止「讀 registry.json 敘述當驗過」或只跑 `verify_locator.py`；並要求回報**附 valve 執行憑據**（`source` / verified·stale / emit 檔路徑），沒憑據＝視同沒跑、退回補跑。
+- `scripts/locator_valve.py`：`--emit` **預設就開**（忘帶旗標也會回寫）。
 - 已把 `registry.json` seed 到後端（things-to-do-search 8 + home-search 2）。
 
 **通則**：**「best-effort 遙測 / 共享層」讀出來是空的，不代表寫入端有在寫。** 驗證一條回寫鏈要兩頭都戳：POST 完立刻 GET 撈回同一筆（round-trip），別只看其中一端。

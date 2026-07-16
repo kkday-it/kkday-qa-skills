@@ -9,7 +9,7 @@ emit 證據**（valve 驗過的，或 app/from-scratch 收成的），否則擋�
 
 證據來源（統一）：`--emit-dir`（預設 /tmp/locator_results.d）內任一 *.jsonl 有一列
 `source == <case_id>`（且平台相符或 claim 未指定平台）。這同時涵蓋：
-  - web/mweb：`get_verified_locator.py` valve 驗證後 emit（source=case）
+  - web/mweb：`locator_valve.py` valve 驗證後 emit（source=case）
   - app / from-scratch：automator 在測試通過後把用到的 locator 收成 emit（source=case, status=verified）
 
 與 fidelity gate 一致的守門哲學：fail-CLOSED（拿不到證據一律當不合格、擋下）。
@@ -179,7 +179,7 @@ def main() -> int:
             plat_disp = plat if plat is not None else "(未指定平台)"
             print(f"[locator-gate]   - {cid} / {plat_disp}：{args.emit_dir} 內找不到 source=={cid} 的 emit 列",
                   file=sys.stderr)
-        print("[locator-gate] 處理方式：對這些 case 真的跑 get_verified_locator.py valve（web/mweb），"
+        print("[locator-gate] 處理方式：對這些 case 真的跑 locator_valve.py valve（web/mweb），"
               "或在測試通過後把用到的 locator 收成 emit（app/from-scratch，source=<case>, status=verified）；"
               "不是讀 registry.json 敘述冒充。", file=sys.stderr)
         return 1

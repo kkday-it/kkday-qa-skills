@@ -82,8 +82,8 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。
 2. **取 locator + 回寫，依平台走不同路（都不准讀 `registry.json` 敘述冒充）：**
-   - **Web/MWeb**：起手一律先跑 `scripts/get_verified_locator.py`（唯一入口 valve）——**一定要帶 `--case <本 case id>`**（emit 的 source 才會是「這次的 case」，locator gate 才對得上；重用既有 locator 時 registry origin case ≠ 當前 case，不帶會被 gate 假擋）。valve 內部「GET 候選 → 當前 DOM 逐一驗 → verified 直接回；全 stale 回 `remine`」並自動 emit 回寫（`--emit` 預設就開，別關）。用 `--flow <key>` 一次批次驗整組。只有 valve 回 `remine`（或後端/本地都無候選）才退回 `verify_locator.py` 從零挖。
-     範例：`python3 scripts/get_verified_locator.py --case KQT-Txxxxx --flow things-to-do-search --platform web --env stage --registry locator_registry/registry.json`
+   - **Web/MWeb**：起手一律先跑 `scripts/locator_valve.py`（唯一入口 valve）——**一定要帶 `--case <本 case id>`**（emit 的 source 才會是「這次的 case」，locator gate 才對得上；重用既有 locator 時 registry origin case ≠ 當前 case，不帶會被 gate 假擋）。valve 內部「GET 候選 → 當前 DOM 逐一驗 → verified 直接回；全 stale 回 `remine`」並自動 emit 回寫（`--emit` 預設就開，別關）。用 `--flow <key>` 一次批次驗整組。只有 valve 回 `remine`（或後端/本地都無候選）才退回 `verify_locator.py` 從零挖。
+     範例：`python3 scripts/locator_valve.py --case KQT-Txxxxx --flow things-to-do-search --platform web --env stage --registry locator_registry/registry.json`
    - **App（Android/iOS）**：**valve 不涵蓋 app**（`--platform` 只吃 web/mweb；app 沒有可導航 URL 不能事前驗）。取 hints 直接跑 `scripts/fetch_locator_registry.py --platform android|ios ...`（app 唯一的 sanctioned GET 路徑，不必事前驗），寫進 page object；**驗證＝測試本身**：跑測試,定位不到就 fail → 重挖。測試通過後照「收尾 ②」把用到的 app locator 收成 emit。
    - ❌ 不准「讀了 `registry.json` 的 selector 就當作驗過」——那是候選 hint 不是真理,且不觸發回寫,共享記憶永遠不更新。
 3. **強制元素驗證，locator 不准猜定稿**（一律用 **Python playwright** 驗，不用 MCP，見 §3.5）：從零挖時 Web/MWeb 驗 DOM 用 `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`），皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
@@ -136,7 +136,7 @@ def _kkday_www_host(env: str) -> str:
 - 本 case 結果：KQT-T ID → `pass` / `fail` / `skipped`（附原因）
 - 改動檔案清單（page object / test step / case data 的相對路徑）
 - locator 驗證與測試的關鍵事實（平台、是否 pass、卡在哪）
-- **locator valve 執行憑據（證明你真的跑了 `get_verified_locator.py`、沒有用讀檔敘述冒充）**：附該次呼叫 stdout 的關鍵欄位——`source`（`backend`/`local`/`none`）、每個候選的 `verified`/`stale`、`must_remine`，以及 emit 檔路徑（預設落在 `/tmp/locator_results.d/<pid>-<ts>.jsonl`）。**沒有這段憑據＝視同沒跑 valve、沒回寫**，主對話會退回要求補跑。純從零挖（該 flow 後端/本地都無候選）也要明講「valve 回 none/remine，已改從零挖」。
+- **locator valve 執行憑據（證明你真的跑了 `locator_valve.py`、沒有用讀檔敘述冒充）**：附該次呼叫 stdout 的關鍵欄位——`source`（`backend`/`local`/`none`）、每個候選的 `verified`/`stale`、`must_remine`，以及 emit 檔路徑（預設落在 `/tmp/locator_results.d/<pid>-<ts>.jsonl`）。**沒有這段憑據＝視同沒跑 valve、沒回寫**，主對話會退回要求補跑。純從零挖（該 flow 後端/本地都無候選）也要明講「valve 回 none/remine，已改從零挖」。
 - **每平台的 qatest 跑證（交付憑據）**：每個 tag 平台各跑一次 `python -m qatest run --caseid <ID> --platform <X> ...`，**擷取那一次命令自己的 stdout 尾段**附回——含 `KQT-Txxxxx.....Pass` 與 `====== 0 failed, N passed ... on <host> ======`。這段是隔離的、對得上 case×平台的憑據。**不要去讀全域 `~/Documents/QATest_Output/qatest.log`**（所有跑混在一起、並行交錯，無法對應）。缺這段真跑出的 `0 failed` 的平台，一律不算交付。
 - **step→assertion 可追溯表**（每個 TCMS step / expected_result 對到哪個斷言 `file:line`；對不到的 expected 一律列出）——供主對話跑忠實度 review
 - **自動帶入的假設值**（環境 / 語系 / 平台 / 推導出的 oid 等）與**卡住待反問的缺項**，讓主對話能向使用者確認
@@ -159,7 +159,7 @@ printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "web" >> /tmp/case_fide
 **② 武裝 locator gate + 收成 locator（UI case 才做）** — 對「這次交付的每個 **UI**（web/mweb/android/ios）case×平台」：
 
 先確保**該 case 的 locator emit 證據存在**於 `/tmp/locator_results.d/`（Stop hook `check_locator_gate.py` 會驗）：
-- **web/mweb**：你起手跑的 `get_verified_locator.py` valve 已自動 emit（source=case），證據就有了。
+- **web/mweb**：你起手跑的 `locator_valve.py` valve 已自動 emit（source=case），證據就有了。
 - **app（android/ios）/ from-scratch（valve 無候選、從零挖）**：valve 不涵蓋 app，且從零挖不會經過 registry。**測試通過後**，把你這個 case 實際用到、已驗證的 locator **收成一行行** emit 到 per-process 檔（`source` 一定要是本 case id，`status:"verified"`）：
 
 ```bash
@@ -203,7 +203,7 @@ printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":["%s"],"platform
 - ❌ 改 `.env`、credentials、access token
 - ❌ 刪檔、改 sharing permission
 - ❌ locator 未經真實元素樹驗證就定稿
-- ❌ **跳過 `get_verified_locator.py` valve**（直接讀 `registry.json` 敘述、或只跑 `verify_locator.py`）→ 不 GET 後端候選、不 emit 回寫，共享記憶永遠不更新
+- ❌ **跳過 `locator_valve.py` valve**（直接讀 `registry.json` 敘述、或只跑 `verify_locator.py`）→ 不 GET 後端候選、不 emit 回寫，共享記憶永遠不更新
 - ❌ **fix 模式為了讓測試變綠而改斷言/預期，掩蓋真實產品 regression**（判為產品 bug 要回報，不是硬修成 pass）
 - ❌ case 缺關鍵資訊（商品 oid、指定帳號、日期年份、方案代號…）卻自己猜 / 編造，該反問卻沒問
 - ❌ 開頁 host 寫死或用 prod `www.kkday.com`（須依環境組出 `www{suffix}.kkday.com`）

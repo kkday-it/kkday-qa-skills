@@ -35,5 +35,5 @@ if [ "$RC" -eq 0 ]; then
 fi
 
 DETAIL="$(printf '%s' "$OUT" | tr '\n\r\t' '   ' | sed 's/"/'"'"'/g')"
-printf '{"decision":"block","reason":"locator 回寫 gate 未過，不准把 UI case 當交付就結束。%s  → 對缺證據的 case 真的跑 get_verified_locator.py valve（web/mweb）或測試通過後收成 emit（app/from-scratch），不是讀 registry.json 冒充。"}\n' "$DETAIL"
+printf '{"decision":"block","reason":"locator 回寫 gate 未過，不准把 UI case 當交付就結束。%s  → 對缺證據的 case 真的跑 locator_valve.py valve（web/mweb）或測試通過後收成 emit（app/from-scratch），不是讀 registry.json 冒充。"}\n' "$DETAIL"
 exit 0

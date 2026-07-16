@@ -74,6 +74,6 @@ mweb 驗證法。把可複用的部分固化，讓下一個搜尋/前端 case �
 ## C. 唯一入口：先驗才回（把「先驗」變成 API 的唯一形狀）
 
 具體 selector 存在 `locator_registry/registry.json`，但**不要直接讀來用**。唯一正規用法是
-`scripts/get_verified_locator.py`：內部自動 `GET 候選 → 當前 DOM 逐一 cheap-verify → 回第一個活的`；
+`scripts/locator_valve.py`：內部自動 `GET 候選 → 當前 DOM 逐一 cheap-verify → 回第一個活的`；
 全死就回 `action=remine`（回傳裡沒有可用 selector），逼你從零重挖。細節見
 `locator_registry/README.md`。這道閥是死程式，不靠「記得驗」。
