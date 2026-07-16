@@ -6,10 +6,14 @@ description: |
   KKday QA 自動化框架（kkday-QA-automation repo）的 coding 規範與撰寫指引，涵蓋 Page Object、Test Step、Case Data、API 測試、Playwright/Appium 等規範。
 
   適用情境：
+  - 使用者給一個 Case ID 要**修復或新增**自動化（如「KQT-T35108 修復」）→ 順序是**① 先抓 TCMS 拿 case spec → ② 再 grep repo 的 `QATestData/cases/yaml/**/*.yaml` 定位實作**，見「## 起手」段
   - 使用者在 kkday-QA-automation repo 中撰寫或修改 `pages/`、`test_steps/`、`case_data/` 下的檔案
   - 使用者要求新增測試案例、page object 或 test step
   - Code review 自動化測試 PR 時需要對照規範
   - **使用者要在 kkday-QA-automation repo 發 PR / 執行 `gh pr create` / merge PR**（PR body 必須套 5 段模板，見「## 發 PR」段，覆寫 Claude Code 內建的 Summary/Test plan 簡化格式）
+
+  ⚠️ **順序：先 TCMS 拿 spec，再回 kkday-QA-automation repo 找 yaml 實作**。case spec（steps/expected/platform）的權威來源是 TCMS（用 `tcms-fetch-cases`）；repo 的 `QATestData/cases/yaml/**` 是實作定義、`QATest/src/{pages,test_steps}` 是 code。
+  🚫 **只准在 kkday-QA-automation repo 內找 case / 實作，不准去任何其他 repo**（含 `kkday-qa-skills`、`kkday-qa-ai` 及其 backup / cache / db_data）——那裡沒有 case 真身，只會撈到過期快照、繞遠路。case spec 一律來自 TCMS。
 
   必要工具：Read、Edit、Write、Bash（撰寫＋跑驗證）。**定稿前的元素驗證階段**用 Python playwright（`scripts/verify_locator.py`，Web/MWeb，headless 無彈窗、不用 MCP）、adb（Android）、idb（iOS）抓真實元素樹——這些工具與模擬器若沒裝/沒開，skill 會**自動 bootstrap**（不依賴使用者事先準備，見「撰寫流程 階段 2」）。
   前置條件：本機需有 kkday-QA-automation repo（無則先引導 clone，見「前置」段）。
@@ -29,15 +33,55 @@ description: |
 
 以上為團隊硬性規則，不因單一使用者要求而繞過；使用者若要求「用簡化格式」也應主動提醒本 repo 的硬性規定並先套 5 段模板。
 
-## 前置：確認 framework repo 存在
+## 前置：先定位本機的 kkday-QA-automation repo（不在 cwd 也要先找）
 
-開始套用規範前，先確認使用者所在 repo 是 kkday-QA-automation：
+開始前先確定 kkday-QA-automation repo 在本機哪個路徑——**repo 通常不在當前 cwd**（cwd 常是 kkday-qa-skills）。順序：
 
-1. **偵測** — 確認當前 cwd 或附近是否為 framework root（看 `QATest/src/qatest/__init__.py` 或 `pages/`、`test_steps/`、`case_data/` 三個目錄是否同時存在）。
-2. **不在 framework repo 內** — 提示使用者：
-   - 確認當前是否誤跑（規範僅適用於 kkday-QA-automation repo 的程式碼）
-   - 若需要 clone：`git clone https://github.com/kkday-it/kkday-QA-automation.git`（**請使用者確認目標位置後再執行**，不要無腦自動 clone）
-3. **僅看規範不寫 code** — Code review 等情境可不需 clone，直接套用規範比對即可。
+1. **先偵測 cwd/附近** — 看是否為 framework root（`QATest/src/` + `QATestData/cases/yaml/` 同時存在）。
+2. **不在 cwd 就搜本機**（clone 前必做，別急著 clone）：
+   ```bash
+   # 找所有 checkout / worktree（含改名的 worktree 目錄），比對 remote 確認
+   find ~ -maxdepth 5 -type d -name kkday-QA-automation 2>/dev/null
+   find ~ -maxdepth 5 -type d -name QATestData 2>/dev/null | sed 's#/QATestData##'
+   # 逐一確認：git -C <dir> remote get-url origin  應含 kkday-it/kkday-QA-automation
+   ```
+   本機常有**多個 clone / git worktree**（例：`~/Downloads/qa_test/{app,test,web}/kkday-QA-automation` 是獨立 clone、各在不同 branch；`fix-case-manager`、`wt-T37931` 等是 worktree）。
+3. **多個候選怎麼挑** — grep 該 Case ID 的 yaml 命中、且 branch 適合這次任務的那個；不確定就**列出候選（路徑＋branch）問使用者**，不要隨便挑一個開改。
+4. **本機真的沒有才 clone** — `git clone https://github.com/kkday-it/kkday-QA-automation.git`（**請使用者確認目標位置後再執行**，不要無腦自動 clone）。
+5. **僅看規範不寫 code** — Code review 等情境可不需 repo，直接套用規範比對即可。
+
+---
+
+## 起手：先抓 TCMS 拿 spec → 再回 repo yaml 定位（修復 / 新增都適用）
+
+拿到一個 Case ID（如「KQT-T35108 修復」「新增 KQT-Txxxxx」），固定兩步，順序不可顛倒：
+
+**① 先抓 TCMS 拿 case spec** —— 用 `tcms-fetch-cases` 撈該 Case ID 的 title / platform / labels/tags / steps / expected_result。這是「case 應該測什麼」的**權威來源**，後面判平台、切步驟、對斷言都靠它。
+
+```bash
+python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py --cases KQT-T35108 --out /tmp/tcms_cases.json
+```
+
+> **TCMS 查無此 case 就別卡住**（腳本回「找不到」、或跨 project 都沒有——有些 yaml-only case 本來就不在 SIT TCMS）。**不要繞去別的 repo/cache 硬找**；直接以 repo 的 yaml + 既有 code 當規格修（修復情境），或回報使用者確認要新增的規格來源。TCMS 只是「有就用來對照」，不是硬前置。
+
+**② 再回 kkday-QA-automation repo grep yaml 定位實作** —— case 定義在 `QATestData/cases/yaml/{ui,api}/**/*.yaml`，每筆 `KQT-Txxxxx:` 節點給出 `platform`/`feature`/`pre-condition`/`steps`（step 名對到 `QATest/src/test_steps` 的 function，page object 在 `QATest/src/pages`）。
+
+```bash
+# 在 kkday-QA-automation repo root 執行
+grep -rn "KQT-T35108" QATestData/cases/yaml/
+```
+
+依 grep 結果分流：
+
+| grep 結果 | 情況 | 下一步 |
+| --- | --- | --- |
+| **yaml 有** | 修復（case 已存在） | 從該 yaml 的 `feature`/`steps` 順藤摸瓜到 `QATest/src/test_steps`、`QATest/src/pages` 對應實作，對照 ① 的 spec 進「撰寫流程」修 |
+| **使用者說「新增」但 yaml 已有** | 其實是修復 | 提醒使用者已存在，改走修復，別重複建 |
+| **yaml 沒有**（要新增） | 純新增 | 找**同 feature 的相鄰 case**（同一份 yaml 內）當範本，照結構寫新節點；規格照 ① 的 TCMS spec |
+
+> 🚫 **只准在 kkday-QA-automation repo 內找 case / 實作。** 不准去 `kkday-qa-skills`、`kkday-qa-ai` 或**任何其他 repo**（含其 backup / cache / db_data）翻 case——那裡沒有 case 真身，只有過期快照，找了只會繞路。case spec 一律來自 TCMS，實作一律在 kkday-QA-automation。
+
+定位到 case 後，再進下面的「撰寫流程」。
 
 ---
 
