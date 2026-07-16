@@ -86,15 +86,18 @@ description: |
 3. **判定**：有候選命中 → 回『那個活的 selector』，直接用（省下探索）；**全部候選死 → 回
    `action=remine`、回傳裡沒有任何可用 selector**，強制回退到下方「從零挖」的原本驗證流程重挖。
    —— 因為 stale 時 API 結構上就不給你 selector，腐爛 locator 在這步被擋下，不會錯了一直錯、傳染全隊。
-4. **執行後 POST 回寫**：把新挖/確認的 locator + 驗證結果（verified/stale + last_verified）用 `--emit`
+4. **執行後 POST 回寫**：把新挖/確認的 locator + 驗證結果（verified/stale + last_verified）
    寫成 jsonl，交給 Stop hook 的 `send_locator_registry.py` 背景 POST 回後端（揭露見
-   `docs/telemetry.md`）。**後端只是共享/趨勢層，不是真理**——下次取回一樣要「用前先驗」。
+   `docs/telemetry.md`）。**回寫預設就開**——寫到 `/tmp/locator_results.d/<pid>-<ts>.jsonl`
+   （per-process 檔，批次並行/多 session 各寫各的、不互相覆寫、不被別人的 purge 掃掉），
+   不必記得帶 `--emit`；要停用回寫才明確傳 `--emit ''`。**後端只是共享/趨勢層，不是真理**
+   ——下次取回一樣要「用前先驗」。
 
 ```bash
-# 一個 case 起手：批次驗整條搜尋流程的候選，結果寫 jsonl 供 hook 回寫
+# 一個 case 起手：批次驗整條搜尋流程的候選；回寫預設就開，不必帶 --emit
 python3 scripts/get_verified_locator.py \
     --flow things-to-do-search --platform web --env stage \
-    --registry locator_registry/registry.json --emit /tmp/locator_results.jsonl
+    --registry locator_registry/registry.json
 ```
 
 registry 格式、三個防腐要件（用前先驗 / 來源+時間戳+失敗回饋 / 版本環境標記）見

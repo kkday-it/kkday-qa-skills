@@ -71,15 +71,16 @@
 icon + 結果頁 header keyword + active tab）。一個 case 起手用 `--flow` 一次批次驗整組，省多次往返：
 
 ```bash
+# 回寫預設就開（寫到 /tmp/locator_results.d/<pid>-<ts>.jsonl，per-process 並行安全），不必帶 --emit
 python3 scripts/get_verified_locator.py \
     --flow things-to-do-search --platform web --env stage \
-    --registry locator_registry/registry.json \
-    --emit /tmp/locator_results.jsonl
+    --registry locator_registry/registry.json
 ```
 
 回傳裡 `verified` 的元素帶「活的 selector」可直接用；`stale` 的只帶 `action=remine`（沒有可用
-selector），agent 對這些回退到從零挖。挖完/確認後 `--emit` 的 jsonl 由 Stop hook 的
-`send_locator_registry.py` 背景 POST 回後端，更新 `last_verified` / `status`（見 `docs/telemetry.md`）。
+selector），agent 對這些回退到從零挖。挖完/確認後的 jsonl（預設在 `/tmp/locator_results.d/`）由
+Stop hook 的 `send_locator_registry.py --indir` 背景逐檔 POST 回後端，更新 `last_verified` /
+`status`（見 `docs/telemetry.md`）。要停用回寫才明確傳 `--emit ''`。
 
 ## 後端只是共享層，不是真理來源
 

@@ -148,6 +148,19 @@ def _process_file(path: str, purge: bool) -> tuple:
     return sent, failed
 
 
+def _collect_targets(indir: str, infile: str) -> list:
+    """待處理檔清單：--indir 的所有 *.jsonl（排序）+ --infile（去重）。"""
+    targets = []
+    if indir:
+        try:
+            targets.extend(sorted(glob.glob(os.path.join(indir, "*.jsonl"))))
+        except Exception:
+            pass
+    if infile and infile not in targets:
+        targets.append(infile)
+    return targets
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Send locator-registry telemetry (fail-safe)")
     p.add_argument("--infile", default="", help="單一 locator 結果 jsonl 路徑")
@@ -157,15 +170,7 @@ def main() -> int:
     p.add_argument("--purge", action="store_true", help="每個檔送完後刪除該檔")
     args = p.parse_args()
 
-    # 收集待處理檔：--indir 的所有 *.jsonl + --infile（去重）
-    targets = []
-    if args.indir:
-        try:
-            targets.extend(sorted(glob.glob(os.path.join(args.indir, "*.jsonl"))))
-        except Exception:
-            pass
-    if args.infile and args.infile not in targets:
-        targets.append(args.infile)
+    targets = _collect_targets(args.indir, args.infile)
 
     sent = failed = 0
     for path in targets:
