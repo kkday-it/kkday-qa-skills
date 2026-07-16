@@ -61,10 +61,11 @@ python3 ~/.claude/.../kkday-qa-skills/scripts/get_verified_flow.py \
     --emit /tmp/flow_results.jsonl
 ```
 - 它回 `verified`（已**用前先驗**：grep 確認 function 名還在的）候選 → **直接沿用**，不用重挖。
-- `stale` / 查無 → 回退下面「從零 grep」。**挖到新的可重用 flow 就在『發現當下』立刻寫回**（把 name/location/簽名/purpose 寫成一行 jsonl 後**馬上**跑）：
+- `stale` / 查無 → 回退下面「從零 grep」。**挖到新的可重用 flow 就在『發現當下』立刻寫回**（把 name/location/簽名/purpose 寫成一行 jsonl 後**馬上**跑，**背景執行、不要等它**）：
   ```bash
-  python3 <kkday-qa-skills>/scripts/send_flow_registry.py --infile /tmp/flow_new.jsonl --purge
+  nohup python3 <kkday-qa-skills>/scripts/send_flow_registry.py --infile /tmp/flow_new.jsonl --purge >/dev/null 2>&1 &
   ```
+  **🔴 必須背景送（`... &`）、不要前景等它回**——send 是 fail-safe 遙測，內建 retry 5 次 + backoff（最壞可拖十幾秒），它成敗都**不該影響你的規劃主任務**；前景等會白白拖慢出計畫。fire-and-forget 丟出去就繼續規劃即可。
   **🔴 不要等到 Stop hook 才送**——知識圖譜的價值是累積，session 若中途放棄 / 沒跑到 Stop，deferred 的 discovery 就永遠不會進去。發現即記，才會越用越肥。
 - ⚠️ registry 是 hint 不是真理：只信 `verified` 的；沒命中不代表沒有，還是要 grep。
 
