@@ -51,8 +51,10 @@ model: opus
 
 ### 1. 取 steps（每次實作前重新 fetch，不沿用舊檔）
 ```bash
+# --out 用 per-case 路徑（含 case id）：批次並行時各 case 各寫各的，不會互相覆寫。
+# ⚠️ 不要用固定 /tmp/tcms_case.json——worktree 只隔離 repo 檔、不含 /tmp，並行會讀到別 case 的 spec。
 python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
-    --cases <本 case 的 KQT-T ID> --out /tmp/tcms_case.json
+    --cases <本 case 的 KQT-T ID> --out /tmp/tcms_case_<本 case 的 KQT-T ID>.json
 ```
 撈到 0 筆 → 回報主對話後結束。
 輸出檔是**即時快照非快取**，使用者可能剛在 TCMS UI 改過內容 → **實作當下務必重新 fetch，不要沿用上一輪的舊 `/tmp` 檔**。撈回的 `labels`/`tags` 要留著給下一步判定平台。
