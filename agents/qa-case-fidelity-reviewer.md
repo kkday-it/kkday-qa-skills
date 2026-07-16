@@ -54,6 +54,13 @@ model: opus
 ### 3. drift
 - 實作的 step / 斷言與**最新** TCMS 內容對不上（case 改過、實作沒跟上）
 
+### 4. locator 回寫真實性（對 code 交叉檢查）
+locator gate 只驗「有 source==本 case 的 emit 存在」，**不驗 emit 內容品質**——所以由你這個對抗方補上：
+比對 `/tmp/locator_results.d/` 內 `source==<本 case ID>` 的 emit 列，其每個 `selectors[].value` 是否**真的出現在該 case 用到的 page object**（拿 selector 字串去 `grep` 該 case 的 page object 檔）。
+- emit 了、但 code 裡 `grep` 不到 → **疑似捏造 / 漂移**（automator 可能為了過 locator gate 塞了未實際使用的 row），列進 `suspicious_assertions` 並影響判定。
+- 主要防 **app / from-scratch** 手寫 emit 與 code 脫節；web/mweb 的 emit 是 valve 驗過的，通常一致，但一併查無妨。
+- emit 目錄不存在 / 該 case 無 emit 列：那是 locator gate 的守備範圍（會擋），你這裡專注「有 emit 時內容對不對得上 code」。
+
 ## 輸出（結構化，給主對話當閘門）
 
 ```
@@ -77,6 +84,7 @@ notes: <一句話重點>
 
 - `assertion_coverage` < 100% 或有 uncovered expected → **needs-fix**
 - 有恆真 / 空斷言 → **needs-fix**
+- emit 的 locator selector 在該 case 的 page object 裡 `grep` 不到（回寫與實作脫節 / 疑似捏造）→ **needs-fix**
 - 覆蓋達標、但你語意上仍存疑（斷言雖在、可能沒測到重點）→ **flag-for-human** + 說明
 - 全數達標且無可疑 → **pass**
 
