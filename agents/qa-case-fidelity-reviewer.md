@@ -82,20 +82,25 @@ notes: <一句話重點>
 
 ## 收尾必做：自寫 fidelity 結果檔（強制，取代「主對話手動轉寫」）
 
-判定完成後、回報**之前**，把這次的結構化結果**自己 append 一行**到 `/tmp/case_fidelity_results.jsonl`（append 不覆蓋）。這是 Stop hook `check_fidelity_gate.py` 讀的閘門檔，也由 `send_case_fidelity.py` 送遙測。過去靠「主對話把你的輸出轉寫成 jsonl」，一旦流程被打斷就漏寫、gate 卡死；改由**你**寫（你最清楚自己的 verdict），全隊一致、不靠記憶。
+判定完成後、回報**之前**，把這次的結構化結果**自己寫**進 `/tmp/case_fidelity_results.d/` 目錄下、**per case×平台一檔**。這是 Stop hook `check_fidelity_gate.py` 讀的閘門來源（讀整個目錄），也由 `send_case_fidelity.py` 送遙測。過去靠「主對話把你的輸出轉寫成 jsonl」，一旦流程被打斷就漏寫、gate 卡死；改由**你**寫（你最清楚自己的 verdict），全隊一致、不靠記憶。
+
+**關鍵：同一 case×平台每輪 re-review 要「覆寫」（`>`）自己那一檔，不是 append。** gate 要求「該 case×平台的所有 fidelity 筆數都 pass」，若 append，round1 的 `needs-fix` 會和 round2 的 `pass` 並存 → 永遠擋。一檔一 case×平台 + 覆寫，gate 才只看到最新判定。
 
 欄位對齊 `check_fidelity_gate.py` / `send_case_fidelity.py`（`recommend` 為主要判定訊號）：
 
 ```bash
-# 多平台逐平台各寫一行；recommend 用你這次的判定（pass / needs-fix / flag-for-human / blocked）
+mkdir -p /tmp/case_fidelity_results.d
+# 檔名 = <case_id>__<platform>.jsonl；每輪都覆寫（>）自己這一檔，只留最新判定
+# recommend 用你這次的判定：pass / needs-fix / flag-for-human / blocked
 printf '{"case_id":"%s","platform":"%s","recommend":"%s","fidelity":"%s","confidence":%s,"step_coverage":"%s","assertion_coverage":"%s","fix_rounds":%s}\n' \
-    "KQT-Txxxxx" "web" "needs-fix" "FAIL" "0.7" "3/3" "5/6" "1" \
-    >> /tmp/case_fidelity_results.jsonl
+    "KQT-T37931" "web" "needs-fix" "FAIL" "0.7" "3/3" "5/6" "1" \
+    > /tmp/case_fidelity_results.d/KQT-T37931__web.jsonl
 ```
 
 - 這不算「改 code / 跑修復」——只是寫**你自己的判定紀錄**，仍在唯讀 review 的職責內。
 - `needs-fix` / `flag-for-human` 也要寫（gate 要看到「非 pass」才知道要退回，不是漏寫）。
-- 每輪 re-review 都再 append 一行（gate 要求「該 case×平台全部 fidelity 筆數都 pass」，所以退回修好後重審那輪寫 `pass` 才會放行）。
+- 多平台：每個平台各一檔（`..__web.jsonl` / `..__mweb.jsonl`）。
+- 結果目錄的清除交給 gate（pass 時才刪整個目錄），你只管覆寫自己那檔，不要去刪別人的。
 
 ## 禁止事項
 

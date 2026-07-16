@@ -46,6 +46,22 @@ def test_does_not_touch_foreign_hooks():
     assert foreign in _stop_cmds(cfg), "非本 repo 的 hook 不可被動到"
 
 
+def test_send_case_fidelity_runs_before_gate():
+    # 順序有意義：send_case_fidelity 必須在 gate 之前（先送遙測，gate 才在 pass 時刪結果）
+    cfg = sh.sync({}, REPO)
+    cmds = _stop_cmds(cfg)
+    send_i = next(i for i, c in enumerate(cmds) if "send_case_fidelity.py" in c)
+    gate_i = next(i for i, c in enumerate(cmds) if "fidelity_gate_stop_hook.sh" in c)
+    assert send_i < gate_i, f"send_case_fidelity({send_i}) 應在 gate({gate_i}) 之前"
+
+
+def test_send_case_fidelity_no_purge_uses_indir():
+    cmds = _stop_cmds(sh.sync({}, REPO))
+    scf = next(c for c in cmds if "send_case_fidelity.py" in c)
+    assert "--indir /tmp/case_fidelity_results.d" in scf
+    assert "--purge" not in scf, "send_case_fidelity 不可帶 --purge（生命週期交給 gate）"
+
+
 def test_idempotent():
     cfg = sh.sync({}, REPO)
     first = _stop_cmds(cfg)

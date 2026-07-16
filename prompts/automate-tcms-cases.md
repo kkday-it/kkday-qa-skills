@@ -133,7 +133,7 @@ qatest 一 import 就需要 `SERVICE_URL`（非機密）+ `AUTOMATION_TOKEN`（m
 - **非侵入、與使用者操作解耦**：發送由 `scripts/send_case_fidelity.py` 做，通常掛 Claude Code **Stop hook** 在背景執行（不在對話裡出現、不觸發權限提示、不接原本的 kkday-qa-tools MCP）。
 - **fail-safe + retry 5 次**：每筆最多送 5 次，全失敗就放棄該筆、續下一筆；任何錯誤都吞掉、不干擾主流程。
 - **只送品質指標 + operator（無 PII）**，且**揭露不隱瞞**——見 [docs/telemetry.md](../docs/telemetry.md)。
-- **結果檔由 `qa-case-fidelity-reviewer` 自己 append**（它收尾必做，寫進 `/tmp/case_fidelity_results.jsonl`，欄位對齊 gate）；主對話不必再手動轉寫，只需在彙整報告時讀它。這消除了過去「主對話忘了轉寫 → gate 卡死 / 寫錯 verdict」的脆弱點。
+- **結果由 `qa-case-fidelity-reviewer` 自己寫**（它收尾必做）：**per case×平台 一檔、每輪覆寫**，寫進 `/tmp/case_fidelity_results.d/<case>__<platform>.jsonl`（gate 讀整個目錄，欄位對齊）。主對話不必再手動轉寫，只需在彙整報告時讀。這消除了過去「主對話忘了轉寫 → gate 卡死 / 寫錯 verdict」的脆弱點；per-檔 + 覆寫也讓並行 reviewer 互不干擾、且只留最新判定（避免舊 needs-fix 殘留把 case 永遠擋住）。
 
 ## 送出前的硬 Gate（確定性、非 LLM）——兩道
 
@@ -168,12 +168,13 @@ python3 scripts/check_fidelity_gate.py --claimed <claimed-jsonl> --fidelity <res
 
 > **自動 enforce（不靠記憶，流程不可略過）：** `.claude/settings.json` 已掛 Stop hook `scripts/fidelity_gate_stop_hook.sh`，
 > 每次 turn 結束時**條件式**跑上面的 gate——**只要 `/tmp/case_fidelity_claimed.jsonl` 存在**（＝這輪有交付 TCMS case）
-> 就對 `/tmp/case_fidelity_results.jsonl` 逐筆驗，不過就 `decision:block` 擋下結束、逼你補跑 review；過了才放行並清掉 claimed 檔。
+> 就對 `/tmp/case_fidelity_results.d/`（reviewer per case×平台 各寫一檔）逐筆驗，不過就 `decision:block` 擋下結束、逼你補跑 review；過了才放行並清掉 claimed + 本次通過的結果檔。
+> **結果檔生命週期由 gate 掌控**：送遙測的 `send_case_fidelity.py` 在 Stop hook 裡**不帶 `--purge`**（排在 gate 之前先送），只有 gate 在 pass 時才刪本次 claimed 的結果檔——否則 gate 擋下時被 sender 刪掉輸入，下輪會假性「找不到結果」卡死。
 >
 > **關鍵：arm gate 的 claimed 檔由 `qa-case-automator` 交付時自己寫（見其 agent 定義「收尾必做」），不是靠主對話記憶。**
 > automator 每交付一個 `0 failed` 的 case×平台就 append 一行到 claimed。所以只要你派了 automator 去實作，
 > gate 就被武裝——主對話**不可能**不跑 `qa-case-fidelity-reviewer` 就結束（會被 block）。主對話的職責變成：
-> 收到 automator 回報後 **spawn reviewer → 把 fidelity 結果寫進 `/tmp/case_fidelity_results.jsonl`**（needs-fix 丟回 automator 修再 review），全部 pass 後 gate 才放行。
+> 收到 automator 回報後 **spawn reviewer（它自己把 fidelity 結果寫進 `/tmp/case_fidelity_results.d/`）**（needs-fix 丟回 automator 修再 review），全部 pass 後 gate 才放行。
 > 真正 `blocked`/`fail` 的 case automator 不會 arm（那些回報給人處理）。非 TCMS 的一般對話沒有 claimed 檔 → hook 自動放行、不干擾。
 
 **規則：gate 沒過（exit 1）就不准進「彙整報告 / 送遙測」。** 把 gate 印出的不合格 case

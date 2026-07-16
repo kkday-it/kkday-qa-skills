@@ -32,9 +32,24 @@
 **對策（已落地）**：
 - valve emit 改 **per-process 檔** `/tmp/locator_results.d/<pid>-<utc_ts>.jsonl`，各 process 各寫各的。
 - `send_locator_registry.py` 新增 `--indir`：掃目錄**逐檔讀完才刪自己那份**，不碰別人正在寫的。
-- 同一類（fidelity 的 `/tmp/case_fidelity_results.jsonl`）目前仍是單一固定檔；並行 append 是行原子、且 gate 是「缺就擋」安全方向，暫可接受，但若日後併發加劇可比照改 per-process。
+- fidelity 結果同樣從單一檔改成目錄 `/tmp/case_fidelity_results.d/`（見下一則）。
 
 **通則**：任何「多 producer 寫同一檔 + 有人會 purge」的組合，預設就是 race。要嘛 per-producer 檔、要嘛檔鎖；**別用單一固定路徑當並行的交換點**。
+
+---
+
+## 忠實度 gate 的結果檔被 sender 的 `--purge` 在「擋下時」刪掉 → 假性「找不到結果」卡死
+
+**症狀**：needs-fix 修復迴圈中，gate 反覆報「找不到 fidelity 結果檔」，即使 reviewer 剛寫過。
+
+**根因**：Stop hook 順序原本是 `[gate, send_case_fidelity --purge, …]`。gate 輸出 `decision:block` 後，**同一個 Stop event 的後續 hook 仍會執行**——`send_case_fidelity --purge` 就把 gate 的輸入檔刪了。下一輪 stop：gate 找不到結果 → 又擋（但這次是「檔不見」而非「verdict 不過」）。等於 sender 把守門的證據吃掉了。
+
+**對策（已落地）**：**結果檔的生命週期改由 gate 獨佔**——
+- Stop hook 順序改成 send_case_fidelity **先於** gate，且 send **不帶 `--purge`**（只送不刪）。
+- gate 只有在 **pass** 時才刪，且用 `--cleanup-on-pass` **只刪本次 claimed 的 case×平台結果檔**，不 `rm -rf` 整個目錄（避免誤刪同機其他 session 正在驗的結果）。
+- 結果檔改成目錄 `/tmp/case_fidelity_results.d/`，reviewer **per case×平台 一檔、每輪覆寫**（`>` 不 append）——覆寫才只留最新判定，否則 round1 的 `needs-fix` 會和 round2 的 `pass` 並存、gate「全部要 pass」永遠擋。
+
+**通則**：**送遙測（fire-and-forget，會刪）和把關（需要證據留存）不能共用同一個檔的生命週期。** 誰負責刪要單一且明確；「送出」不等於「可以刪」——尤其當同一份資料還要被 gate 讀。
 
 ---
 

@@ -44,9 +44,13 @@ def desired_hooks(repo: str) -> dict:
         "UserPromptSubmit": [
             f'bash "{repo}/scripts/session_autopull.sh" 1800',
         ],
+        # 順序有意義：send_case_fidelity 必須在 gate **之前**——先把遙測送出，gate 才在 pass 時
+        # 刪掉結果目錄。反過來（gate 先跑並在 pass 刪檔）會讓通過那輪的遙測還沒送就被刪。
+        # send_case_fidelity **不帶 --purge**：結果目錄的生命週期交給 gate（pass 才刪），否則
+        # gate 擋下時被 sender 刪掉輸入 → 下輪假性「找不到結果」卡死。
         "Stop": [
+            f'python3 "{repo}/scripts/send_case_fidelity.py" --indir /tmp/case_fidelity_results.d',
             f'bash "{repo}/scripts/fidelity_gate_stop_hook.sh"',
-            f'python3 "{repo}/scripts/send_case_fidelity.py" --infile /tmp/case_fidelity_results.jsonl --purge',
             f'python3 "{repo}/scripts/send_locator_registry.py" --indir /tmp/locator_results.d --purge',
             f'python3 "{repo}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl --purge',
         ],
@@ -54,32 +58,26 @@ def desired_hooks(repo: str) -> dict:
 
 
 def sync(cfg: dict, repo: str) -> dict:
-    """把 desired hook merge 進 cfg（就地改並回傳）。屬本 repo 的舊 hook 自動換新，別人的不動。"""
+    """把 desired hook merge 進 cfg（就地改並回傳）。
+
+    策略：對每個 event，先移除**屬本 repo 的所有** hook（command 含 `<repo>/scripts/`），
+    再以 desired 的順序整組重加。這樣同時保證：(1) 自動 migrate 改過 flag/路徑的舊 hook，
+    (2) 本 repo hook 的**相對順序**永遠等於 desired（順序對 Stop hook 的正確性有意義），
+    (3) 冪等（重跑結果相同）。**非本 repo 的 hook 一律不動。**
+    """
     hooks = cfg.setdefault("hooks", {})
     ours_marker = f"{repo}/scripts/"
     for event, cmds in desired_hooks(repo).items():
-        desired = set(cmds)
         arr = hooks.setdefault(event, [])
-        # 1) 移除「屬本 repo 但已非現行定義」的舊 hook（自動 migrate 改過 flag/路徑的指令）
+        # 1) 移除本 repo 的所有 hook（稍後以 desired 順序重建）
         for grp in arr:
             grp["hooks"] = [
                 h for h in grp.get("hooks", [])
-                if not (
-                    ours_marker in (h.get("command") or "")
-                    and h.get("command") not in desired
-                )
+                if ours_marker not in (h.get("command") or "")
             ]
-        # 丟掉被清空的 group
-        arr[:] = [grp for grp in arr if grp.get("hooks")]
-        # 2) 補上缺的（去重）
-        existing = {h.get("command") for grp in arr for h in grp.get("hooks", [])}
-        new_cmds = [
-            {"type": "command", "command": cmd}
-            for cmd in cmds
-            if cmd not in existing
-        ]
-        if new_cmds:
-            arr.append({"hooks": new_cmds})
+        arr[:] = [grp for grp in arr if grp.get("hooks")]  # 丟掉被清空的 group
+        # 2) 以 desired 順序整組重加（去重：desired 內本就唯一）
+        arr.append({"hooks": [{"type": "command", "command": c} for c in cmds]})
     return cfg
 
 
