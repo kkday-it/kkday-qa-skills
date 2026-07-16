@@ -19,7 +19,7 @@ tools:
   - Slack:slack_send_message_draft
   - Slack:slack_create_canvas
 
-model: sonnet
+model: opus
 ---
 
 # QA Implementer Agent

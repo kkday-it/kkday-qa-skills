@@ -19,7 +19,7 @@ tools:
   - web_search
   - web_fetch
 
-model: sonnet
+model: opus
 ---
 
 # QA Investigator Agent

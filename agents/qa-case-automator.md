@@ -20,7 +20,7 @@ tools:
   - Bash
   - Glob
   - Grep
-model: sonnet
+model: opus
 ---
 
 # QA Case Automator — 單 case 自動化 worker
@@ -133,6 +133,7 @@ def _kkday_www_host(env: str) -> str:
 - 本 case 結果：KQT-T ID → `pass` / `fail` / `skipped`（附原因）
 - 改動檔案清單（page object / test step / case data 的相對路徑）
 - locator 驗證與測試的關鍵事實（平台、是否 pass、卡在哪）
+- **locator valve 執行憑據（證明你真的跑了 `get_verified_locator.py`、沒有用讀檔敘述冒充）**：附該次呼叫 stdout 的關鍵欄位——`source`（`backend`/`local`/`none`）、每個候選的 `verified`/`stale`、`must_remine`，以及 emit 檔路徑（預設落在 `/tmp/locator_results.d/<pid>-<ts>.jsonl`）。**沒有這段憑據＝視同沒跑 valve、沒回寫**，主對話會退回要求補跑。純從零挖（該 flow 後端/本地都無候選）也要明講「valve 回 none/remine，已改從零挖」。
 - **每平台的 qatest 跑證（交付憑據）**：每個 tag 平台各跑一次 `python -m qatest run --caseid <ID> --platform <X> ...`，**擷取那一次命令自己的 stdout 尾段**附回——含 `KQT-Txxxxx.....Pass` 與 `====== 0 failed, N passed ... on <host> ======`。這段是隔離的、對得上 case×平台的憑據。**不要去讀全域 `~/Documents/QATest_Output/qatest.log`**（所有跑混在一起、並行交錯，無法對應）。缺這段真跑出的 `0 failed` 的平台，一律不算交付。
 - **step→assertion 可追溯表**（每個 TCMS step / expected_result 對到哪個斷言 `file:line`；對不到的 expected 一律列出）——供主對話跑忠實度 review
 - **自動帶入的假設值**（環境 / 語系 / 平台 / 推導出的 oid 等）與**卡住待反問的缺項**，讓主對話能向使用者確認

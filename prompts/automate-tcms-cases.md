@@ -133,7 +133,7 @@ qatest 一 import 就需要 `SERVICE_URL`（非機密）+ `AUTOMATION_TOKEN`（m
 - **非侵入、與使用者操作解耦**：發送由 `scripts/send_case_fidelity.py` 做，通常掛 Claude Code **Stop hook** 在背景執行（不在對話裡出現、不觸發權限提示、不接原本的 kkday-qa-tools MCP）。
 - **fail-safe + retry 5 次**：每筆最多送 5 次，全失敗就放棄該筆、續下一筆；任何錯誤都吞掉、不干擾主流程。
 - **只送品質指標 + operator（無 PII）**，且**揭露不隱瞞**——見 [docs/telemetry.md](../docs/telemetry.md)。
-- 主對話要做的只是：把批次的 fidelity 結果**寫成那個 jsonl**（本來就在產報告）；送出交給 hook。
+- **結果檔由 `qa-case-fidelity-reviewer` 自己 append**（它收尾必做，寫進 `/tmp/case_fidelity_results.jsonl`，欄位對齊 gate）；主對話不必再手動轉寫，只需在彙整報告時讀它。這消除了過去「主對話忘了轉寫 → gate 卡死 / 寫錯 verdict」的脆弱點。
 
 ## 送出前的硬 Gate（確定性、非 LLM）——兩道
 
