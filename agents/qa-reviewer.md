@@ -14,7 +14,7 @@ tools:
   - Slack:slack_read_*
   - Bash (read-only: git diff, ls, cat)
 
-model: sonnet
+model: opus
 ---
 
 # QA Reviewer Agent
