@@ -16,7 +16,9 @@ get_verified_locator —— agent/skill 端取用 locator 的【唯一正規入�
        - 全部候選死 → status=stale，**不回任何可用 selector**，改回 action="remine"：
          agent 必須回退到「從零挖」原本流程重挖。腐爛 selector 在這一步被擋下，不會傳染全隊。
   4. 回寫（不在此 inline POST，遵守 fail-safe / 不真送）：把每筆 verified/stale + last_verified
-     寫成 jsonl（--emit），交給 Stop hook 的 send_locator_registry.py 之後背景 POST 回後端。
+     寫成 jsonl，交給 Stop hook 的 send_locator_registry.py 之後背景 POST 回後端。
+     **emit 預設就開**（DEFAULT_EMIT_PATH，與 Stop hook 的 --infile 對齊）；不必記得帶 --emit，
+     回寫才不會因「忘了帶旗標」而靜默斷掉。要停用回寫才明確傳 `--emit ''`。
 
 因為第 3 步 stale 時「回傳裡就沒有可用 selector」，agent 結構上拿不到未驗證的 selector 來用。
 「先驗」因此變成 API 的唯一形狀。
@@ -55,6 +57,12 @@ from datetime import datetime, timezone
 # 獨立定義,不依賴 verify_locator/playwright import 是否成功 —— prod 紅線不能因缺 playwright 而失效。
 _VALID_ENV_RE = re.compile(r"stage|sit\d*")
 
+# 回寫待送檔的預設路徑。**刻意給預設、不留空**：Stop hook 的 send_locator_registry.py 固定讀
+# 這個路徑再 POST 回後端；若 --emit 省略就不寫檔，整條回寫會被靜默略過（呼叫端「忘了帶旗標」＝
+# 資料永遠上不了後端）。改成預設就寫，把「有沒有回寫」從「呼叫端記不記得」變成預設行為。
+# 與 ~/.claude/settings.json Stop hook 的 --infile 對齊。
+DEFAULT_EMIT_PATH = "/tmp/locator_results.jsonl"
+
 
 def _is_prod_url(url: str) -> bool:
     """判斷 URL 是否指向 prod 正式站。現階段禁打 prod：非 stage/sit 標記的 kkday 站一律當 prod 擋下。"""
@@ -84,6 +92,14 @@ except Exception:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _source_case(source) -> str:
+    """source 可能是 dict（registry.json 的 {case,origin,ref}）或 str（後端回存）或 None。
+    一律取出 case id 字串，避免對 str 呼叫 .get 而炸掉。"""
+    if isinstance(source, dict):
+        return source.get("case", "")
+    return source or ""
 
 
 def _gather_candidate_entries(args) -> tuple:
@@ -124,7 +140,7 @@ def _gather_candidate_entries(args) -> tuple:
     return [], "none"
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="get_verified_locator: 取用 locator 的唯一入口（先驗才回）")
     p.add_argument("--flow", default="", help="流程/區域 key（建議：一次批次驗整組）")
     p.add_argument("--page", default="", help="頁面語意 key")
@@ -134,7 +150,14 @@ def main() -> int:
     p.add_argument("--env", default="stage", help="環境：stage / sit0x / sit20x（現階段禁 prod）")
     p.add_argument("--registry", default="", help="本地 registry.json（backend 拿不到時的 fallback 來源）")
     p.add_argument("--url", default="", help="覆寫驗證 URL（預設用 entry 的 verify_url）")
-    p.add_argument("--emit", default="", help="把驗證結果寫成 jsonl，供 Stop hook sender 之後 POST 回寫")
+    p.add_argument("--emit", default=DEFAULT_EMIT_PATH,
+                   help="把驗證結果寫成 jsonl，供 Stop hook sender 之後 POST 回寫。"
+                        f"預設 {DEFAULT_EMIT_PATH}；傳空字串（--emit ''）可停用回寫。")
+    return p
+
+
+def main() -> int:
+    p = _build_parser()
     args = p.parse_args()
 
     if not (args.flow or args.page or args.component or args.element):
@@ -184,24 +207,28 @@ def main() -> int:
 
                 if v["status"] == "verified":
                     results.append({**base, "status": "verified", "selector": v["hit"]})
-                    emit_rows.append({"element": e.get("element"), "page": e.get("page"),
+                    emit_rows.append({"id": e.get("id"), "element": e.get("element"),
+                                      "page": e.get("page"),
                                       "component": e.get("component"), "flow": e.get("flow"),
                                       "selectors": [v["hit"]], "platform": e.get("platform"),
-                                      "env": e.get("env"), "source": (e.get("source") or {}).get("case", ""),
+                                      "env": e.get("env"), "source": _source_case(e.get("source")),
                                       "verify_url": url, "status": "verified",
                                       "last_verified": _now()})
                 else:
                     # stale：不回任何可用 selector，只給 remine 指令
                     results.append({**base, "status": "stale", "action": "remine",
                                     "tried": v.get("checked", []), "error": v.get("error")})
-                    emit_rows.append({"element": e.get("element"), "page": e.get("page"),
+                    emit_rows.append({"id": e.get("id"), "element": e.get("element"),
+                                      "page": e.get("page"),
                                       "component": e.get("component"), "flow": e.get("flow"),
                                       "selectors": e.get("selectors", []), "platform": e.get("platform"),
-                                      "env": e.get("env"), "source": (e.get("source") or {}).get("case", ""),
+                                      "env": e.get("env"), "source": _source_case(e.get("source")),
                                       "verify_url": url, "status": "stale",
                                       "last_verified": _now()})
 
-    must_remine = [r["id"] for r in results if r["status"] == "stale"]
+    # remine 識別碼：id 優先；後端未回存 id 時退回 component / element，避免整串 None 讓呼叫端無從辨識
+    must_remine = [(r.get("id") or r.get("component") or r.get("element"))
+                   for r in results if r["status"] == "stale"]
 
     if args.emit and emit_rows:
         try:
