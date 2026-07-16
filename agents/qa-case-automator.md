@@ -56,7 +56,7 @@ model: opus
 python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
     --cases <本 case 的 KQT-T ID> --out /tmp/tcms_case_<本 case 的 KQT-T ID>.json
 ```
-撈到 0 筆 → 回報主對話後結束。
+撈到 0 筆**或 fetch 失敗**（網路 error / 輸出檔空或非法 JSON）→ 回報主對話後結束，**絕不拿空/舊 spec 硬做**（寧可 blocked 也不要憑空實作錯的東西）。
 輸出檔是**即時快照非快取**，使用者可能剛在 TCMS UI 改過內容 → **實作當下務必重新 fetch，不要沿用上一輪的舊 `/tmp` 檔**。撈回的 `labels`/`tags` 要留著給下一步判定平台。
 
 ### 1.5 判定模式：create（新寫）/ fix（修現有）

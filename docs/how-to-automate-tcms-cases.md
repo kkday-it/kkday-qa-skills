@@ -134,7 +134,7 @@ flowchart TD
 
 - **一律用 Python playwright 驗元素、不用 MCP**：MCP 會彈可見瀏覽器、佔資源、且單一共用不能多案同開；`verify_locator.py` headless、各自 launch，單案與並行都適用。
 - **mweb 要用手機 device profile**：kkday 看 User-Agent 判 web/mweb，只縮 viewport 會開到 web 頁。
-- **只信「綠」不夠**：所以才有 fidelity reviewer + per-platform gate；沒把關的綠、或漏做平台，都不算過。
+- **只信「綠」不夠**：所以才有三道確定性 gate——per-platform 交付、fidelity 忠實度、locator 回寫；沒把關的綠、漏做平台、或沒把 locator 驗證/回寫進共享記憶，都不算過。
 - **平台不是各寫一份**：web↔mweb、android↔ios 各共用一份 case+test_step，做一個要一併補共用平台，別漏。
 - **現階段禁打 prod**：驗 locator / 跑測試只用 stage / sit 系列（sit0x / sit20x），不碰 `www.kkday.com`。
 
