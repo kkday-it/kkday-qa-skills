@@ -9,8 +9,9 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 
 | 角色 | 職責 | 能不能問人 / 迴圈 / 開 PR |
 | --- | --- | --- |
-| **主對話（你）** | 撈批次、逐案委派、跑忠實度閉環、彙整報告、問 PR | ✅ 全部 |
-| `qa-case-automator`（subagent） | 單案實作 create / fix + 跑過 + 產可追溯表 | ❌ 不問人、不迴圈、不 spawn |
+| **主對話（你）** | 撈批次、逐案委派、**跑意圖確認**、跑忠實度閉環、彙整報告、問 PR | ✅ 全部 |
+| `qa-case-planner`（subagent） | **實作前**規劃：抓 spec + 研究 repo 既有做法 + 出計畫（前置怎麼建真實資源 / specific 斷言 / 假設） | ❌ 唯讀、不寫 code、不 spawn |
+| `qa-case-automator`（subagent） | **照確認過的計畫**實作 create / fix + 跑過 + 產可追溯表 | ❌ 不問人、不迴圈、不 spawn |
 | `qa-case-fidelity-reviewer`（subagent） | 單案對抗式忠實度 review，出覆蓋率/信心 | ❌ 唯讀、不修、不 spawn |
 
 ## 模式：互動 vs 自主（決定「要不要問使用者」）
@@ -50,8 +51,14 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
      判定 tag 標的所有平台（labels/tags + step 內 [PC]/[M]/[APP]/[iOS]/[Android] 切分）
      ⚠️ 平台「共用一份」：web↔mweb 共用、android↔ios 共用一份 case+test_step（只些許步驟差異），不是各寫一份
      for platform in tag 標的所有平台:   # 共用一份、全平台都要涵蓋，缺一不算完成
+       p. spawn qa-case-planner（實作前規劃，先研究既有做法）
+              → 計畫：解讀（要測的真正邏輯）/ 前置用哪個既有 flow 建真實資源（禁捏假 id）/
+                     specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / 假設 / 待確認點
+          🔴 意圖確認（治「不是我要的」的關鍵）：
+              - 互動模式 → 把計畫攤給使用者確認/改，**確認後才往下**（別自帶假設就衝）
+              - 自主/harness 模式 → 套計畫帶的假設續跑、把待確認點記錄，真卡住才 blocked
        attempt = 0
-       ┌─► a. spawn qa-case-automator（mode 自動判 create/fix）
+       ┌─► a. spawn qa-case-automator（**照確認過的計畫**實作，mode 自動判 create/fix）
        │        → 回傳 result + step→assertion 可追溯表 + 假設 + blocked
        │      若 automator 回報「待確認點」：互動→問使用者；自主→套預設/blocked
        │   a2. per-platform 交付 gate（check_platform_delivery.py，確定性）：驗 tag 每平台

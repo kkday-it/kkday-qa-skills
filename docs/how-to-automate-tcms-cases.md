@@ -6,7 +6,7 @@
 
 你不用記指令、不用自己開瀏覽器、不用管它怎麼跑。用講的就好。
 
-> **這是一條 AI Agent 流程**：你對話的**主對話 Claude 是 AI 總指揮**，它會派兩種 🤖 AI Agent 去做事——`qa-case-automator`（實作）與 `qa-case-fidelity-reviewer`（檢查實作有沒有忠實對到 case）。全程有 AI 在跑，你負責出需求 + 最後決定要不要開 PR。
+> **這是一條 AI Agent 流程**：你對話的**主對話 Claude 是 AI 總指揮**，它會派三種 🤖 AI Agent 去做事——`qa-case-planner`（實作前先規劃、攤計畫給你確認）、`qa-case-automator`（照確認的計畫實作）、`qa-case-fidelity-reviewer`（檢查實作有沒有忠實對到 case）。全程有 AI 在跑，你負責出需求、**確認計畫**、最後決定要不要開 PR。
 
 ---
 
@@ -76,7 +76,7 @@ flowchart TD
 
 ### 元件各是什麼
 
-> **型別**：🤖 **Agent** 會獨立跑一連串工作（subagent）；📄 **Skill** 是「怎麼做」的規範，被 Agent/主對話載來用。這流程有**兩個 Agent**：`qa-case-automator`、`qa-case-fidelity-reviewer`。
+> **型別**：🤖 **Agent** 會獨立跑一連串工作（subagent）；📄 **Skill** 是「怎麼做」的規範，被 Agent/主對話載來用。這流程有**三個 Agent**：`qa-case-planner`、`qa-case-automator`、`qa-case-fidelity-reviewer`。
 
 | 元件 | 型別 | 說明 |
 | --- | --- | --- |
