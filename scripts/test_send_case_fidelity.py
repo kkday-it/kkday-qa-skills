@@ -61,6 +61,44 @@ def test_missing_file_safe():
     assert scf._process_file("/no/such.jsonl", purge=True) == (0, 0)
 
 
+# --- 覆蓋率欄位相容（修「dashboard 覆蓋率恆為 0%」的欄位漂移 bug） ---
+
+def test_parse_ratio():
+    assert scf._parse_ratio("3/5") == (3, 5)
+    assert scf._parse_ratio(" 3 / 5 ") == (3, 5)
+    assert scf._parse_ratio("0/0") == (0, 0)
+    assert scf._parse_ratio(None) == (None, None)
+    assert scf._parse_ratio("3") == (None, None)
+    assert scf._parse_ratio("a/b") == (None, None)
+
+
+def test_normalize_derives_ints_from_coverage_string():
+    # reviewer 舊格式：只有 step_coverage/assertion_coverage 字串 → 要補出整數，否則被丟掉變 0%
+    out = scf._normalize({
+        "case_id": "KQT-T37931", "platform": "web",
+        "step_coverage": "3/3", "assertion_coverage": "2/3",
+    })
+    assert out["step_covered"] == 3 and out["step_total"] == 3
+    assert out["assertion_covered"] == 2 and out["assertion_total"] == 3
+    assert "step_coverage" not in out  # 字串版不在白名單、不外送
+
+
+def test_normalize_keeps_explicit_ints():
+    # 已直接給整數時不被字串版覆蓋
+    out = scf._normalize({
+        "case_id": "KQT-T37931", "platform": "web",
+        "step_total": 6, "step_covered": 5, "step_coverage": "9/9",
+    })
+    assert out["step_covered"] == 5 and out["step_total"] == 6
+
+
+def test_normalize_no_coverage_ok():
+    out = scf._normalize({"case_id": "KQT-T37931", "platform": "web"})
+    assert "step_covered" not in out
+    assert out["case_id"] == "KQT-T37931"
+    assert out["operator"] and out["client_user"]  # 一定附身分
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

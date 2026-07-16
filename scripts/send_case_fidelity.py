@@ -18,6 +18,10 @@ POST 到 ai_studio 的 /api/qa-automation/case-fidelity。設計原則：
     run_id, case_id(必), platform, mode, interactive,
     step_total, step_covered, assertion_total, assertion_covered,
     fidelity, confidence, fix_rounds, recommend, blocked_reason
+
+相容：reviewer 若寫的是 step_coverage / assertion_coverage（"N/M" 字串），
+normalize 會解析成 step_covered/step_total、assertion_covered/assertion_total 整數，
+避免欄位名漂移導致 dashboard 覆蓋率恆為 0%。
 """
 import argparse
 import glob
@@ -75,14 +79,40 @@ def _send_with_retry(payload: dict) -> bool:
     return False
 
 
+def _parse_ratio(val):
+    """把 "3/5" 這種字串拆成 (covered, total) 整數；拆不出回 (None, None)。"""
+    try:
+        if isinstance(val, str) and "/" in val:
+            a, b = val.split("/", 1)
+            return int(a.strip()), int(b.strip())
+    except Exception:
+        pass
+    return None, None
+
+
 def _normalize(row: dict) -> dict:
-    """挑白名單欄位，補預設，附 operator / client_user。不帶任何額外資料。"""
+    """挑白名單欄位，補預設，附 operator / client_user。不帶任何額外資料。
+
+    相容層：reviewer 寫的是 step_coverage / assertion_coverage（"N/M" 字串），
+    若沒有分開的整數欄位，就從 N/M 解析出 *_covered / *_total —— 否則這些覆蓋率
+    數字會因不在白名單而被整包丟掉，dashboard 覆蓋率恆為 0%（本次要修的 bug）。
+    """
     keys = (
         "run_id", "case_id", "platform", "mode", "interactive",
         "step_total", "step_covered", "assertion_total", "assertion_covered",
         "fidelity", "confidence", "fix_rounds", "recommend", "blocked_reason",
     )
     out = {k: row[k] for k in keys if k in row}
+
+    # 相容：step_coverage / assertion_coverage("N/M") → 補出整數欄位（已有整數則不覆蓋）
+    for prefix, cov_key in (("step", "step_coverage"), ("assertion", "assertion_coverage")):
+        covered_k, total_k = f"{prefix}_covered", f"{prefix}_total"
+        if covered_k not in out or total_k not in out:
+            covered, total = _parse_ratio(row.get(cov_key))
+            if covered is not None:
+                out.setdefault(covered_k, covered)
+                out.setdefault(total_k, total)
+
     out["operator"] = OPERATOR
     out["client_user"] = _CLIENT_USER
     return out

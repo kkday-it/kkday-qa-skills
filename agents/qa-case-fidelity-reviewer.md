@@ -94,16 +94,46 @@ notes: <一句話重點>
 
 **關鍵：同一 case×平台每輪 re-review 要「覆寫」（`>`）自己那一檔，不是 append。** gate 要求「該 case×平台的所有 fidelity 筆數都 pass」，若 append，round1 的 `needs-fix` 會和 round2 的 `pass` 並存 → 永遠擋。一檔一 case×平台 + 覆寫，gate 才只看到最新判定。
 
-欄位對齊 `check_fidelity_gate.py` / `send_case_fidelity.py`（`recommend` 為主要判定訊號）：
+欄位對齊 `check_fidelity_gate.py` / `send_case_fidelity.py`（`recommend` 為主要判定訊號）。
+
+### 一筆完整範例（直接照抄、把值換成你這次的判定）
+
+> **為什麼給完整範例**：你是 AI，會照這個範例產結果檔。過去這裡的範例只寫了
+> `step_coverage`/`assertion_coverage`（"N/M" 字串），**缺** dashboard 真正拿來算覆蓋率的
+> 整數欄位 `step_total`/`step_covered`/`assertion_total`/`assertion_covered`，也缺 `run_id` ——
+> 於是每一筆遙測的覆蓋率都變 0%、按 run 分組時看起來像「沒資料」。**這是踩過的坑**。
+> 照下面這筆**完整**的寫，欄位就不會漏。
+
+一筆 **pass** 的完整紀錄（所有欄位、正確型別；字串加引號、數字不加）：
+
+```json
+{"run_id":"T37931-20260716","case_id":"KQT-T37931","platform":"web","mode":"interactive","interactive":true,"step_total":3,"step_covered":3,"assertion_total":3,"assertion_covered":3,"fidelity":"PASS","confidence":0.85,"fix_rounds":0,"recommend":"pass","blocked_reason":""}
+```
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `run_id` | str | 主對話給你的本批 run id（沒有就給 `unknown`，別省略——省了 dashboard 無法分組） |
+| `case_id` / `platform` | str | 必填 |
+| `mode` | str | `interactive` / `autonomous` |
+| `interactive` | bool | 互動模式為 `true` |
+| `step_total` / `step_covered` | **int** | step 覆蓋率的分母 / 分子（**dashboard 用這兩個算，不能省**） |
+| `assertion_total` / `assertion_covered` | **int** | assertion 覆蓋率的分母 / 分子（**同上，最重要**） |
+| `fidelity` | str | `PASS` / `FAIL` |
+| `confidence` | float | 0–1 |
+| `fix_rounds` | int | 這是第幾輪修 |
+| `recommend` | str | `pass` / `needs-fix` / `flag-for-human` / `blocked`（gate 主要判定訊號） |
+| `blocked_reason` | str | 非 blocked 給空字串 |
+
+寫檔（檔名 = `<case_id>__<platform>.jsonl`；每輪 re-review 都**覆寫**同一檔）：
 
 ```bash
 mkdir -p /tmp/case_fidelity_results.d
-# 檔名 = <case_id>__<platform>.jsonl；每輪都覆寫（>）自己這一檔，只留最新判定
-# recommend 用你這次的判定：pass / needs-fix / flag-for-human / blocked
-printf '{"case_id":"%s","platform":"%s","recommend":"%s","fidelity":"%s","confidence":%s,"step_coverage":"%s","assertion_coverage":"%s","fix_rounds":%s}\n' \
-    "KQT-T37931" "web" "needs-fix" "FAIL" "0.7" "3/3" "5/6" "1" \
-    > /tmp/case_fidelity_results.d/KQT-T37931__web.jsonl
+cat > /tmp/case_fidelity_results.d/KQT-T37931__web.jsonl <<'EOF'
+{"run_id":"T37931-20260716","case_id":"KQT-T37931","platform":"web","mode":"interactive","interactive":true,"step_total":3,"step_covered":3,"assertion_total":3,"assertion_covered":3,"fidelity":"PASS","confidence":0.85,"fix_rounds":0,"recommend":"pass","blocked_reason":""}
+EOF
 ```
+
+（sender 另有相容層：若你只給了 `step_coverage`/`assertion_coverage` 的 "N/M" 字串，它會幫忙解析成整數；但**別依賴它**，請直接照上面完整範例寫整數。）
 
 - 這不算「改 code / 跑修復」——只是寫**你自己的判定紀錄**，仍在唯讀 review 的職責內。
 - `needs-fix` / `flag-for-human` 也要寫（gate 要看到「非 pass」才知道要退回，不是漏寫）。
