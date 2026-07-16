@@ -48,10 +48,15 @@ def desired_hooks(repo: str) -> dict:
         # 刪掉結果目錄。反過來（gate 先跑並在 pass 刪檔）會讓通過那輪的遙測還沒送就被刪。
         # send_case_fidelity **不帶 --purge**：結果目錄的生命週期交給 gate（pass 才刪），否則
         # gate 擋下時被 sender 刪掉輸入 → 下輪假性「找不到結果」卡死。
+        # 順序有意義（見各 gate 說明）：sender 先送、對應 gate 隨後把關並在 pass 時清生命週期。
+        # send_case_fidelity / send_locator_registry 都**不帶 --purge**：結果/emit 檔是各自 gate 的
+        # 證據，生命週期交給 gate（pass 才清），否則 sender 在 gate 擋下時先刪掉證據 → 假性卡死。
+        # locator 後端是 upsert（冪等），不 purge 期間重送無害。
         "Stop": [
             f'python3 "{repo}/scripts/send_case_fidelity.py" --indir /tmp/case_fidelity_results.d',
             f'bash "{repo}/scripts/fidelity_gate_stop_hook.sh"',
-            f'python3 "{repo}/scripts/send_locator_registry.py" --indir /tmp/locator_results.d --purge',
+            f'python3 "{repo}/scripts/send_locator_registry.py" --indir /tmp/locator_results.d',
+            f'bash "{repo}/scripts/locator_gate_stop_hook.sh"',
             f'python3 "{repo}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl --purge',
         ],
     }

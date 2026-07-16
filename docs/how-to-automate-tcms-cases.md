@@ -49,16 +49,19 @@ flowchart TD
 
     subgraph LOOP["每個 case × 共用組的閉環（達標才收）"]
         direction TB
-        E["🤖 automator<br/>實作 → 驗 locator → 跑過"]
+        E["🤖 automator<br/>實作 → 驗/收成 locator → 跑過"]
         F["🤖 fidelity reviewer<br/>覆蓋率／信心"]
-        GATE["per-platform 交付 gate<br/>每平台真跑出 0 failed？<br/>(客觀 parse qatest.log)"]
+        GATE["per-platform 交付 gate<br/>每平台真跑出 0 failed？"]
+        LOC["locator 回寫 gate<br/>UI case 有 emit 證據？"]
         E --> F
         F -->|"needs-fix"| E
         F -->|"pass"| GATE
         GATE -->|"缺平台沒 0 failed，補跑"| E
+        GATE -->|"齊"| LOC
+        LOC -->|"缺 emit 證據，補跑 valve/收成"| E
     end
 
-    GATE -->|"齊 ✅"| G["收下"]
+    LOC -->|"齊 ✅"| G["收下"]
     F -->|"修不過／低信心"| H["待人工 ⚠️"]
     G --> R["批次報告<br/>rollup ＋ 逐 case×平台"]
     H --> R
@@ -81,6 +84,8 @@ flowchart TD
 | **`qa-case-automator`** | 🤖 Agent | tag 標的平台**共用一份**（web↔mweb 共用、android↔ios 共用，只有些許步驟差異）實作(create)/修(fix)+跑過+產可追溯表。並行模式驗元素用各自 Python playwright。不撈整批、不開 PR、不叫別的 agent。 |
 | **`qa-case-fidelity-reviewer`** | 🤖 Agent | 對抗式檢查：比對 case 規格 vs 實作，出覆蓋率/信心/建議。唯讀，只評不改。 |
 | **per-platform 交付 gate** | 📄 確定性腳本 | `scripts/check_platform_delivery.py`——非 LLM，驗每個 tag 平台**真的用 `--platform X` 跑過、qatest 出 `0 failed`**（能跑該平台 + 有 pass 憑據）。只認 qatest 真跑出的 summary，automator 口頭說 pass 不算。 |
+| **忠實度 gate** | 📄 確定性腳本 | `scripts/check_fidelity_gate.py`（Stop hook）——每個交付的 case×平台都要有 `qa-case-fidelity-reviewer` 的判定且 `pass`，否則擋下結束。 |
+| **locator 回寫 gate** | 📄 確定性腳本 | `scripts/check_locator_gate.py`（Stop hook）——每個交付的 **UI** case×平台都要有 locator emit 證據（web/mweb 由 `locator_valve.py` valve 產、app/from-scratch 由測試通過後收成），把「locator 有沒有真的驗/回寫進共享記憶」變硬約束。純 API case 不受管。 |
 | `tcms-fetch-cases` | 📄 Skill | 撈 case steps + `labels`/`tags`（平台資訊）。 |
 | `qa-automation-writer` | 📄 Skill | 寫 code + 驗 locator + 產可追溯表的規範。 |
 | `qa-test-runner` | 📄 Skill | 跑測試 + 失敗診斷/修復。 |
@@ -91,7 +96,7 @@ flowchart TD
 
 ## 「過」是什麼意思
 
-一個 case 算「過」= **tag 標的每個平台都交付（per-platform gate 通過）+ 跑得起來 + 覆蓋 case 規格（每個 expected 都有真斷言）+ 忠實度 reviewer 認可**。只有測試變綠、但沒真的驗到 case 要驗的東西，**不算過**；只做 web、mweb/App 沒交付，**也不算過**（gate 會擋）——這是為了在沒有人工 reviewer 時，也能相信產出跟你寫的 case 一致、且平台沒漏。
+一個 case 算「過」= **tag 標的每個平台都交付（per-platform gate 通過）+ 跑得起來 + 覆蓋 case 規格（每個 expected 都有真斷言、忠實度 gate 通過）+ locator 有真的驗/回寫（locator gate 通過）**。三道 gate（平台交付 / 忠實度 / locator 回寫）都是 Stop hook 死程式、不靠記憶。只有測試變綠、但沒真的驗到 case 要驗的東西，**不算過**；只做 web、mweb/App 沒交付，**也不算過**；UI case 沒把 locator 驗證/收成回寫共享記憶，**也擋**——這是為了在沒有人工 reviewer 時，也能相信產出跟你寫的 case 一致、平台沒漏、且共享記憶有被餵養。
 
 ---
 

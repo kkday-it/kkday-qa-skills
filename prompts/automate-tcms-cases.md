@@ -135,11 +135,12 @@ qatest 一 import 就需要 `SERVICE_URL`（非機密）+ `AUTOMATION_TOKEN`（m
 - **只送品質指標 + operator（無 PII）**，且**揭露不隱瞞**——見 [docs/telemetry.md](../docs/telemetry.md)。
 - **結果由 `qa-case-fidelity-reviewer` 自己寫**（它收尾必做）：**per case×平台 一檔、每輪覆寫**，寫進 `/tmp/case_fidelity_results.d/<case>__<platform>.jsonl`（gate 讀整個目錄，欄位對齊）。主對話不必再手動轉寫，只需在彙整報告時讀。這消除了過去「主對話忘了轉寫 → gate 卡死 / 寫錯 verdict」的脆弱點；per-檔 + 覆寫也讓並行 reviewer 互不干擾、且只留最新判定（避免舊 needs-fix 殘留把 case 永遠擋住）。
 
-## 送出前的硬 Gate（確定性、非 LLM）——兩道
+## 送出前的硬 Gate（確定性、非 LLM）——三道
 
-真實 session 漏過兩種：(1) 漏 spawn `qa-case-fidelity-reviewer` 就把 case 當過；(2) automator
-自評「web+mweb pass」但**實際只跑了 web**（沒有 `--platform mweb` 跑出的 `0 failed` 憑據）。為了不靠記憶、不信自評，
-**在「彙整報告 / 送遙測」之前跑兩支死程式把關**：
+真實 session 漏過三種：(1) 漏 spawn `qa-case-fidelity-reviewer` 就把 case 當過；(2) automator
+自評「web+mweb pass」但**實際只跑了 web**（沒有 `--platform mweb` 跑出的 `0 failed` 憑據）；
+(3) automator **沒真的跑 locator valve/收成**（讀 `registry.json` 敘述冒充），共享記憶靜默不更新。
+為了不靠記憶、不信自評，**在「彙整報告 / 送遙測」之前跑死程式把關**：
 
 **Gate A — per-platform 交付（`scripts/check_platform_delivery.py`）**：驗 tag 每個平台**能跑（沒被
 `limit_test_platform` 限死排除）且 `--platform X` 真跑出 `0 failed`**。憑據是那次命令的 stdout summary，
@@ -147,6 +148,12 @@ qatest 一 import 就需要 `SERVICE_URL`（非機密）+ `AUTOMATION_TOKEN`（m
 
 **Gate B — 忠實度（`scripts/check_fidelity_gate.py`）**：把「你聲稱跑過的 case×平台」對到 fidelity
 結果，逐一確認每筆都有對應 review 且判定 `pass`。
+
+**Gate C — locator 回寫（`scripts/check_locator_gate.py`）**：把「交付的每個 **UI** case×平台」
+（automator arm 進 `/tmp/locator_claimed.jsonl`）對到 `/tmp/locator_results.d/` 的 emit 證據
+（`source==case`）——web/mweb 由 valve emit、app/from-scratch 由「測試通過後收成」emit。缺證據＝
+視同沒真的驗/收成，擋下。純 API case 不 arm、不受此 gate 管。生命週期同 Gate B（sender 不 --purge、
+gate pass 才清；後端 locator 是 upsert 冪等，重送無害）。這把「locator 靜默不回寫」從軟指令變硬約束。
 
 - 這支**不是 LLM 判斷**，是確定性檢查：把「你聲稱跑過的 case×平台清單」對到 fidelity 結果
   jsonl，逐一確認每筆都有對應 review 且判定為 `pass`。

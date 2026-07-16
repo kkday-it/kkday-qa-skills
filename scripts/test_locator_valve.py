@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-get_verified_locator 的最小單元測試（不需 playwright / 不打網路）。
+locator_valve 的最小單元測試（不需 playwright / 不打網路）。
 
 驗兩條底層邏輯：
 1. 回寫預設：--emit 省略時落在 DEFAULT_EMIT_DIR 下的 per-process 檔（並行安全），
    空字串可停用；且該目錄與 Stop hook 的 --indir 對齊。
 2. _source_case：source 是 dict / str / None 都能安全取出 case id。
 
-跑法：python3 scripts/test_get_verified_locator.py
+跑法：python3 scripts/test_locator_valve.py
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import get_verified_locator as gvl  # noqa: E402
+import locator_valve as gvl  # noqa: E402
 
 
 def test_emit_flag_defaults_to_none():
@@ -58,6 +58,23 @@ def test_source_case_from_str_does_not_crash():
 
 def test_source_case_from_none():
     assert gvl._source_case(None) == ""
+
+
+def test_emit_source_prefers_current_case():
+    # 重用既有 locator：entry origin 是 KQT-37931，但當前在做 KQT-500 →
+    # emit source 要用當前 case，否則 locator gate 找不到證據會假擋
+    assert gvl._emit_source("KQT-500", {"case": "KQT-37931"}) == "KQT-500"
+
+
+def test_emit_source_falls_back_to_origin_when_no_case():
+    assert gvl._emit_source("", {"case": "KQT-37931"}) == "KQT-37931"
+    assert gvl._emit_source("", "KQT-37931") == "KQT-37931"
+
+
+def test_case_flag_parses():
+    args = gvl._build_parser().parse_args(["--flow", "x", "--case", "KQT-500"])
+    assert args.case == "KQT-500"
+    assert gvl._build_parser().parse_args(["--flow", "x"]).case == ""
 
 
 if __name__ == "__main__":

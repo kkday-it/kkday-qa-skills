@@ -74,7 +74,7 @@ description: |
 #### 階段 2.0 — locator registry 起手（唯一入口，先驗才用）
 
 搜尋/前端等已有累積的 case，**執行前先向 registry 拿「已驗過的候選」當起手 hints**，把重挖從
-「盲找」變「驗證 + 微調」。但**唯一正規用法是 `scripts/get_verified_locator.py`**，不准繞過它直接讀
+「盲找」變「驗證 + 微調」。但**唯一正規用法是 `scripts/locator_valve.py`**，不准繞過它直接讀
 `locator_registry/registry.json` 的 selector 來用（`fetch_locator_registry.py` GET、`verify_locator.py`
 是它的內部依賴，不單獨當「拿了直接用」的工具）。這支的固定順序（每次都完整跑）：
 
@@ -95,7 +95,7 @@ description: |
 
 ```bash
 # 一個 case 起手：批次驗整條搜尋流程的候選；回寫預設就開，不必帶 --emit
-python3 scripts/get_verified_locator.py \
+python3 scripts/locator_valve.py \
     --flow things-to-do-search --platform web --env stage \
     --registry locator_registry/registry.json
 ```

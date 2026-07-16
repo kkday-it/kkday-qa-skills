@@ -16,14 +16,14 @@
 ## 檔案
 
 - `registry.json` — 候選資料（見下方格式）。
-- 對外唯一取用入口：`scripts/get_verified_locator.py`（**不要**繞過它直接讀 selector 來用）。
+- 對外唯一取用入口：`scripts/locator_valve.py`（**不要**繞過它直接讀 selector 來用）。
 
 ## 為什麼有「唯一入口」這個硬約束
 
 「用前先驗」如果只是寫在文件裡叫 agent「記得驗」，agent 會忘 —— 等於沒有閥，腐爛 selector 就
 傳染全隊。所以驗證被寫死成 API 的唯一形狀：
 
-- agent 端**沒有**「只拿 selector 直接用」的路。唯一入口是 `get_verified_locator(flow/element)`。
+- agent 端**沒有**「只拿 selector 直接用」的路。唯一入口是 `locator_valve(flow/element)`。
 - 它內部一定跑完：**GET 候選 → 當前 DOM 逐一 cheap-verify → 回第一個活的**；全死就標 stale +
   回 `action=remine`（回傳裡根本沒有可用 selector），逼 agent 從零重挖。
 - `fetch_locator_registry.py`（GET）、`verify_locator.py`（驗證）是它的**內部依賴**，agent 不單獨當
@@ -60,7 +60,7 @@
 
 三個防腐要件（缺一，「錯了會一直錯」）：
 
-1. **用前先驗**：`selectors` 只是候選，`get_verified_locator` 逐一驗到第一個在 DOM 命中的才回。
+1. **用前先驗**：`selectors` 只是候選，`locator_valve` 逐一驗到第一個在 DOM 命中的才回。
 2. **來源 + 時間戳 + 失敗回饋**：`source` 記哪個 case/出處；`last_verified` 記時間；驗不過 →
    `status=stale`，下次強制重挖。
 3. **版本/環境標記**：`platform`(web/mweb) × `env`(stage/prod) 分開存，不混用。
@@ -72,7 +72,7 @@ icon + 結果頁 header keyword + active tab）。一個 case 起手用 `--flow`
 
 ```bash
 # 回寫預設就開（寫到 /tmp/locator_results.d/<pid>-<ts>.jsonl，per-process 並行安全），不必帶 --emit
-python3 scripts/get_verified_locator.py \
+python3 scripts/locator_valve.py \
     --flow things-to-do-search --platform web --env stage \
     --registry locator_registry/registry.json
 ```
@@ -86,3 +86,21 @@ Stop hook 的 `send_locator_registry.py --indir` 背景逐檔 POST 回後端，�
 
 從 ai_studio GET 回來的 locator 一樣要「用前先驗」，驗不過標 stale 重挖。後端幫的是**跨人共享 +
 趨勢**，不是讓大家盲信快取。就算後端存了腐爛 locator，也會在 cheap-verify 那步被擋下。
+
+## App（android / ios）：驗證模型不同 —— 靠「測試通過」收成，不用事前 valve
+
+web/mweb 的 `locator_valve.py` valve 能「先驗才回」，是因為它可以 `goto(url)` 開頁驗 DOM。
+**app 沒有可導航的 URL** —— 一個 `resource-id`/`accessibility-id` 只有在 app 已被 driven 到該畫面
+時才驗得到。所以 app **不走 playwright valve**，改用：
+
+- **取 hints**：直接 GET 後端/本地 registry（`platform=android|ios`）當候選，寫進 page object。
+- **驗證＝測試本身**：跑測試；locator 定位不到 → 測試 fail → 走既有 locator 修復流程重挖。
+- **收成回寫**：case 達「綠 + fidelity 過」時，把實際用到的 app locator emit 成 `verified`
+  （`source=<case>`、`selectors` 用 `resource-id`/`accessibility-id`/native `xpath`）到
+  `/tmp/locator_results.d/`，由 Stop hook `send_locator_registry.py` 推回後端。
+- **硬約束**：交付 UI case（含 app）卻沒對應 emit 證據 → Stop hook `check_locator_gate.py` 擋下
+  （見 automate-tcms-cases 的 Gate C）。
+
+> 「綠 + fidelity 過 ⇒ 這些 locator 當下在真實環境解析成功、且被有意義地用到」是 app 驗證的核心依據；
+> 但仍帶 `last_verified`、rot 照樣會發生，取回端一樣不可盲信。selector `type` 對 app 用
+> `resource-id` / `accessibility-id` / `xpath`（native tree），不是 css。

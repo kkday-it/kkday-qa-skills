@@ -21,12 +21,18 @@ def _stop_cmds(cfg):
 def test_fresh_install_adds_indir_locator_hook():
     cfg = sh.sync({}, REPO)
     cmds = _stop_cmds(cfg)
-    assert any(
-        "send_locator_registry.py" in c and "--indir /tmp/locator_results.d --purge" in c
-        for c in cmds
-    )
-    # 不應留任何 --infile 版 locator hook
+    sl = next(c for c in cmds if "send_locator_registry.py" in c)
+    assert "--indir /tmp/locator_results.d" in sl
+    # send_locator 不可帶 --purge（生命週期交給 locator gate；後端 upsert 冪等）
+    assert "--purge" not in sl
     assert not any("send_locator_registry.py" in c and "--infile" in c for c in cmds)
+
+
+def test_locator_gate_runs_after_send_locator():
+    cmds = _stop_cmds(sh.sync({}, REPO))
+    send_i = next(i for i, c in enumerate(cmds) if "send_locator_registry.py" in c)
+    gate_i = next(i for i, c in enumerate(cmds) if "locator_gate_stop_hook.sh" in c)
+    assert send_i < gate_i, "send_locator 應在 locator gate 之前（先送，gate 才在 pass 清）"
 
 
 def test_migrates_old_infile_locator_hook():

@@ -81,8 +81,11 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。
-2. **起手一律先跑 `scripts/get_verified_locator.py`（Web/MWeb locator 的唯一入口 valve）**——不是讀 `registry.json` 內容自己敘述、不是直接跳去 `verify_locator.py`。它內部固定跑「GET 後端共享候選 → 當前 DOM 逐一驗 → verified 直接回可用 selector；全 stale 回 `action=remine`」，**並自動 emit 待送檔讓驗證結果回寫進後端共享記憶**（`--emit` 現在預設就開，別關）。用 `--flow <key>` 一次批次驗整組。**只有 valve 回 `remine`（或該 flow 後端/本地都無候選）時，才退回 `verify_locator.py` 從零挖**；重挖完的 locator 同樣要能被回寫（valve 會處理）。
-   - ❌ 不准「讀了 `registry.json` 的 selector 就當作驗過」——那是候選 hint 不是真理，且完全不觸發回寫，共享記憶會永遠不更新。
+2. **取 locator + 回寫，依平台走不同路（都不准讀 `registry.json` 敘述冒充）：**
+   - **Web/MWeb**：起手一律先跑 `scripts/locator_valve.py`（唯一入口 valve）——**一定要帶 `--case <本 case id>`**（emit 的 source 才會是「這次的 case」，locator gate 才對得上；重用既有 locator 時 registry origin case ≠ 當前 case，不帶會被 gate 假擋）。valve 內部「GET 候選 → 當前 DOM 逐一驗 → verified 直接回；全 stale 回 `remine`」並自動 emit 回寫（`--emit` 預設就開，別關）。用 `--flow <key>` 一次批次驗整組。只有 valve 回 `remine`（或後端/本地都無候選）才退回 `verify_locator.py` 從零挖。
+     範例：`python3 scripts/locator_valve.py --case KQT-Txxxxx --flow things-to-do-search --platform web --env stage --registry locator_registry/registry.json`
+   - **App（Android/iOS）**：**valve 不涵蓋 app**（`--platform` 只吃 web/mweb；app 沒有可導航 URL 不能事前驗）。取 hints 直接跑 `scripts/fetch_locator_registry.py --platform android|ios ...`（app 唯一的 sanctioned GET 路徑，不必事前驗），寫進 page object；**驗證＝測試本身**：跑測試,定位不到就 fail → 重挖。測試通過後照「收尾 ②」把用到的 app locator 收成 emit。
+   - ❌ 不准「讀了 `registry.json` 的 selector 就當作驗過」——那是候選 hint 不是真理,且不觸發回寫,共享記憶永遠不更新。
 3. **強制元素驗證，locator 不准猜定稿**（一律用 **Python playwright** 驗，不用 MCP，見 §3.5）：從零挖時 Web/MWeb 驗 DOM 用 `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`），皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
 4. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
 
@@ -133,7 +136,10 @@ def _kkday_www_host(env: str) -> str:
 - 本 case 結果：KQT-T ID → `pass` / `fail` / `skipped`（附原因）
 - 改動檔案清單（page object / test step / case data 的相對路徑）
 - locator 驗證與測試的關鍵事實（平台、是否 pass、卡在哪）
-- **locator valve 執行憑據（證明你真的跑了 `get_verified_locator.py`、沒有用讀檔敘述冒充）**：附該次呼叫 stdout 的關鍵欄位——`source`（`backend`/`local`/`none`）、每個候選的 `verified`/`stale`、`must_remine`，以及 emit 檔路徑（預設落在 `/tmp/locator_results.d/<pid>-<ts>.jsonl`）。**沒有這段憑據＝視同沒跑 valve、沒回寫**，主對話會退回要求補跑。純從零挖（該 flow 後端/本地都無候選）也要明講「valve 回 none/remine，已改從零挖」。
+- **locator 回寫憑據（證明你真的驗/收成、沒有用讀檔敘述冒充）**，依平台附：
+  - **web/mweb**：`locator_valve.py` 那次呼叫 stdout 的關鍵欄位——`source`（`backend`/`local`/`none`）、每候選 `verified`/`stale`、`must_remine`。
+  - **app（android/ios）/ from-scratch**：測試通過後收成 emit 的憑據——寫了哪些元素、`source==<本 case>`、emit 檔路徑。
+  - 兩者 emit 檔預設都在 `/tmp/locator_results.d/`。**沒有這段憑據＝視同沒驗/沒回寫**，locator gate 會擋、主對話退回補跑。純從零挖也要明講「valve 回 none/remine，已改從零挖並收成」。
 - **每平台的 qatest 跑證（交付憑據）**：每個 tag 平台各跑一次 `python -m qatest run --caseid <ID> --platform <X> ...`，**擷取那一次命令自己的 stdout 尾段**附回——含 `KQT-Txxxxx.....Pass` 與 `====== 0 failed, N passed ... on <host> ======`。這段是隔離的、對得上 case×平台的憑據。**不要去讀全域 `~/Documents/QATest_Output/qatest.log`**（所有跑混在一起、並行交錯，無法對應）。缺這段真跑出的 `0 failed` 的平台，一律不算交付。
 - **step→assertion 可追溯表**（每個 TCMS step / expected_result 對到哪個斷言 `file:line`；對不到的 expected 一律列出）——供主對話跑忠實度 review
 - **自動帶入的假設值**（環境 / 語系 / 平台 / 推導出的 oid 等）與**卡住待反問的缺項**，讓主對話能向使用者確認
@@ -141,9 +147,9 @@ def _kkday_www_host(env: str) -> str:
 
 > **「跑過」不等於「過」。** 你只負責實作 + 跑過 + 產可追溯表；**忠實度把關由主對話在你回報後 spawn `qa-case-fidelity-reviewer`（對抗式、獨立）** 做——它比對 case 規格 vs 你的實作，出覆蓋率/信心，達標才算真的過，不達標退回你修。你**不自己 spawn reviewer**（非本職責）。
 
-## 收尾必做：武裝忠實度 gate + 記錄工具使用量（強制，讓流程不靠記憶、團隊都遵守）
+## 收尾必做：武裝忠實度 gate + locator gate（含收成）+ 記錄工具使用量（強制，讓流程不靠記憶、團隊都遵守）
 
-這兩件是**遙測與把關的觸發點**，過去都靠「主對話記得手動做」而反覆被漏。把它們綁在**你**身上（你一定會跑、且知道自己的 case×平台），全隊用這個 agent 就都會執行，不再是某人某台環境才有。回報**之前**做：
+這三件是**遙測與把關的觸發點**，過去都靠「主對話記得手動做」而反覆被漏。把它們綁在**你**身上（你一定會跑、且知道自己的 case×平台），全隊用這個 agent 就都會執行，不再是某人某台環境才有。回報**之前**做：
 
 **① 武裝忠實度 gate** — 把「這次真的跑出 `0 failed` 交付的每個 case×平台」各追加一行到 `/tmp/case_fidelity_claimed.jsonl`（**append 不覆蓋**）：
 
@@ -153,7 +159,30 @@ printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "web" >> /tmp/case_fide
 
 這個 claimed 檔是 Stop hook `check_fidelity_gate.py` 的觸發條件——**你一寫，主對話就再也不能不跑 `qa-case-fidelity-reviewer` 就結束**（gate `decision:block` 逼它補跑 review 到 pass）。
 
-**② 記錄工具使用量** — 把「這次處理的 case×平台」直接 append 一行到 `/tmp/tool_usage.jsonl`（跟 ① 一樣直接寫檔，不呼叫 script——你 cwd 在框架 worktree、叫不到 kkday-qa-skills 的 `scripts/`，也**不准寫死個人路徑**）。送出由 Stop hook `send_tool_usage.py` 背景處理，餵 ai_studio「MCP 呼叫分析 / 工具使用量」dashboard：
+**② 武裝 locator gate + 收成 locator（UI case 才做）** — 對「這次交付的每個 **UI**（web/mweb/android/ios）case×平台」：
+
+先確保**該 case 的 locator emit 證據存在**於 `/tmp/locator_results.d/`（Stop hook `check_locator_gate.py` 會驗）：
+- **web/mweb**：你起手跑的 `locator_valve.py` valve 已自動 emit（source=case），證據就有了。
+- **app（android/ios）/ from-scratch（valve 無候選、從零挖）**：valve 不涵蓋 app，且從零挖不會經過 registry。**測試通過後**，把你這個 case 實際用到、已驗證的 locator **收成一行行** emit 到 per-process 檔（`source` 一定要是本 case id，`status:"verified"`）：
+
+```bash
+mkdir -p /tmp/locator_results.d
+F="/tmp/locator_results.d/$$-harvest.jsonl"   # per-process，避免並行互覆
+# 每個實際用到的元素一行；app 用 resource-id / accessibility-id / native xpath
+printf '{"id":"%s","element":"%s","page":"%s","component":"%s","flow":"%s","selectors":[{"type":"%s","value":"%s"}],"platform":"%s","env":"%s","source":"%s","status":"verified"}\n' \
+    "ttd-search-android" "搜尋入口" "home" "home-search" "home-search" "resource-id" "com.kkday:id/search_bar" "android" "stage" "KQT-Txxxxx" \
+    >> "$F"
+```
+
+接著 arm `/tmp/locator_claimed.jsonl`（**只 arm UI case；純 API case 不 arm**，避免假擋）：
+
+```bash
+printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "android" >> /tmp/locator_claimed.jsonl
+```
+
+你一 arm，主對話就**不能在「該 UI case 沒有 locator emit 證據」時結束**（gate `decision:block`）——這把「真的跑 valve / 真的收成」從軟指令變成硬約束，堵掉「讀 registry.json 敘述冒充」。
+
+**③ 記錄工具使用量** — 把「這次處理的 case×平台」直接 append 一行到 `/tmp/tool_usage.jsonl`（跟上面一樣直接寫檔，不呼叫 script——你 cwd 在框架 worktree、叫不到 kkday-qa-skills 的 `scripts/`，也**不准寫死個人路徑**）。送出由 Stop hook `send_tool_usage.py` 背景處理，餵 ai_studio「MCP 呼叫分析 / 工具使用量」dashboard：
 
 ```bash
 # ⚠️ case_ids / platforms 必須是 JSON 陣列（後端 model 是 List[str]，傳字串會被 422 拒收、不落地）
@@ -162,10 +191,12 @@ printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":["%s"],"platform
 # 交付成功用 outcome=delivered；blocked/fail 用 outcome=blocked（「有人用過但沒交付」也要記）
 ```
 
-**規則（兩者共通）**：
-- **① 只 arm 你「已交付（該平台真跑出 `0 failed`）」的**；`fail`/`blocked`/`skipped` **不 arm** gate（那些回報給人處理，不是宣稱做完）。
-- **② tool_usage 一律 emit**（delivered 或 blocked 都記），因為「有人用過這工具」本身就是要追蹤的數據。
+**規則（共通）**：
+- **① / ② 只 arm 你「已交付（該平台真跑出 `0 failed`）」的**；`fail`/`blocked`/`skipped` **不 arm**（回報給人處理，不是宣稱做完）。
+- **② 只對 UI case 做**（web/mweb/android/ios）；純 API case 不 arm locator gate、不用收成 locator。
+- **③ tool_usage 一律 emit**（delivered 或 blocked 都記）。
 - fix 模式重修後同樣照此規則。
+- **收成即驗證**：case 綠 + fidelity 過，代表這些 locator 在真實環境確實解析成功、且被有意義地用到 → 收成 emit 的 `status` 才標 `verified`；反之未達交付不要 emit verified。
 
 ## 禁止事項
 
@@ -175,7 +206,7 @@ printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":["%s"],"platform
 - ❌ 改 `.env`、credentials、access token
 - ❌ 刪檔、改 sharing permission
 - ❌ locator 未經真實元素樹驗證就定稿
-- ❌ **跳過 `get_verified_locator.py` valve**（直接讀 `registry.json` 敘述、或只跑 `verify_locator.py`）→ 不 GET 後端候選、不 emit 回寫，共享記憶永遠不更新
+- ❌ **跳過 `locator_valve.py` valve**（直接讀 `registry.json` 敘述、或只跑 `verify_locator.py`）→ 不 GET 後端候選、不 emit 回寫，共享記憶永遠不更新
 - ❌ **fix 模式為了讓測試變綠而改斷言/預期，掩蓋真實產品 regression**（判為產品 bug 要回報，不是硬修成 pass）
 - ❌ case 缺關鍵資訊（商品 oid、指定帳號、日期年份、方案代號…）卻自己猜 / 編造，該反問卻沒問
 - ❌ 開頁 host 寫死或用 prod `www.kkday.com`（須依環境組出 `www{suffix}.kkday.com`）
