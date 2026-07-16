@@ -114,7 +114,9 @@ def main() -> int:
     p.add_argument("--flow", default="", help="流程/區域 key，如 things-to-do-search（批次取整組）")
     p.add_argument("--page", default="", help="頁面語意 key，如 things-to-do-landing")
     p.add_argument("--component", default="", help="元件語意 key（可選，縮小範圍）")
-    p.add_argument("--platform", default="web", choices=["web", "mweb"])
+    # web/mweb + app（android/ios）。app 沒有可導航 URL、不走 get_verified_locator valve，
+    # fetch 是 app 取 hints 的 sanctioned GET 路徑（驗證交給測試本身）。
+    p.add_argument("--platform", default="web", choices=["web", "mweb", "android", "ios"])
     p.add_argument("--env", default="stage", help="stage / sit0x / sit20x（現階段禁 prod）")
     p.add_argument("--outfile", default="", help="同時寫入的 JSON 檔路徑（可選）")
     args = p.parse_args()

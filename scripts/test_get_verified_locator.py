@@ -60,6 +60,23 @@ def test_source_case_from_none():
     assert gvl._source_case(None) == ""
 
 
+def test_emit_source_prefers_current_case():
+    # 重用既有 locator：entry origin 是 KQT-37931，但當前在做 KQT-500 →
+    # emit source 要用當前 case，否則 locator gate 找不到證據會假擋
+    assert gvl._emit_source("KQT-500", {"case": "KQT-37931"}) == "KQT-500"
+
+
+def test_emit_source_falls_back_to_origin_when_no_case():
+    assert gvl._emit_source("", {"case": "KQT-37931"}) == "KQT-37931"
+    assert gvl._emit_source("", "KQT-37931") == "KQT-37931"
+
+
+def test_case_flag_parses():
+    args = gvl._build_parser().parse_args(["--flow", "x", "--case", "KQT-500"])
+    assert args.case == "KQT-500"
+    assert gvl._build_parser().parse_args(["--flow", "x"]).case == ""
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

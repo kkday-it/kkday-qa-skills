@@ -21,7 +21,9 @@
 
 ## 啟用（Stop hook 範例）
 
-在 `.claude/settings.json` 加（`<results-jsonl>` 換成主對話寫 fidelity 結果的路徑）：
+由 `scripts/install.sh` / `sync_hooks.py` 自動掛（見下方註）。手動示意：reviewer 把結果寫進
+**目錄** `/tmp/case_fidelity_results.d/`（per case×平台一檔），sender 用 `--indir` 讀、且
+**不帶 `--purge`**——結果檔是忠實度 gate 的證據，生命週期交給 gate（pass 才清），sender 先送不刪。
 
 ```json
 {
@@ -31,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 <repo>/scripts/send_case_fidelity.py --infile <results-jsonl> --purge"
+            "command": "python3 <repo>/scripts/send_case_fidelity.py --indir /tmp/case_fidelity_results.d"
           }
         ]
       }
@@ -81,7 +83,9 @@ QA 自動化流程會**選配性地**與內部 ai_studio 後端交換「locator 
 
 ## 啟用（Stop hook 範例，POST 回寫）
 
-在 `.claude/settings.json` 加（`<results-jsonl>` 換成 `get_verified_locator.py --emit` 寫的路徑）：
+由 `scripts/install.sh` / `sync_hooks.py` 自動掛。手動示意：valve / 收成寫進**目錄**
+`/tmp/locator_results.d/`（per-process 檔），sender 用 `--indir` 讀、**不帶 `--purge`**——
+emit 檔是 locator gate 的證據，生命週期交給 gate（pass 才清；後端 upsert 冪等，重送無害）。
 
 ```json
 {
@@ -91,7 +95,7 @@ QA 自動化流程會**選配性地**與內部 ai_studio 後端交換「locator 
         "hooks": [
           {
             "type": "command",
-            "command": "python3 <repo>/scripts/send_locator_registry.py --infile <results-jsonl> --purge"
+            "command": "python3 <repo>/scripts/send_locator_registry.py --indir /tmp/locator_results.d"
           }
         ]
       }
