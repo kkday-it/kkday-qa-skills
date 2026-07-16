@@ -1,0 +1,84 @@
+{
+  "_note": "可重用 flow 的本地 fallback（後端不可達時用）。後端才是共享來源；這裡是種子 + 離線備援。每筆都是實際 grep 確認過的真 flow，禁編造。取回端(get_verified_flow.py)一律用前先驗。",
+  "updated_at": "2026-07-16T00:00:00+00:00",
+  "entries": [
+    {
+      "id": "app-goto-booking-payment-page",
+      "name": "go_to_booking_payment_page",
+      "kind": "test_step",
+      "purpose": "從商品頁選方案/日期/規格後導航到訂購頁（不付款）。要『只到訂購頁做 UI 驗證、不下單』就用它，不要接 create_order_by_app。",
+      "location": "test_steps/kkday/app/common.py:320",
+      "signature": "booking_type=\"instant\", add_to_cart_count=1, product_type=\"normal\"",
+      "example": "- go_to_booking_payment_page: {product_type: usj}   # 或 bare: - go_to_booking_payment_page",
+      "platform": "app",
+      "repo": "kkday-QA-automation",
+      "status": "verified",
+      "last_verified": "2026-07-16T00:00:00+00:00"
+    },
+    {
+      "id": "app-login-with-email-account",
+      "name": "login_with_email_account",
+      "kind": "setup_flow",
+      "purpose": "用測試 email 帳號登入 App（前置常用）。fixture 自動注入 pages/test_run_config，yaml 直接列不帶參數。",
+      "location": "test_steps/kkday/app/user_info/login.py:394",
+      "signature": "(pages, test_run_config)  # fixture 注入，呼叫不傳",
+      "example": "- login_with_email_account",
+      "platform": "app",
+      "repo": "kkday-QA-automation",
+      "status": "verified",
+      "last_verified": "2026-07-16T00:00:00+00:00"
+    },
+    {
+      "id": "app-search-with-keyword",
+      "name": "search_with_keyword",
+      "kind": "test_step",
+      "purpose": "搜尋商品並進入商品卡/商品頁（導航到訂購頁前一步）。product_oid 要用真實商品，不可捏假。",
+      "location": "test_steps/kkday/app/search/search.py:31",
+      "signature": "product_oid=..., into_card_view=...",
+      "example": "- search_with_keyword: {product_oid: <真實商品 oid>, into_card_view: True}",
+      "platform": "app",
+      "repo": "kkday-QA-automation",
+      "status": "verified",
+      "last_verified": "2026-07-16T00:00:00+00:00"
+    },
+    {
+      "id": "app-change-language",
+      "name": "change_language",
+      "kind": "setup_flow",
+      "purpose": "切換 App 語系（前置）。",
+      "location": "test_steps/kkday/app/settings/settings.py:32",
+      "signature": "language: str",
+      "example": "- change_language: {language: zh_tw}",
+      "platform": "app",
+      "repo": "kkday-QA-automation",
+      "status": "verified",
+      "last_verified": "2026-07-16T00:00:00+00:00"
+    },
+    {
+      "id": "app-change-currency",
+      "name": "change_currency",
+      "kind": "setup_flow",
+      "purpose": "切換幣別（前置）。⚠️ 參數 key 是 country（不是 currency）。",
+      "location": "test_steps/kkday/app/settings/settings.py:94",
+      "signature": "country: str",
+      "example": "- change_currency: {country: zh_tw}",
+      "platform": "app",
+      "repo": "kkday-QA-automation",
+      "status": "verified",
+      "last_verified": "2026-07-16T00:00:00+00:00"
+    },
+    {
+      "id": "app-change-user-nationality",
+      "name": "change_user_nationality",
+      "kind": "setup_flow",
+      "purpose": "切換使用者國籍（前置）。",
+      "location": "test_steps/kkday/app/settings/settings.py:155",
+      "signature": "nationality: str",
+      "example": "- change_user_nationality: {nationality: zh_tw}",
+      "platform": "app",
+      "repo": "kkday-QA-automation",
+      "status": "verified",
+      "last_verified": "2026-07-16T00:00:00+00:00"
+    }
+  ]
+}
