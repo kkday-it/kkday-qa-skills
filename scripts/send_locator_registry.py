@@ -17,6 +17,9 @@ send_case_fidelity.py：
 一律要「用前先驗」，驗不過標 stale 重挖 —— 後端幫的是跨人共享 + 趨勢，不是讓大家盲信快取。
 
 用法：
+    # 掃目錄逐檔送（Stop hook 用；per-process 檔並行安全）
+    python3 send_locator_registry.py --indir /tmp/locator_results.d --purge
+    # 或送單一檔
     python3 send_locator_registry.py --infile /path/to/locator_results.jsonl [--purge]
 
 每行 JSON 欄位（缺的用預設；* 為必填）：
@@ -34,6 +37,7 @@ send_case_fidelity.py：
     verify_url       —— 驗證當下用的 URL（可選，方便下次重驗）
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -110,17 +114,14 @@ def _normalize(row: dict) -> dict:
     return out
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description="Send locator-registry telemetry (fail-safe)")
-    p.add_argument("--infile", required=True, help="locator 結果 jsonl 路徑")
-    p.add_argument("--purge", action="store_true", help="全部送完後刪除結果檔")
-    args = p.parse_args()
-
+def _process_file(path: str, purge: bool) -> tuple:
+    """送一個結果檔的每一筆；purge 時整檔讀完才刪自己這份（不碰別人正在寫的檔）。
+    回 (sent, failed)。任何錯誤 fail-safe 吞掉。"""
     sent = failed = 0
     try:
-        if not os.path.isfile(args.infile):
-            return 0  # 沒有結果檔就靜默結束
-        with open(args.infile, "r", encoding="utf-8") as f:
+        if not os.path.isfile(path):
+            return 0, 0
+        with open(path, "r", encoding="utf-8") as f:
             lines = [ln.strip() for ln in f if ln.strip()]
         for ln in lines:
             try:
@@ -137,17 +138,45 @@ def main() -> int:
                 sent += 1
             else:
                 failed += 1  # 5 次都失敗，放棄這筆
-        if args.purge:
+        if purge:
             try:
-                os.remove(args.infile)
+                os.remove(path)
             except Exception:
                 pass
     except Exception:
         pass  # 絕對 fail-safe：不干擾主流程
+    return sent, failed
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Send locator-registry telemetry (fail-safe)")
+    p.add_argument("--infile", default="", help="單一 locator 結果 jsonl 路徑")
+    p.add_argument("--indir", default="",
+                   help="結果目錄；掃其中所有 *.jsonl 逐檔送（per-process 檔，並行安全）。"
+                        "與 --infile 擇一或並用。")
+    p.add_argument("--purge", action="store_true", help="每個檔送完後刪除該檔")
+    args = p.parse_args()
+
+    # 收集待處理檔：--indir 的所有 *.jsonl + --infile（去重）
+    targets = []
+    if args.indir:
+        try:
+            targets.extend(sorted(glob.glob(os.path.join(args.indir, "*.jsonl"))))
+        except Exception:
+            pass
+    if args.infile and args.infile not in targets:
+        targets.append(args.infile)
+
+    sent = failed = 0
+    for path in targets:
+        s, fl = _process_file(path, args.purge)
+        sent += s
+        failed += fl
 
     # 只在手動執行（tty）時印摘要，hook 背景執行不印
     if sys.stdout.isatty():
-        print(f"[locator-registry] sent={sent} failed(gave up after {MAX_RETRIES})={failed}")
+        print(f"[locator-registry] files={len(targets)} sent={sent} "
+              f"failed(gave up after {MAX_RETRIES})={failed}")
     return 0
 
 

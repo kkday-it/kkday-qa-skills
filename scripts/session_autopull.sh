@@ -37,7 +37,10 @@ if git -C "$D" pull --ff-only --quiet 2>/dev/null; then
   : > "$STAMP" 2>/dev/null || true          # 更新 throttle 時間戳
   after=$(git -C "$D" rev-parse --short HEAD 2>/dev/null)
   if [ "$before" != "$after" ]; then
-    printf '{"systemMessage":"qa-skills repo 已自動同步 %s → %s（skills/agents 為最新）"}\n' "$before" "$after"
+    # 有更新才重跑 hook 同步：hook 是絕對路徑快照，光 pull 不會更新指令字串（改過的 flag/路徑）。
+    # sync_hooks.py 冪等 + 自動 migrate + fail-safe，只在版本真的變動時跑，不干擾每則訊息。
+    [ -f "$D/scripts/sync_hooks.py" ] && python3 "$D/scripts/sync_hooks.py" >/dev/null 2>&1 || true
+    printf '{"systemMessage":"qa-skills repo 已自動同步 %s → %s（skills/agents/hook 為最新）"}\n' "$before" "$after"
   fi
 fi
 exit 0

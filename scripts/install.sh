@@ -55,38 +55,9 @@ done
 SETTINGS="$CLAUDE_DIR/settings.json"
 [ -f "$SETTINGS" ] && cp "$SETTINGS" "$SETTINGS.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo bak)" && echo "[install] 已備份 $SETTINGS"
 
-REPO="$REPO" SETTINGS="$SETTINGS" python3 - <<'PY'
-import json, os
-repo = os.environ["REPO"]; path = os.environ["SETTINGS"]
-try:
-    with open(path) as f: cfg = json.load(f)
-except Exception:
-    cfg = {}
-hooks = cfg.setdefault("hooks", {})
-
-def cmd(c): return {"type": "command", "command": c}
-want = {
-    "SessionStart":     [cmd(f'bash "{repo}/scripts/session_autopull.sh"')],
-    "UserPromptSubmit": [cmd(f'bash "{repo}/scripts/session_autopull.sh" 1800')],
-    "Stop": [
-        cmd(f'bash "{repo}/scripts/fidelity_gate_stop_hook.sh"'),
-        cmd(f'python3 "{repo}/scripts/send_case_fidelity.py" --infile /tmp/case_fidelity_results.jsonl --purge'),
-        cmd(f'python3 "{repo}/scripts/send_locator_registry.py" --infile /tmp/locator_results.jsonl --purge'),
-        cmd(f'python3 "{repo}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl --purge'),
-    ],
-}
-for event, cmds in want.items():
-    arr = hooks.setdefault(event, [])
-    # 收集本 event 現有的所有 command 字串（去重用）
-    existing = {h.get("command") for grp in arr for h in grp.get("hooks", [])}
-    # 只加還沒有的；本 repo 的 command 都含 repo 路徑，重跑不會重複
-    new_cmds = [c for c in cmds if c["command"] not in existing]
-    if new_cmds:
-        arr.append({"hooks": new_cmds})
-
-with open(path, "w") as f:
-    json.dump(cfg, f, ensure_ascii=False, indent=2); f.write("\n")
-print(f"[install] hook 已 merge 進 {path}（events: {', '.join(want)}）")
-PY
+# hook 定義集中在 sync_hooks.py（install 與 session_autopull 共用，避免漂移）；
+# 它會冪等 merge + 自動 migrate 屬本 repo 的舊 hook（改過的 flag/路徑會被換新）。
+REPO="$REPO" SETTINGS="$SETTINGS" python3 "$REPO/scripts/sync_hooks.py"
+echo "[install] hook 已 merge 進 $SETTINGS（透過 sync_hooks.py）"
 
 echo "[install] 完成。新開一個 Claude Code session 即生效（hook 在任何專案都會跑）。"

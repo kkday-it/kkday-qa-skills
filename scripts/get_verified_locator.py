@@ -17,8 +17,9 @@ get_verified_locator —— agent/skill 端取用 locator 的【唯一正規入�
          agent 必須回退到「從零挖」原本流程重挖。腐爛 selector 在這一步被擋下，不會傳染全隊。
   4. 回寫（不在此 inline POST，遵守 fail-safe / 不真送）：把每筆 verified/stale + last_verified
      寫成 jsonl，交給 Stop hook 的 send_locator_registry.py 之後背景 POST 回後端。
-     **emit 預設就開**（DEFAULT_EMIT_PATH，與 Stop hook 的 --infile 對齊）；不必記得帶 --emit，
-     回寫才不會因「忘了帶旗標」而靜默斷掉。要停用回寫才明確傳 `--emit ''`。
+     **emit 預設就開**（寫到 DEFAULT_EMIT_DIR 下的 per-process 檔，與 Stop hook 的 --indir 對齊）；
+     不必記得帶 --emit，回寫才不會因「忘了帶旗標」而靜默斷掉。要停用回寫才明確傳 `--emit ''`。
+     per-process 檔名讓批次並行/多 session 各寫各的，不互相覆寫、不被別人的 purge 掃掉。
 
 因為第 3 步 stale 時「回傳裡就沒有可用 selector」，agent 結構上拿不到未驗證的 selector 來用。
 「先驗」因此變成 API 的唯一形狀。
@@ -27,8 +28,9 @@ get_verified_locator —— agent/skill 端取用 locator 的【唯一正規入�
 fetch_localator/verify_locator 為本檔內部依賴（同目錄），agent 不應單獨呼叫它們當「拿了直接用」。
 
 用法（一個 case 起手，建議用 flow 一次批次驗整組相關元素）：
+    # 回寫預設就開（寫到 /tmp/locator_results.d/<pid>-<ts>.jsonl），不必帶 --emit
     python3 get_verified_locator.py --flow things-to-do-search --platform web --env stage \\
-        --registry locator_registry/registry.json --emit /tmp/locator_results.jsonl
+        --registry locator_registry/registry.json
     # 或指定單一 element / component
     python3 get_verified_locator.py --element search-result-active-tab-web-stage \\
         --platform web --env stage --registry locator_registry/registry.json
@@ -57,11 +59,32 @@ from datetime import datetime, timezone
 # 獨立定義,不依賴 verify_locator/playwright import 是否成功 —— prod 紅線不能因缺 playwright 而失效。
 _VALID_ENV_RE = re.compile(r"stage|sit\d*")
 
-# 回寫待送檔的預設路徑。**刻意給預設、不留空**：Stop hook 的 send_locator_registry.py 固定讀
-# 這個路徑再 POST 回後端；若 --emit 省略就不寫檔，整條回寫會被靜默略過（呼叫端「忘了帶旗標」＝
+# 回寫待送檔的預設目錄。**刻意給預設、不留空**：Stop hook 的 send_locator_registry.py 掃這個
+# 目錄再 POST 回後端；若 --emit 省略就不寫檔，整條回寫會被靜默略過（呼叫端「忘了帶旗標」＝
 # 資料永遠上不了後端）。改成預設就寫，把「有沒有回寫」從「呼叫端記不記得」變成預設行為。
-# 與 ~/.claude/settings.json Stop hook 的 --infile 對齊。
-DEFAULT_EMIT_PATH = "/tmp/locator_results.jsonl"
+#
+# 為什麼是「目錄 + per-process 檔」而非單一固定檔：批次並行時多個 automator（甚至多個 session）
+# 會同時 emit，若都寫同一個檔，sender 的 read→POST→purge 之間有人插入寫入就會被 purge 掉未送出
+# （靜默丟失）。改成每個 process 各寫 `<pid>-<utc_ts>.jsonl`，彼此天然隔離；sender 逐檔讀完才刪
+# 自己那份，不碰別人正在寫的。與 ~/.claude/settings.json Stop hook 的 --indir 對齊。
+DEFAULT_EMIT_DIR = "/tmp/locator_results.d"
+
+
+def _default_emit_path() -> str:
+    """每個 process 一個唯一檔名，避免並行互相覆寫/被 purge。"""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
+    return os.path.join(DEFAULT_EMIT_DIR, f"{os.getpid()}-{ts}.jsonl")
+
+
+def _resolve_emit(emit_arg) -> str:
+    """把 --emit 參數解成實際路徑：
+    - None（未帶旗標）→ 預設 per-process 檔（回寫預設就開）
+    - ""（--emit ''）  → 停用回寫
+    - 其他             → 使用者指定的明確路徑
+    """
+    if emit_arg is None:
+        return _default_emit_path()
+    return emit_arg
 
 
 def _is_prod_url(url: str) -> bool:
@@ -150,9 +173,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--env", default="stage", help="環境：stage / sit0x / sit20x（現階段禁 prod）")
     p.add_argument("--registry", default="", help="本地 registry.json（backend 拿不到時的 fallback 來源）")
     p.add_argument("--url", default="", help="覆寫驗證 URL（預設用 entry 的 verify_url）")
-    p.add_argument("--emit", default=DEFAULT_EMIT_PATH,
+    p.add_argument("--emit", default=None,
                    help="把驗證結果寫成 jsonl，供 Stop hook sender 之後 POST 回寫。"
-                        f"預設 {DEFAULT_EMIT_PATH}；傳空字串（--emit ''）可停用回寫。")
+                        f"預設寫到 {DEFAULT_EMIT_DIR}/<pid>-<ts>.jsonl（per-process，並行安全）；"
+                        "傳空字串（--emit ''）可停用回寫。")
     return p
 
 
@@ -230,9 +254,11 @@ def main() -> int:
     must_remine = [(r.get("id") or r.get("component") or r.get("element"))
                    for r in results if r["status"] == "stale"]
 
-    if args.emit and emit_rows:
+    emit_path = _resolve_emit(args.emit)
+    if emit_path and emit_rows:
         try:
-            with open(args.emit, "a", encoding="utf-8") as f:
+            os.makedirs(os.path.dirname(emit_path) or ".", exist_ok=True)
+            with open(emit_path, "a", encoding="utf-8") as f:
                 for row in emit_rows:
                     f.write(json.dumps(row, ensure_ascii=False) + "\n")
         except Exception:
