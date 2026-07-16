@@ -41,7 +41,9 @@ Exit code：
     python3 check_fidelity_gate.py --claimed claimed.jsonl --fidelity fidelity_results.jsonl
 """
 import argparse
+import glob
 import json
+import os
 import sys
 
 # 明確的「不過」recommend 值（僅供訊息分類；判定邏輯只認 == "pass"）
@@ -57,19 +59,30 @@ def _norm(v) -> str:
 
 def _load_fidelity(path: str):
     """
-    讀 fidelity 結果 jsonl。回傳 (rows, hard_error)。
-    hard_error=True 代表檔案缺失/讀不到/完全無有效筆數等「守門該擋」的情況。
+    讀 fidelity 結果。`path` 可為單一 jsonl（相容舊用法）或**目錄**（新：per case×平台
+    一檔，reviewer 各自覆寫）。目錄模式讀其中所有 *.jsonl 合併。回傳 (rows, hard_error)。
+    hard_error=True 代表缺失/讀不到/完全無有效筆數等「守門該擋」的情況。
     壞掉的單行會被跳過（不能拿來當通過依據），但不因此直接 hard_error。
     """
     rows = []
+    raw_lines = []
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            raw_lines = [ln.strip() for ln in f if ln.strip()]
+        if os.path.isdir(path):
+            files = sorted(glob.glob(os.path.join(path, "*.jsonl")))
+            if not files:
+                print(f"[gate] fidelity 結果目錄是空的（無 *.jsonl）：{path}", file=sys.stderr)
+                return rows, True
+            for fp in files:
+                with open(fp, "r", encoding="utf-8") as f:
+                    raw_lines.extend(ln.strip() for ln in f if ln.strip())
+        else:
+            with open(path, "r", encoding="utf-8") as f:
+                raw_lines = [ln.strip() for ln in f if ln.strip()]
     except FileNotFoundError:
-        print(f"[gate] 找不到 fidelity 結果檔：{path}", file=sys.stderr)
+        print(f"[gate] 找不到 fidelity 結果檔/目錄：{path}", file=sys.stderr)
         return rows, True
     except Exception as e:
-        print(f"[gate] 讀取 fidelity 結果檔失敗：{path}（{e}）", file=sys.stderr)
+        print(f"[gate] 讀取 fidelity 結果失敗：{path}（{e}）", file=sys.stderr)
         return rows, True
 
     for ln in raw_lines:
@@ -192,7 +205,12 @@ def main() -> int:
     )
     p.add_argument("--claimed", help="聲稱跑過的 case×平台 jsonl（每行含 case_id，platform 選填）")
     p.add_argument("--caseids", help='聲稱跑過的清單，逗號分隔，每項 "CASE" 或 "CASE:PLATFORM"')
-    p.add_argument("--fidelity", required=True, help="fidelity 結果 jsonl 路徑（reviewer 產出）")
+    p.add_argument("--fidelity", required=True,
+                   help="fidelity 結果來源：單一 jsonl 檔，或目錄（讀其中所有 *.jsonl，"
+                        "reviewer per case×平台 各寫一檔）")
+    p.add_argument("--cleanup-on-pass", action="store_true",
+                   help="通過時，只刪掉**本次 claimed 的 case×平台**對應的結果檔（目錄模式），"
+                        "不動別的 session 的檔——避免 rm -rf 整個目錄誤刪同機他人正在驗的結果。")
     args = p.parse_args()
 
     if not args.claimed and not args.caseids:
@@ -238,7 +256,30 @@ def main() -> int:
         return 1
 
     print("[gate] 全部聲稱跑過的 case×平台都有對應 review 且判定 pass → 通過（PASS）")
+    if args.cleanup_on_pass:
+        _cleanup_passed(args.fidelity, claims)
     return 0
+
+
+def _cleanup_passed(fidelity_path: str, claims) -> None:
+    """通過後只刪本次 claimed 的結果檔（目錄模式）。檔名對齊 reviewer 寫的
+    `<case_id>__<platform>.jsonl`；claim 未指定平台時刪該 case 的所有平台檔。
+    不 rm 整個目錄，避免誤刪同機其他 session 的結果。fail-safe。"""
+    if not os.path.isdir(fidelity_path):
+        return
+    for cid, plat in claims:
+        try:
+            if plat:
+                targets = [os.path.join(fidelity_path, f"{cid}__{plat}.jsonl")]
+            else:
+                targets = glob.glob(os.path.join(fidelity_path, f"{cid}__*.jsonl"))
+            for fp in targets:
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

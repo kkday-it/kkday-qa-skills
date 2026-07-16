@@ -20,6 +20,7 @@ POST 到 ai_studio 的 /api/qa-automation/case-fidelity。設計原則：
     fidelity, confidence, fix_rounds, recommend, blocked_reason
 """
 import argparse
+import glob
 import json
 import os
 import socket
@@ -87,17 +88,13 @@ def _normalize(row: dict) -> dict:
     return out
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description="Send case-fidelity telemetry (fail-safe)")
-    p.add_argument("--infile", required=True, help="fidelity 結果 jsonl 路徑")
-    p.add_argument("--purge", action="store_true", help="全部送完後刪除結果檔")
-    args = p.parse_args()
-
+def _process_file(path: str, purge: bool) -> tuple:
+    """送一個 fidelity 結果檔的每一筆；purge 才刪。回 (sent, failed)。fail-safe。"""
     sent = failed = 0
     try:
-        if not os.path.isfile(args.infile):
-            return 0  # 沒有結果檔就靜默結束
-        with open(args.infile, "r", encoding="utf-8") as f:
+        if not os.path.isfile(path):
+            return 0, 0
+        with open(path, "r", encoding="utf-8") as f:
             lines = [ln.strip() for ln in f if ln.strip()]
         for ln in lines:
             try:
@@ -110,17 +107,51 @@ def main() -> int:
                 sent += 1
             else:
                 failed += 1  # 5 次都失敗，放棄這筆
-        if args.purge:
+        if purge:
             try:
-                os.remove(args.infile)
+                os.remove(path)
             except Exception:
                 pass
     except Exception:
         pass  # 絕對 fail-safe：不干擾主流程
+    return sent, failed
+
+
+def _collect_targets(indir: str, infile: str) -> list:
+    """待處理檔清單：--indir 的所有 *.jsonl（排序）+ --infile（去重）。"""
+    targets = []
+    if indir:
+        try:
+            targets.extend(sorted(glob.glob(os.path.join(indir, "*.jsonl"))))
+        except Exception:
+            pass
+    if infile and infile not in targets:
+        targets.append(infile)
+    return targets
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Send case-fidelity telemetry (fail-safe)")
+    p.add_argument("--infile", default="", help="單一 fidelity 結果 jsonl 路徑")
+    p.add_argument("--indir", default="",
+                   help="結果目錄；掃其中所有 *.jsonl 逐檔送（per case×平台 一檔）。")
+    p.add_argument("--purge", action="store_true",
+                   help="每個檔送完後刪除。⚠️ 若該結果同時是忠實度 gate 的輸入（Stop hook 情境），"
+                        "**不要 purge**——生命週期交給 gate：pass 才刪，否則會在 gate 擋下時把它的"
+                        "輸入刪掉、下輪變成『找不到結果檔』。")
+    args = p.parse_args()
+
+    targets = _collect_targets(args.indir, args.infile)
+    sent = failed = 0
+    for path in targets:
+        s, fl = _process_file(path, args.purge)
+        sent += s
+        failed += fl
 
     # 只在手動執行（tty）時印摘要，hook 背景執行不印
     if sys.stdout.isatty():
-        print(f"[case-fidelity] sent={sent} failed(gave up after {MAX_RETRIES})={failed}")
+        print(f"[case-fidelity] files={len(targets)} sent={sent} "
+              f"failed(gave up after {MAX_RETRIES})={failed}")
     return 0
 
 
