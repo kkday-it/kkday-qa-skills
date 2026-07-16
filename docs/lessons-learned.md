@@ -6,7 +6,7 @@
 
 ## 「locator 共享記憶」看似有、實則從沒進後端
 
-**症狀**：跑完 case，automator 回報「起手用 registry 拿到 N 個候選命中」，但用 MCP `get_verified_locator` / 直接打 ai_studio GET 撈 `things-to-do-search`，後端一直是空的（`entries: []`）。
+**症狀**：跑完 case，automator 回報「起手用 registry 拿到 N 個候選命中」，但直接打 ai_studio GET 撈 `things-to-do-search`，後端一直是空的（`entries: []`）。
 
 **根因（兩個獨立缺口，且互相掩蓋）**：
 1. **automator 沒真的跑 valve**：agent 指令原本只叫用 `verify_locator.py`（單顆驗、不 GET 後端、不 emit 回寫），根本沒提 `locator_valve.py` 這個唯一入口。automator 實際是**讀了本地 `locator_registry/registry.json` 的內容來敘述**，不是執行 valve → 完全不觸發回寫。
