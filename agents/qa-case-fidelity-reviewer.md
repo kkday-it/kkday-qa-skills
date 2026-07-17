@@ -18,7 +18,7 @@ tools:
   - Bash
   - Glob
   - Grep
-model: opus
+model: sonnet
 ---
 
 # QA Case Fidelity Reviewer — 單案忠實度對抗式 reviewer

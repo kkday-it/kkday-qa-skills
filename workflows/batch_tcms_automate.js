@@ -184,7 +184,7 @@ async function verify(caseId, impl, reruns) {
       label: `verify:${caseId}`,
       phase: 'Gate+Review',
       agentType: 'qa-case-fidelity-reviewer', // 真對抗式 reviewer，不再用匿名 inline agent
-      model: 'sonnet', // 與 automator（opus）錯開，破共享盲點
+      model: 'sonnet', // reviewer 一律 sonnet，與 automator（opus）錯開破盲點；也是其 frontmatter 預設，這裡明寫防被改回
       schema: VERDICT_SCHEMA,
     }
   )
