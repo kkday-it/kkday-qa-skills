@@ -49,6 +49,13 @@ model: opus
 
 先確認本機有 `kkday-QA-automation`（`QATest/src/qatest/__init__.py` 或 `pages/`+`test_steps/`+`case_data/` 同時存在）。找不到 → 回報主對話請先 clone，不要無腦 `git clone`。
 
+### 0. 🔴 有計畫就用計畫當地基，別重跑 planner 的研究（削重工）
+
+主對話帶了**已確認計畫**（planner 已研究過 repo：可沿用哪些 flow/helper、關鍵斷言、priority、需新建哪些）→ **直接當地基**：
+- **不重跑整 repo discovery**（全域 grep 找登入/建單/前置）——planner 做過了，重跑純浪費。
+- 只做**針對性驗證**：計畫點名的 function 簽名/位置還在、要動的 locator 對真實 DOM 解析得到。
+- 標 `← 需新建` 的才挖新實作（§2.5），標既有的直接用。無計畫時才自己做完整研究。
+
 ### 1. 取 steps（每次實作前重新 fetch，不沿用舊檔）
 ```bash
 # --out 用 per-case 路徑（含 case id）：批次並行時各 case 各寫各的，不會互相覆寫。
@@ -123,7 +130,17 @@ def _kkday_www_host(env: str) -> str:
 - Web/MWeb：`export HEADLESS=1 && source <venv> && python -m qatest run --caseid <ID> --platform web --use_driver playwright`
 - App：`python -m qatest run --caseid <ID> --platform android`（或 `ios`）
 
-失敗 → 走 qa-test-runner 診斷/修復（locator 類自動修並重跑；業務流程類記錄後回報）。
+失敗 → **先分「是不是環境/基礎設施掛了」，再決定要不要修**（順序不可顛倒）：
+
+**🔴 4.1 環境/基礎設施錯誤 → 秒級 fast-fail、零重試（這次主凶）**
+
+「測試失敗」≠「case 錯」。失敗若是**環境掛了、非測試/產品邏輯錯** → **立刻停、標 `blocked-environment`＋證據、不重試、不算進『3 次』**，回報後跳過。
+- 判準（命中任一）：後端 5xx / `Internal Server Error` / 502·503·504、登入·OTP·secret 服務回錯（非帳密錯）、連線被拒 / DNS·TLS 失敗 / 逾時 / 頁面開不起來、環境未開·部署中·憑證過期。
+- 🔴 **禁 retry / 加等待硬撐**——重試蓋不過沒發生的成功，只白耗時（呼應「先查根因別急著 retry」）。看到就停、貼證據。
+- `blocked-environment`（環境暫掛、重跑會過）≠ `blocked`（缺實體機/前置、case 推不動）；兩者都不 arm 交付憑據。
+- ⚠️ 別把「帳密真錯 / 參數真缺 / 產品真 regression」誤判成環境問題（那是真失敗，照下走）。判準：錯在**被測系統邏輯**還是**跑測試的環境**。
+
+**4.2 確定不是環境問題 →** 走 qa-test-runner 診斷/修復（locator 類自動修並重跑；業務流程類記錄後回報）。
 **同一 case 連續 3 次修不好 → 停下、記錄、回報**，不要無限迴圈。
 
 ### 5. Fix 模式：修復現有 auto case（最小差異，不重寫）
@@ -144,7 +161,7 @@ def _kkday_www_host(env: str) -> str:
 ## 輸出規範
 
 回傳給主對話（供其彙整；主對話收齊整批後，須**主動詢問使用者是否開 PR**，得到同意才動 git 開一個 PR）：
-- 本 case 結果：KQT-T ID → `pass` / `fail` / `skipped`（附原因）
+- 本 case 結果：KQT-T ID → `pass` / `fail` / `skipped` / `blocked` / `blocked-environment`（附原因；`blocked-environment` 見 §4.1＝環境掛了、非 case 錯，環境好了重跑就會過）
 - 改動檔案清單（page object / test step / case data 的相對路徑）
 - locator 驗證與測試的關鍵事實（平台、是否 pass、卡在哪）
 - **locator 回寫憑據（證明你真的驗/收成、沒有用讀檔敘述冒充）**，依平台附：

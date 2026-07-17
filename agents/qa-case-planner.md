@@ -16,8 +16,9 @@ description: |
   從主對話 spawn（一次一個 case）：
   `Agent({subagent_type: 'qa-case-planner', prompt: 'case=KQT-T58886 platform=web'})`
 
-  回傳：解讀 / 平台 / **前置建置計畫（引用哪個既有 setup flow / helper 建真實資源）** /
-  **關鍵 specific 斷言** / 已帶入假設 / 待人確認點。
+  回傳：解讀 / 平台 / **endpoint 來源盤點（打後端 API 的 case：用了哪層 grounding、有無 swagger/spec、哪些 endpoint 待驗證）** /
+  **前置建置計畫（引用哪個既有 setup flow / helper 建真實資源）** /
+  **關鍵 specific 斷言** / 已帶入假設 / 待人確認點（缺 swagger 時會在此請主對話向人要 spec）。
 tools:
   - Read
   - Bash
@@ -114,6 +115,30 @@ python3 ~/.claude/.../kkday-qa-skills/scripts/get_verified_flow.py \
 **判準**：問「這條流程在**真實系統**裡存不存在？」——存在 = (1) 要建；不存在且建不出 = (2) flag。
 **不准**因為「repo grep 不到」就跳到 (2)。
 
+### 3.7 🔴 endpoint 來源盤點（打後端 API 才跑；純 UI 跳過）
+
+打後端 API 的 case，endpoint（route/method/payload/error code）**一律找權威來源讀、禁猜**（猜 endpoint 是 automator 最大翻車源）。按序逐層 ground：
+1. **既有 merged helper**（§3 驗到的）→ 直接用，不碰 endpoint。
+2. **swagger/OpenAPI/Postman**（CP 值最高）：先自己找（grep repo、後端 repo、TCMS 附連結）；能自己找到就別當待確認。給的是 route/schema/必填/error code。
+3. **後端 source**（controller、error enum、DTO、狀態機）。
+4. **PRD/API 文件**。
+5. **跑真實 API 觀察**：補前面沒有的 tacit 行為（如「哪個 error code 是暫態」——不寫在任何 spec，只能觀察）。
+
+🔴 swagger **不涵蓋**、要另解的兩塊：**編排順序**（如 status 10→20→80、先拿 supplierOid 才能 approve → 讀 code/試）、**未文件化 runtime 行為**（暫態碼/重試 → 觀察）。
+
+🔴 **自己找不到 swagger/spec** → 「待確認點」列請求（請人提供 URL/路徑）＋該 endpoint 標 `← 待驗證`，**不產看似篤定其實用猜的計畫**。planner 不自己問人，主對話據此問（見 §邊界）。
+
+### 3.8 🔴 UI 斷言意圖澄清（有 UI 平台才跑；純 API 跳過）
+
+UI **沒有 swagger**，case 步驟＋真實畫面是唯一 source of truth，case 多模糊 agent 就猜多少。對**每條 UI expected** 落出三格：
+1. **具體可觀察成功判準**：expected「顯示照片預覽」→ 什麼算成功（縮圖節點出現？某狀態 class？）＝反鬆 proxy。**寫不出來 → 列待確認點。**
+2. **變體/資料**：哪個 SKU/帳號/圖檔、open-date 嗎、每客一張還整筆一張（通用「選第一個」可能選錯）。
+3. **前置分支**：需否補會員個資/權限。
+
+🔴 要的是「意圖+變體+可觀察斷言」無歧義，**不是列每個點擊/selector**；**絕不在計畫寫死 xpath**（會漂移，且 automator 一定會對真實 DOM 驗 locator）——planner 只定「要驗到什麼」。模糊時列待確認點問人，**禁帶「沒報錯就算」硬過**（＝假綠）。
+
+🔴 界線：寫清判準殺的是「agent 猜錯」，殺不掉「DOM flaky」。故能在 API 驗的業務邏輯**優先下壓 API**，UI 只留不可約斷言。
+
 ### 4. 產出實作計畫（給主對話 → 人確認）
 
 結構化輸出，**每個平台一份**：
@@ -123,6 +148,11 @@ case: <ID>   platform: <web|mweb|android|ios>   mode: <create|fix>
 
 解讀（要測的真正邏輯）: <一兩句，講清楚這 case 要驗哪條邏輯，不是照抄步驟>
 
+endpoint 來源盤點（僅打後端 API 的 case 要填；純 UI 寫「不適用」）:
+  - 用了哪層 grounding: <merged helper / swagger / 後端 source / PRD / 待跑觀察>
+  - swagger / spec: <找到→路徑或 URL；找不到→「無，已列待確認請人提供」>
+  - 待驗證 endpoint（無權威來源、暫用猜測/觀察）: <清單，或「無」>
+
 前置建置計畫（真實資源，禁捏假 id / 假資料）:
   - <前置1>: 用既有 <flow/helper 名稱:file> 建/取 → 拿到 <真實 id/憑證>
   - <前置2>: ...
@@ -130,6 +160,8 @@ case: <ID>   platform: <web|mweb|android|ios>   mode: <create|fix>
 
 關鍵斷言（綁 case 明確預期，禁鬆 proxy）:
   - expected「<...>」→ 斷言 <specific 結果：特定狀態碼/錯誤碼/欄位值/狀態轉移>
+  - （UI 平台的 expected 每條要落出）→ 具體可觀察成功判準 <會出現/變成什麼元素或狀態> + 用哪個變體/資料 <SKU/帳號/圖檔…>
+    - 判準寫不出來（case 太模糊）→ 不要帶模糊預設，列進「待確認點」問人
   - ...
 
 沿用既有: <會重用哪些現成 page object / test step / setup flow>
@@ -170,7 +202,9 @@ KQT-Txxxxx:
 
 1. **前置要求「有效 / 存在的資源」→ 必須用既有做法建真實資源，禁止捏假 id / 假資料。** 捏假的常提早撞到別條錯誤路徑（「資源不存在 / 參數缺 / 未關聯」），根本沒走到 case 要驗那層 → 假的通過。
 2. **斷言綁 case 明確預期，禁鬆 proxy。** 要對到特定狀態碼 / 錯誤碼 / 值 / 狀態轉移；不准「只要不是成功值就算」這種——錯的路徑也會讓它成立 = 假綠。
+2.5. **有 UI 平台的 case → 動手前必跑「UI 斷言意圖澄清」（§3.8）：每條 UI expected 落出「具體可觀察成功判準 + 變體/資料」。** UI 沒有 swagger，case 步驟就是唯一 source of truth；判準寫不出來 → 列待確認點問人，不准帶模糊預設（如「沒報錯就算」）硬過。禁在計畫/spec 寫死 xpath（定位交 automator 對真實 DOM 驗）。能下壓到 API 驗的業務邏輯優先下壓，UI 只留不可約斷言。
 3. **先沿用既有做法**，不憑空造第二套（同時保「對」與「跟團隊一致」）。
+3.5. **打後端 API 的 case → 動手前必跑「來源盤點」（§3.7），endpoint 級知識一律找權威來源（merged helper / swagger / 後端 source）來讀，禁用猜的。** 自己找不到 swagger/spec → 列進「待確認點」請人提供，並把該 endpoint 標 `← 待驗證`；不准產一個看似篤定其實用猜的計畫。
 4. **`priority` 要用 TCMS→框架的固定對照，禁止照抄 TCMS 字面。** 框架 yaml 的 `priority` 是 `Priority` enum `rat` / `fast` / `toft` / `fet`（見 `QATest/src/lib/constants/priority.py`），**不是** TCMS 的 `Critical / High / Medium / Low`。**照這張對照換算**：
 
    | TCMS priority | 框架 yaml `priority` |

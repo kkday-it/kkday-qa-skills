@@ -78,6 +78,12 @@ const PLAN_SCHEMA = {
     platform: { type: 'string' },
     plan: { type: 'string' },
     priority: { type: 'string' }, // Critical | High | Medium | Low（TCMS 原始優先級，供 Evaluate 判高風險）
+    hits_backend_api: { type: 'boolean' }, // 這條 case 是否打後端 API（true 才需 endpoint 來源盤點）
+    spec_source: { type: 'string' }, // 找到的 swagger/OpenAPI/Postman/後端 source 位置；找不到填 "none"
+    needs_spec: { type: 'boolean' }, // true = 打後端但找不到 swagger/spec，主對話須在 spawn automator 前問使用者要
+    unverified_endpoints: { type: 'array', items: { type: 'string' } }, // 無權威來源、暫用猜測/觀察的 endpoint 清單
+    has_ui: { type: 'boolean' }, // 這條 case 是否有 UI 平台要驗 expected（true 才需 UI 斷言意圖澄清）
+    ambiguous_ui_assertions: { type: 'array', items: { type: 'string' } }, // 落不出「具體可觀察判準/變體」的 UI expected 清單，主對話須問使用者澄清
   },
   required: ['caseid', 'plan'],
 }
@@ -86,8 +92,10 @@ function planPrompt(caseId) {
 依你的職責產出實作前計畫（唯讀、不寫 code）：
 1. 抓 TCMS spec（tcms-fetch-cases）→ 讀懂要測的真正邏輯。
 2. 起手先查 flow-registry：\`python3 ${SKILLS}/scripts/get_verified_flow.py --q "<前置語意>" --platform <平台> --repo-path ${REPO} --registry ${SKILLS}/flow_registry/registry.json\`（用前先驗；只信 verified）。沒命中才 grep repo，挖到新可重用 flow **當下**用 \`${SKILLS}/scripts/send_flow_registry.py\` 寫回。
-3. 出計畫：解讀 / 平台 / 前置用哪個既有 flow 建真實資源（禁捏假 id）/ 關鍵 specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority（TCMS→框架：Critical→RAT/High→FAST/Medium→TOFT/Low→FET）/ 假設 / 待確認點。
-回傳結構化：caseid、platform、plan（完整計畫文字，供人確認）、priority（TCMS 原始優先級 Critical/High/Medium/Low；高風險 case 交付後會多跑一道獨立 evaluator）。`
+3. 🔴 若這條 case 打後端 API（API case 或前端直打後端）→ 先做「endpoint 來源盤點」：按 merged helper → swagger/OpenAPI/Postman → 後端 source → PRD 順序找權威來源來 ground，endpoint 級知識**禁用猜的**。先自己找 swagger/spec（grep repo、後端 repo、TCMS 附連結）；找不到就把該 endpoint 標「待驗證」並列進待確認點請人提供。純 UI-locator case 跳過此步。
+4. 🔴 若這條 case 有 UI 平台要驗 expected → 做「UI 斷言意圖澄清」：UI 沒有 swagger，case 步驟是唯一 source of truth。對每條 UI expected 落出「具體可觀察成功判準（會出現/變成什麼元素或狀態）+ 用哪個變體/資料（SKU/帳號/圖檔）」；落不出來（case 太模糊）→ 標待確認點問人，**禁帶模糊預設（如「沒報錯就算」）硬過**。**禁在計畫寫死 xpath**（定位交 automator 對真實 DOM 驗）。能下壓到 API 驗的業務邏輯優先下壓，UI 只留不可約斷言。
+5. 出計畫：解讀 / 平台 / endpoint 來源盤點（打後端才填）/ UI 斷言意圖澄清（有 UI 才填）/ 前置用哪個既有 flow 建真實資源（禁捏假 id）/ 關鍵 specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority（TCMS→框架：Critical→RAT/High→FAST/Medium→TOFT/Low→FET）/ 假設 / 待確認點。
+回傳結構化：caseid、platform、plan（完整計畫文字，供人確認）、priority（TCMS 原始優先級 Critical/High/Medium/Low；高風險 case 交付後會多跑一道獨立 evaluator）、hits_backend_api、spec_source（找到的 swagger/spec/後端 source 位置，無則 "none"）、needs_spec（打後端但找不到 swagger/spec = true）、unverified_endpoints（無權威來源暫用猜測的 endpoint）、has_ui（是否有 UI 平台要驗）、ambiguous_ui_assertions（落不出具體判準/變體的 UI expected 清單，主對話會據此問使用者澄清）。`
 }
 
 const IMPL_SCHEMA = {
@@ -134,7 +142,7 @@ function implPrompt(caseId, fixNote, plan, reruns) {
       ? `\n**flaky 防護（本 case 高風險）**：每個平台不是跑一次就好——用 qa-test-runner 對每平台**連續跑 ${reruns} 次**，必須 ${reruns} 次全 pass 才算該平台交付。任一次 fail 即視為不穩定，須先查穩定性（環境/等待/選擇器）再交付，不可「跑到一次綠」就收。\n`
       : ''
   return `你是 qa-case-automator，**並行模式**。case=${caseId}。${flakyNote}
-${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 flow 建真實資源、關鍵 specific 斷言、沿用哪些現成、priority 都在裡面；別自己另生一套）：\n${planStr}\n` : ''}${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
+${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 flow 建真實資源、關鍵 specific 斷言、沿用哪些現成、priority 都在裡面；別自己另生一套）。🔴 **削重工（照 §0）：計畫是 planner 研究過 repo 的成果，直接當地基——別再把整個 repo 的 discovery 從頭 grep 一遍；只針對性驗證「計畫點名的 function 簽名/位置還在、要動的 locator 真實解析得到」，標 \`← 需新建\` 的才去挖新實作。**：\n${planStr}\n` : ''}${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
 並行模式規則（照 qa-case-automator.md §3.5）：
 - 驗元素用**各自 launch 的 headless Python playwright**（scripts/verify_locator.py），不用 MCP（避免彈窗/搶共用瀏覽器）。
 - 在你所在的 git worktree 內寫檔，不自己做 git 操作。
@@ -145,7 +153,9 @@ ${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 
 - android ↔ ios 共用一份（mobile/）：用 \`if platform==Android / iOS\` 分支處理差異，一樣不加 limit；需實體機，沒設備該平台標 blocked+原因，共用的其餘平台照做。
 每個平台逐一跑過（qa-test-runner，HEADLESS=1）。
 
-回傳結構化：caseid、tags_platforms（該 case tag 標的平台）、per_platform（每平台 platform+status(pass/fail/blocked)+files）、traceability（step→assertion 可追溯表）。`
+🔴 失敗先分類（照 §4.1，順序不可顛倒）：失敗訊號若是**環境/基礎設施掛了**（後端 5xx/Internal Server Error、登入/OTP/secret 服務回錯、連線被拒/逾時/頁面開不起來、環境未開）→ **秒級 fast-fail、標 status=blocked-environment＋證據、零重試、不算進「連續 3 次」**，跳過續跑。**禁對環境錯誤 retry/加等待硬撐**（重試蓋不過沒發生的成功，只白耗時）。確定不是環境問題才走診斷/修復，同 case 連 3 次修不好就停下回報。
+
+回傳結構化：caseid、tags_platforms（該 case tag 標的平台）、per_platform（每平台 platform+status(pass/fail/blocked/blocked-environment)+files）、traceability（step→assertion 可追溯表）。`
 }
 
 // 獨立驗證：確定性 gate（矇混不過）+ per-platform 忠實度 review。不信 automator 自評。
