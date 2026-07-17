@@ -64,3 +64,18 @@
 **對策（已落地）**：hook 定義抽成 `scripts/sync_hooks.py`（單一來源 + 冪等 + 自動 migrate 屬本 repo 的舊 hook）；`install.sh` 呼叫它；`session_autopull.sh` 在 pull 有更新時自動重跑它 → 隊友下次 pull 自動 migrate。
 
 **通則**：凡是「安裝時把路徑寫進使用者設定」的機制，改定義後要有**再同步**的路徑，否則等於只對「新安裝的人」生效。
+
+---
+
+## 「元件層 done」≠「流程層 done」——armed 但沒接線，會被下一輪 review 當新問題重複挖出
+
+**症狀**：同一批工作，每重跑一次 review 就冒出「新」缺口（「偵測器沒觸發」「記錄靠主對話記得寫」「gate 沒接進 Stop hook」）。使用者觀感是「怎麼補不完」。
+
+**根因**：把「done」定義在**元件層**——compile 過、unit test 綠，就宣告某缺口「補好了」，但把**接線**（trigger、gate、排程、寫回真理來源）延到之後。那個沒接的第二半，下一輪切到 reviewer 視角時就被當成新發現。它不是新問題，是**同一個問題只做了一半**。這正是本 repo 一直在防的 builder/reviewer 盲點：builder 模式只想「讓它動」，reviewer 模式才看到整合缺口——同一顆腦袋先後扮兩角，必然來回。
+
+**對策（通則，寫成 done 的定義）**：一個缺口只有在**端到端會自己轉、且不靠任何人記得**時才算 done：
+1. **產出與「對產出動作」不可分兩步靠記憶接**——把第二半折進**已經被強制執行**的點（例：交付 ledger 折進 fidelity Stop-hook gate 的 pass 路徑 → 沒過 gate 就沒 ledger、過了就一定有，見 `check_fidelity_gate.py --delivery-ledger`）。
+2. **偵測器必須有觸發它的排程**（例：`detect_test_rot` 配 `detect_test_rot.Jenkinsfile` cron），否則是「裝了煙霧偵測器沒接電」。
+3. **剩下真的做不到的**（後端沒部署、本質非 code 能解）→ **當下就標成 known limitation 收進 PR/本檔**，不留給下一輪當「新發現」。
+
+**通則**：**review 是無界的，critic 永遠找得到東西**；要停的不是 review，是把「done」的線畫在「接好線、自己會轉」而非「元件會動」——並在收工時明確列出 known limitations，把「還沒做」與「決定不做」分開。

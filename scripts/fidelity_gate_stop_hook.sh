@@ -21,6 +21,9 @@ CLAIMED="${CASE_FIDELITY_CLAIMED:-/tmp/case_fidelity_claimed.jsonl}"
 # 否則 gate 擋下時被 sender 刪掉輸入 → 下輪變「找不到結果」的假性卡死。相容舊單一檔路徑。
 FID="${CASE_FIDELITY_RESULTS:-/tmp/case_fidelity_results.d}"
 GATE="${CLAUDE_PROJECT_DIR:-.}/scripts/check_fidelity_gate.py"
+# #5 根治：過 gate 時把交付記錄寫進 ledger（交付＝過 gate 的副產品，不靠主對話記得跑
+# send_case_delivery）。供 detect_test_rot / link_escaped_defect 回查「後來壞了 / 綠了卻出事」。
+DELIVERY_LEDGER="${CASE_DELIVERY_LEDGER:-$HOME/.claude/harness/case_delivery.jsonl}"
 
 # 這輪不是 TCMS 批次（沒有 claimed 檔）→ 放行。這不是繞過：本來就沒有批次要擋。
 [ -f "$CLAIMED" ] || exit 0
@@ -34,7 +37,7 @@ fi
 
 # --cleanup-on-pass：通過時由 gate 只刪「本次 claimed 的 case×平台」結果檔（目錄模式），
 # 不 rm 整個目錄，避免誤刪同機其他 session 正在驗的結果。
-OUT="$(python3 "$GATE" --claimed "$CLAIMED" --fidelity "$FID" --cleanup-on-pass 2>&1)"; RC=$?
+OUT="$(python3 "$GATE" --claimed "$CLAIMED" --fidelity "$FID" --cleanup-on-pass --delivery-ledger "$DELIVERY_LEDGER" 2>&1)"; RC=$?
 
 if [ "$RC" -eq 0 ]; then
   # 本輪已驗畢：清掉 claimed（結果檔已由 gate --cleanup-on-pass 逐筆刪）

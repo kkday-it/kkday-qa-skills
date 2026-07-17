@@ -45,6 +45,7 @@ import glob
 import json
 import os
 import sys
+import time
 
 # 明確的「不過」recommend 值（僅供訊息分類；判定邏輯只認 == "pass"）
 NON_PASS_RECOMMEND = ("needs-fix", "blocked", "flag-for-human")
@@ -211,6 +212,10 @@ def main() -> int:
     p.add_argument("--cleanup-on-pass", action="store_true",
                    help="通過時，只刪掉**本次 claimed 的 case×平台**對應的結果檔（目錄模式），"
                         "不動別的 session 的檔——避免 rm -rf 整個目錄誤刪同機他人正在驗的結果。")
+    p.add_argument("--delivery-ledger", default="",
+                   help="#5 根治：通過時把交付記錄寫進此 ledger（預設不寫）。"
+                        "由 Stop hook 帶入 → 交付 ledger 變成『過 gate』的副產品，"
+                        "不再靠主對話記得跑 send_case_delivery（沒過 gate 就沒 ledger、過了就一定有）。")
     args = p.parse_args()
 
     if not args.claimed and not args.caseids:
@@ -256,9 +261,68 @@ def main() -> int:
         return 1
 
     print("[gate] 全部聲稱跑過的 case×平台都有對應 review 且判定 pass → 通過（PASS）")
+    # #5 根治：交付 ledger 是「過 gate」的副產品，寫在 cleanup 之前（此刻才確定性地算交付）
+    if args.delivery_ledger:
+        n = _write_delivery_ledger(args.delivery_ledger, passed, fidelity_rows)
+        if n:
+            print(f"[gate] 已寫 {n} 筆交付記錄進 ledger：{args.delivery_ledger}")
     if args.cleanup_on_pass:
         _cleanup_passed(args.fidelity, claims)
     return 0
+
+
+def _write_delivery_ledger(ledger_path: str, passed, fidelity_rows) -> int:
+    """#5：通過的 case 各寫一筆交付記錄（每 case 聚合其通過平台）。fail-safe：任何錯不影響 gate。
+    passed：_evaluate 回的合格項 [(cid, plat_or_None, ok, reason), ...]。
+    平台來源：claim 有指定就用它；未指定則從該 case 的 fidelity 筆數收集。"""
+    try:
+        # 依 case 聚合通過的 claim：明確指定平台的精準記；platform=None（wildcard）代表
+        # 「該 case 全平台」，此時才從 fidelity 列補平台（_evaluate 已確保那些全 pass）。
+        agg = {}  # cid -> {"explicit": set, "wildcard": bool}
+        for cid, plat, _ok, _reason in passed:
+            slot = agg.setdefault(cid, {"explicit": set(), "wildcard": False})
+            if plat:
+                slot["explicit"].add(_norm(plat))
+            else:
+                slot["wildcard"] = True
+        if not agg:
+            return 0
+        by_case = {}
+        for cid, slot in agg.items():
+            cid_n = _norm(cid)
+            plats = set(slot["explicit"])
+            if slot["wildcard"]:
+                for r in fidelity_rows:
+                    if _norm(r.get("case_id")) == cid_n and r.get("platform"):
+                        plats.add(_norm(r.get("platform")))
+            # confidence 只收「有記進交付平台」的那些 fidelity 列（不重複、不含未交付平台）
+            conf = [
+                r.get("confidence") for r in fidelity_rows
+                if _norm(r.get("case_id")) == cid_n and r.get("confidence") is not None
+                and (not r.get("platform") or _norm(r.get("platform")) in plats)
+            ]
+            by_case[cid] = {"platforms": plats, "conf": conf}
+        now = int(time.time())
+        os.makedirs(os.path.dirname(ledger_path) or ".", exist_ok=True)
+        written = 0
+        with open(ledger_path, "a", encoding="utf-8") as f:
+            for cid, slot in by_case.items():
+                rec = {
+                    "caseid": cid,
+                    "platforms": sorted(slot["platforms"]),
+                    "delivered": True,
+                    "ts": now,
+                    "source": "fidelity_gate",  # 註明來源＝過 gate 自動寫，非人工
+                    "repo": "kkday-QA-automation",
+                }
+                if slot["conf"]:
+                    rec["fidelity_confidence"] = slot["conf"]
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                written += 1
+        return written
+    except Exception as e:
+        print(f"[gate] 寫交付 ledger 失敗（不影響 gate 判定）：{e}", file=sys.stderr)
+        return 0
 
 
 def _cleanup_passed(fidelity_path: str, claims) -> None:
