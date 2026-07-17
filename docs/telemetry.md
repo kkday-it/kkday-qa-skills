@@ -111,6 +111,43 @@ emit 檔是 locator gate 的證據，生命週期交給 gate（pass 才清；後
 - 移除上面的 Stop hook 即完全停止 POST 回寫。
 - 不呼叫 `locator_valve.py` 即不觸發 GET；沒有 registry 時流程照跑，只是每次都從零挖、不享共享候選。
 
+---
+
+# 使用量遙測揭露（Tool Usage）
+
+QA 自動化流程會**選配性地**回傳「工具使用量/採用度」遙測到內部 ai_studio 後台，用來看「誰在用、用了什麼、跑到哪、卡在哪」。**此為公開揭露、非隱藏蒐集。**
+
+## 收什麼 / 送什麼（POST）
+
+`scripts/emit_tool_usage.py` 在「工具一叫用當下」寫一筆到 jsonl，`scripts/send_tool_usage.py`（掛 Stop hook）送到 `POST {AI_STUDIO_BASE}/api/qa-automation/tool-usage`，白名單欄位：
+
+- `run_id`、`tool`、`outcome`(invoked/delivered/blocked/abandoned)、`interactive`
+- `case_ids`、`platforms`、`case_count`
+- `stage`（停在哪階段：fetch/plan/confirm/automate/gate/report）、`blocked_reason`（blocked/abandoned 的簡短原因）
+- `note`（自由備註）
+- `operator`（`KKDAY_TOOLS_USER_NAME`，稽核用）、`client_user`（`login@hostname`）
+- ⚠️ **`request_text`（使用者原始輸入，逐字）** —— 見下方例外說明
+
+## ⚠️ PII 例外：`request_text`（逐字原始輸入）
+
+跟 case-fidelity / locator 的「**不收任何 PII**」不同，**本工具的 `request_text` 是一個經揭露、經團隊同意的例外**：它逐字記錄觸發本次的使用者輸入（如「KQT-T38189 實作」），可能夾帶 case ID 以外的關鍵詞、甚至業務資料/個資。存在理由：blocked 的紀錄若只有「有人用過」而不知道**當時打了什麼、要什麼**，就無法診斷使用者遇到什麼問題。
+
+控管：
+
+- **僅 admin-only dashboard 呈現**（權限與 MCP 呼叫分析一致：admin 預設可見），非全員可見。
+- **性質是「使用診斷」不是「品質指標」**；不做他用。
+- **可關閉**：移除 Stop hook 的 `send_tool_usage.py` 即完全停止上送；或在 emit 時不帶 `--request-text`（只送結構化欄位、不送逐字輸入），仍能看 case_ids/stage/reason。
+
+**仍不收**：測試碼內容、access token/credential。`request_text` 以外不逐字側錄對話。
+
+## 怎麼運作
+
+- **POST**：由 **Claude Code Stop hook** 背景執行 `send_tool_usage.py`，讀 `emit_tool_usage.py` 產出的 jsonl 送出。
+- **不接 `kkday-qa-tools` MCP**（獨立腳本），**不出現在對話裡、不觸發權限提示、不干擾操作**。
+- **fail-safe + retry 5 次**：任何錯誤靜默、`exit 0`，絕不影響主流程。
+
+環境變數：`AI_STUDIO_BASE`（與 case-fidelity 同一個）、`KKDAY_TOOLS_USER_NAME`（operator）。
+
 ## 呈現
 
 ai_studio 前端可依 `flow`/`page`/`platform`/`env` 呈現 locator 覆蓋、`stale` 比率與各元素 `last_verified` 新鮮度趨勢，幫團隊看「哪些區域的 locator 常腐爛」。

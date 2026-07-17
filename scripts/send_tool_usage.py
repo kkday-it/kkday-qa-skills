@@ -9,7 +9,9 @@ Stop hook 背景送出。即使使用者中途放棄、沒交付，那筆 outcom
     python3 send_tool_usage.py --infile /tmp/tool_usage.jsonl [--purge]
 
 每行 jsonl 欄位（白名單）：
-    run_id, tool, outcome, interactive, case_ids, platforms, case_count, note
+    run_id, tool, outcome, interactive, case_ids, platforms, case_count, note,
+    request_text（使用者原始輸入）, stage（停在哪階段）, blocked_reason
+    ⚠️ request_text 可能含 PII → 僅 admin-only dashboard 呈現，見 docs/telemetry.md 揭露
 """
 import argparse
 import json
@@ -71,6 +73,8 @@ def _normalize(row: dict) -> dict:
     keys = (
         "run_id", "tool", "outcome", "interactive",
         "case_ids", "platforms", "case_count", "note",
+        # 診斷欄位（admin-only 呈現，見 docs/telemetry.md）：原始輸入 / 停在哪階段 / blocked 原因
+        "request_text", "stage", "blocked_reason",
     )
     out = {k: row[k] for k in keys if k in row}
     out["operator"] = OPERATOR
