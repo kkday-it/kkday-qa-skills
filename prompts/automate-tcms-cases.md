@@ -189,9 +189,24 @@ python3 scripts/check_fidelity_gate.py --claimed <claimed-jsonl> --fidelity <res
 **規則：gate 沒過（exit 1）就不准進「彙整報告 / 送遙測」。** 把 gate 印出的不合格 case
 補跑 review（`needs-fix` 要丟回 automator 重修再 review），全部 `pass` 後再重跑 gate、通過才往下。
 
-## 收尾：開 PR
+## 收尾：（選配）headed 重播 + 開 PR
 
-整批做完、報告呈現後，**主動詢問使用者是否開 PR**（見各 agent 定義的「主對話收齊後先問使用者」）。同意才動 git，統一開一個 PR。
+整批做完、報告呈現後，在同一個人類決策點做兩件事（**皆互動模式限定**）：
+
+**1. 問要不要 headed 重播看流程（僅 web/mweb pass）**
+
+- 🔴 **互動模式才問**：報告呈現後，若有 **web/mweb** 判 `pass` 的 case，問使用者「要不要開瀏覽器實際看某幾個的自動化流程？」（AskUserQuestion，可複選要看哪些 case×平台；預設不看）。
+- 選了就**逐一、序列**重播（不要平行彈一堆瀏覽器）：在該案 worktree 內跑
+  ```bash
+  HEADED=1 ~/.claude/skills/qa-test-runner/scripts/run_case.sh <caseid> <web|mweb>
+  ```
+  （`HEADED=1` 不設 HEADLESS → 彈實體瀏覽器；app 走實體機本來就看得到，不列入。）
+- 🔴 **自主 / harness 模式：不問、不重播**（無人盯著看，headed 沒意義、還會拖慢）。
+- 重播是**給人看的視覺確認**，不改變 gate 判定——case 早在 headless 那跑就已過 fidelity gate；headed 只是讓人眼見為憑，重播結果不回寫、不覆蓋原判定（避免重跑時序不同造成的假 flaky 動搖已通過的結論）。
+
+**2. 問要不要開 PR**
+
+**主動詢問使用者是否開 PR**（見各 agent 定義的「主對話收齊後先問使用者」）。同意才動 git，統一開一個 PR。
 
 ## 相關
 

@@ -93,6 +93,14 @@ description: |
 
 > **為什麼要 wrapper 而不是「記得照 skill 做」**：HEADLESS、venv 這些規範就算白紙黑字寫在本 skill,靠 agent 執行時記得讀還是會漏（實測會）。綁進單一入口 = 把「漏」變成結構上不可能,而不是靠自律。
 
+> **看自動化流程（headed）**：web/mweb 預設 headless（不彈瀏覽器）。要讓人**眼看瀏覽器實際跑**（重播、demo、debug），加 `HEADED=1`：
+> ```bash
+> HEADED=1 ~/.claude/skills/qa-test-runner/scripts/run_case.sh KQT-T37931 web
+> ```
+> - **只對 web/mweb 有效**；app 走實體機本來就看得到。
+> - **只在互動模式（有人盯著）用**；自主/harness 無人看,不設。批次平行時更不要讓 N 個瀏覽器同時彈,重播請報告後逐一序列跑。
+> - ⚠️ 別改成 `HEADLESS=0`——框架是 `bool(getenv("HEADLESS"))`,非空字串一律為真,設 0 仍 headless。headed 唯一正解是「不設 HEADLESS」,wrapper 已用 `HEADED=1` 幫你處理。
+
 > ⚠️ **venv 陷阱（踩過的坑）**：
 > - `QATest/venv`（QATest 子目錄底下那個）常是**空殼**（`bin/` 是空的),`source` 會失敗。**正確的 venv 在 repo 根目錄**（`<repo>/venv`,與 `QATest/` 同層）。
 > - **不要用系統 `python3` 跑**：它可能能 `import qatest`（egg-info editable install）但缺 `pymouse` 的 `mac` 依賴,會連鎖導致 `launch_home_page_playwright` 之類 pre-condition 註冊不到而 fail。

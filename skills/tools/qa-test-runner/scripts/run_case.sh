@@ -8,6 +8,12 @@
 # 用法：run_case.sh <caseid> <platform>   e.g. run_case.sh KQT-T37931 web
 # platform: web | mweb | ios | android
 #
+# 選項（env）：
+#   HEADED=1  只對 web/mweb 有效 —— 彈實體瀏覽器（headed）供人「觀看自動化流程」。
+#             預設 headless。app 走實體機本來就看得到，此旗標對 app 無意義。
+#             ⚠️ 框架讀 bool(getenv("HEADLESS"))，設 HEADLESS=0 仍會 headless（非空字串為真），
+#             故 headed 唯一正解是「完全不 export HEADLESS」——本 wrapper 已處理，別自己補設 0。
+#
 # 存在理由：headless / venv 這些規範「寫在 skill 裡靠 agent 記得讀」會漏（實測會）。
 # 綁進單一入口，讓「漏」在結構上不可能發生，而不是靠自律。
 set -euo pipefail
@@ -41,7 +47,11 @@ fi
 EXTRA=()
 case "$PLATFORM" in
   web|mweb)
-    export HEADLESS=1
+    if [ "${HEADED:-0}" = "1" ]; then
+      echo "[run_case] HEADED=1 → 彈實體瀏覽器（headed），供人觀看自動化流程"
+    else
+      export HEADLESS=1
+    fi
     EXTRA+=(--use_driver playwright)
     ;;
   ios|android)
