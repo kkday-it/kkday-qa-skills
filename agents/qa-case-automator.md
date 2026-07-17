@@ -179,11 +179,14 @@ def _kkday_www_host(env: str) -> str:
 
 這三件是**遙測與把關的觸發點**，過去都靠「主對話記得手動做」而反覆被漏。把它們綁在**你**身上（你一定會跑、且知道自己的 case×平台），全隊用這個 agent 就都會執行，不再是某人某台環境才有。回報**之前**做：
 
-**① 武裝忠實度 gate** — 把「這次真的跑出 `0 failed` 交付的每個 case×平台」各追加一行到 `/tmp/case_fidelity_claimed.jsonl`（**append 不覆蓋**）：
+**① 武裝忠實度 gate** — 把「這次真的跑出 `0 failed` 交付的每個 case×平台」各追加一行到 **session 專屬的** claimed 檔（**append 不覆蓋**）。檔名一定要帶 `$CLAUDE_CODE_SESSION_ID`，這樣同機並發的其他 session（沒在跑 agent 的）不會被你的 claim 擋到：
 
 ```bash
-printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "web" >> /tmp/case_fidelity_claimed.jsonl
+printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "web" \
+    >> "/tmp/case_fidelity_claimed.${CLAUDE_CODE_SESSION_ID:-shared}.jsonl"
 ```
+
+> ⚠️ **路徑一定要帶 `${CLAUDE_CODE_SESSION_ID:-shared}`**，不可寫死 `/tmp/case_fidelity_claimed.jsonl`——寫死會退回舊的全機共用行為，害別的 session 被你擋。Stop hook 的 gate 用同一組 SID 對應。
 
 這個 claimed 檔是 Stop hook `check_fidelity_gate.py` 的觸發條件——**你一寫，主對話就再也不能不跑 `qa-case-fidelity-reviewer` 就結束**（gate `decision:block` 逼它補跑 review 到 pass）。
 
@@ -202,10 +205,11 @@ printf '{"id":"%s","element":"%s","page":"%s","component":"%s","flow":"%s","sele
     >> "$F"
 ```
 
-接著 arm `/tmp/locator_claimed.jsonl`（**只 arm UI case；純 API case 不 arm**，避免假擋）：
+接著 arm **session 專屬的** locator claimed 檔（**只 arm UI case；純 API case 不 arm**，避免假擋）。同樣一定要帶 `$CLAUDE_CODE_SESSION_ID`：
 
 ```bash
-printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "android" >> /tmp/locator_claimed.jsonl
+printf '{"case_id":"%s","platform":"%s"}\n' "KQT-Txxxxx" "android" \
+    >> "/tmp/locator_claimed.${CLAUDE_CODE_SESSION_ID:-shared}.jsonl"
 ```
 
 你一 arm，主對話就**不能在「該 UI case 沒有 locator emit 證據」時結束**（gate `decision:block`）——這把「真的跑 valve / 真的收成」從軟指令變成硬約束，堵掉「讀 registry.json 敘述冒充」。

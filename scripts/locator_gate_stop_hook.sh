@@ -14,7 +14,10 @@
 # locator emit（valve 或收成）寫進 $LOCATOR_EMIT_DIR。
 set -u
 
-CLAIMED="${LOCATOR_CLAIMED:-/tmp/locator_claimed.jsonl}"
+# session 隔離（同 fidelity gate）：claimed 檔名帶 CLAUDE_CODE_SESSION_ID，並發的多個 session 互不干擾。
+# arm 端（qa-case-automator）用同一組 SID；拿不到退回 "shared"（fail-closed）。
+_SID="${CLAUDE_CODE_SESSION_ID:-shared}"
+CLAIMED="${LOCATOR_CLAIMED:-/tmp/locator_claimed.$_SID.jsonl}"
 EMIT_DIR="${LOCATOR_EMIT_DIR:-/tmp/locator_results.d}"
 GATE="${CLAUDE_PROJECT_DIR:-.}/scripts/check_locator_gate.py"
 
