@@ -81,6 +81,15 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 > **「要不要問使用者」是主 agent 的職責**（subagent 做不到也不該做）：**互動模式** → 主 agent 把待確認點問使用者；**自主／harness 模式** → 主 agent 套預設續跑、`blocked` 的排入待人工佇列，全程不停等輸入。
 
+### 2.5 🔴「repo 沒有」≠「blocked」——收到「需新建」就是要你實作它，不是標 blocked
+
+**最常見的錯誤：把「repo 還沒這條 flow / 這支 helper」當 blocked 或 stub 掉。** 對 create 型新 case（尤其冷系統 SCM/新 API），前置與步驟本來就常沒現成——**那正是你要實作的工作**。計畫裡標 `← 需新建` 的項目 = 叫你去建，**不是**叫你標 blocked。把「做不到」分兩種、絕不混：
+
+- **(1) 真實系統有、只是 repo 沒 codify** → **你要建出來**。例：`activate_supplier_to_active`「8 步」代表**後端真有這條 API 鏈**，你去把那幾支真實 API 挖出來（API 文件 / SA-SD / 抓封包 / 既有零散 step 拼）、**對真實系統忠實實作**。**嚴禁 stub / mock / 捏假回應 / 跳過**——那是假綠，會被 fidelity/evaluator 抓。
+- **(2) 真正 blocker**（真實系統也沒有、或非 code 能解）→ 才標 `blocked`＋原因：缺實體機、prod-only 帳號、外部依賴掛了、環境沒開。
+
+**判準**：問「這條流程在**真實系統**裡存不存在？」存在=（1）去建；不存在且建不出=（2）blocked。**不准因為 grep 不到 repo 就跳 blocked**（呼應 qa-case-planner §3.6；planner 已把可建的規劃好標 `需新建`，你照著建）。
+
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。
 2. **取 locator + 回寫，依平台走不同路（都不准讀 `registry.json` 敘述冒充）：**

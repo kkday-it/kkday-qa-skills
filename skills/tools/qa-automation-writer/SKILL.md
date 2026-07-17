@@ -93,11 +93,15 @@ grep -rn "KQT-T35108" QATestData/cases/yaml/
 
 **平台來源**：看 case 的 `labels` / `tags`（`tcms-fetch-cases` 已輸出，兩欄都可能帶、要一起看）。**不要只照 case 內文寫成單一平台。**
 
-1. **解析平台 token**（大小寫容錯）：`Web→web`、`mWeb`/`Mweb→mweb`、`Android→android`、`iOS→ios`。拆包裝與展開：
+1. **解析平台 token**（大小寫容錯）：`Web→web`、`mWeb`/`Mweb→mweb`、`Android→android`、`iOS→ios`、**`API→api`**。拆包裝與展開：
    - `FE (Web/mWeb/Android/iOS)`、`Platform / Service:FE (...)` → 取括號內全部平台
    - `Web (Web/mWeb)` → `{web, mweb}`；`["Android","iOS","mWeb","Web"]`（拆開列）→ 全取
+   - **後端/API case**：label 含 `API` 者 → `api`（例：`SCM - API`、`B2B - API`、`... - API` → `{api}`）。
+     這類是**後端 API 測試**（非 UI），yaml 在 `QATestData/cases/yaml/api/**`，不走 web_playwright/mobile driver。
+     `SCM` / `B2B` 等前綴是**系統別**（供應商後台 / …），不是平台——平台就是 `api`。
+   - label 同時帶 UI 與 `API`（如 `web/API`）→ 兩者都是候選，這輪做哪個當**待確認點**回報主對話（見 4）。
 2. **step 內的平台標記要切分**：case 步驟常在 action 文字帶標記，同一 case 對不同平台有不同操作與 expected_result（如 KQT-T37935 有 `[APP]`/`[M]`/`[PC]` 各自不同）。對映 `[PC]→web`、`[M]→mweb`、`[APP]→native app`（可能再細分 `[iOS]`/`[Android]`）。**每個平台的 auto case 只取「該平台適用」的步驟與 expected_result**；無標記的步驟視為所有平台共用。標記對不上/看不懂 → 當成待確認點（見 4）。
-3. 確認平台後，**每個平台各寫一份 auto case**（web/mweb 走 `web_playwright/`；App 走 `mobile/` + `test_steps/kkday/app/`），逐一跑後面的規劃 → 驗證 → 執行。
+3. 確認平台後，**每個平台各寫一份 auto case**（web/mweb 走 `web_playwright/`；App 走 `mobile/` + `test_steps/kkday/app/`；**api 走 `QATestData/cases/yaml/api/**` + 對應的 API test_step/helper，無 UI 元素驗證那套、改驗回應狀態碼/錯誤碼/欄位值**），逐一跑後面的規劃 → 驗證 → 執行。
 4. **subagent 不自己拍板、也不 hang、也不直接問人**。碰到需判斷的點（label 混 API 如 `web/API`、多平台是否這輪全做、平台標記對不上、缺 oid 等），一律：**能安全帶預設就帶入並記錄假設**（預設：label 標的所有 UI 平台、環境 stage…），**回報主對話**（候選平台集合／步驟切分結果／已帶入的假設／真正卡住需輸入的點）。真的無法進行的（如缺 oid 又推不出）→ 該平台/該 case 標 `blocked`＋原因、跳過續跑，不 hang。
 
 > **「要不要問使用者」是主 agent 的職責，不是 subagent。** subagent 永遠只「帶預設 + 記錄假設 + 回報待確認點」。主 agent 依模式決定：**互動模式**→ 把待確認點問使用者（這輪做哪些平台？web/API 做哪個？）；**自主/harness 模式**→ 直接套預設繼續、blocked 的排入待人工佇列，全程不停等輸入。
