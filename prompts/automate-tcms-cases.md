@@ -52,6 +52,10 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
        → 每案跑 qa-case-planner，回傳計畫：解讀（真正要測的邏輯）/ 前置用哪個既有 flow 建真實資源（禁捏假 id）/
          specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority 對照 / 假設 / 待確認點
        → **把計畫攤給使用者確認/改**（治「不是我要的」的關鍵；別跳過）
+       → 🔴 **橡皮圖章防呆（#8）**：回傳的 `confirmation.high_risk`（Critical/High）**禁一鍵全確認**——
+         對每個高風險 case **各跑一次 AskUserQuestion**，把該案 specific 斷言攤出來、逼使用者針對
+         「驗的是不是對的東西」做一個非讀不可的選擇；`confirmation.batchable`（Medium/Low）才准批次一次確認。
+         （需要時可用 `scripts/build_plan_confirmations.py --infile <mode=plan回傳>` 產每案確認題。）
    2b. 確認後執行（mode=execute，帶確認過的計畫）：
        Workflow('batch-tcms-automate', {mode:'execute', cases:[...], plans:{caseId:確認過的計畫}})
        → workflow 內部（每案獨立、worktree 隔離、彼此不等）：automator 照計畫實作 → per-platform 交付 gate

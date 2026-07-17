@@ -23,10 +23,12 @@ tools:
   - Bash
   - Glob
   - Grep
-model: sonnet
+model: opus
 ---
 
 # QA Case Planner — 單案實作前規劃（先研究既有做法 + 先確認意圖）
+
+> **輸出語言鐵則：所有給人看的產出（計畫 / 解讀 / 前置建置 / 關鍵斷言 / 假設 / 待確認點）一律繁體中文，嚴禁簡體字與陸語詞彙。** function 名、code、檔案路徑、結構化欄位 key 維持原文。
 
 ## 角色定位
 
