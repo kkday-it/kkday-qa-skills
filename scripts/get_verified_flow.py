@@ -72,6 +72,49 @@ def _local_fallback(registry_path: str, platform: str, kind: str, q: str) -> lis
     return out
 
 
+def _datekey(entry: dict) -> str:
+    """取 last_verified 的日期前綴（YYYY-MM-DD）當 recency tiebreaker；缺就空字串（排最後）。"""
+    v = str(entry.get("last_verified") or "").strip()
+    return v[:10] if len(v) >= 10 else ""
+
+
+def _dedup(cands: list) -> list:
+    """讀取端去重：同一個可重用 flow 被重複記多筆時，只留最新一筆（by last_verified）。
+    key = (name, platform, kind)——同名同平台同類視為同一個。避免『發現即寫』累積的重複灌爆給 AI 的量。"""
+    best = {}
+    for e in cands:
+        key = (str(e.get("name", "")).lower(), str(e.get("platform", "")).lower(),
+               str(e.get("kind", "")).lower())
+        if key not in best or _datekey(e) > _datekey(best[key]):
+            best[key] = e
+    # 保持原順序穩定（Python dict 保序），去重後由 _score 再排
+    return list(best.values())
+
+
+def _score(entry: dict, q: str):
+    """相關性分數（配合 sort reverse=True）：回 (relevance:int, datekey:str)。
+    relevance：name 完全等於 q > name 含 q > purpose 含 q > 其他；q 空時全 0、純靠 recency。
+    datekey：last_verified 日期前綴，當同分 tiebreaker（越新越前）。"""
+    ql = (q or "").strip().lower()
+    name = str(entry.get("name", "")).lower()
+    purpose = str(entry.get("purpose", "")).lower()
+    rel = 0
+    if ql:
+        if name == ql:
+            rel = 100
+        elif ql in name:
+            rel = 50
+        elif ql in purpose:
+            rel = 20
+    return (rel, _datekey(entry))
+
+
+def _rank_and_cap(cands: list, q: str, limit: int) -> list:
+    """去重 → 相關性+recency 排序 → 取前 limit 筆。讓餵給 AI 的量與 registry 大小脫鉤。"""
+    ranked = sorted(_dedup(cands), key=lambda e: _score(e, q), reverse=True)
+    return ranked[:limit] if (limit and limit > 0) else ranked
+
+
 def _function_still_exists(name: str, repo_path: str) -> bool:
     """用前先驗：grep 框架 repo 確認該 function/step 名還在（沒被改名/搬走）。"""
     if not name or not repo_path or not os.path.isdir(repo_path):
@@ -98,6 +141,9 @@ def main() -> int:
     p.add_argument("--repo-path", default="", help="框架 repo 本機路徑（驗證用；不給則跳過驗證只回候選）")
     p.add_argument("--registry", default="", help="本地 fallback registry.json")
     p.add_argument("--emit", default="", help="把驗證結果寫成 jsonl（供 send_flow_registry 回寫 status）")
+    p.add_argument("--limit", type=int, default=8,
+                   help="讀取端 top-N 上限：去重+相關性排序後只回最相關的前 N 筆（預設 8；<=0 不限）。"
+                        "確保給 AI 的量與 registry 大小脫鉤——registry 再大，也只回最相關的幾筆。")
     args = p.parse_args()
 
     result = {"ok": False, "query": vars(args), "verified": [], "stale": [], "checked": 0}
@@ -105,6 +151,11 @@ def main() -> int:
         cands = _get_candidates(args.platform, args.kind, args.q, args.repo)
         if not cands and args.registry:
             cands = _local_fallback(args.registry, args.platform, args.kind, args.q)
+
+        # 讀取端天花板：去重 + 相關性/recency 排序 + top-N。與 registry 大小脫鉤——
+        # 不管累積多少筆，都只把「最相關的前 N 筆」拿去驗證/回給 AI，避免資料越多餵越多。
+        result["total_candidates"] = len(cands)
+        cands = _rank_and_cap(cands, args.q, args.limit)
 
         emit_rows = []
         for e in cands:

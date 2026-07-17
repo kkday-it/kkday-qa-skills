@@ -7,6 +7,7 @@
 android+ios。`limit_test_platform` 才把 case「限死只跑單一平台、其餘 Skip」。故判「能跑某平台」：
   - web / mweb : platform=web 的 entry，且沒被 limit_test_platform 限成別的
   - android / ios : mobile(AppRegression) 的 entry，且沒被 limit 限死
+  - api : platform=api 的 entry（SCM/後端 API case，QATestData/cases/yaml/api/**）——單一平台，無 driver 群組
 「交付」＝ 能跑該平台 **且** 該平台真的 `--platform X` 跑過 pass（--results，來自 qatest 那行 `0 failed`）。
 注意：gate 只判「能跑 + 跑過 pass」；「test_step 是否真對該平台有效（非硬套 web）」是 fidelity review 的事。
 
@@ -30,7 +31,7 @@ try:
 except ImportError:
     yaml = None
 
-_ALL = ("web", "mweb", "android", "ios")
+_ALL = ("web", "mweb", "android", "ios", "api")
 
 
 def _covered_platforms(repo: str, caseid: str) -> set:
