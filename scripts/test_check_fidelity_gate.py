@@ -64,6 +64,62 @@ def test_cleanup_none_platform_globs_all_platforms():
         assert not os.path.exists(os.path.join(d, "KQT-1__mweb.jsonl"))
 
 
+def _read_ledger(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return [json.loads(ln) for ln in f if ln.strip()]
+
+
+def test_write_delivery_ledger_explicit_platforms():
+    # #5 根治：明確 claim web+mweb → 一筆 case、聚合兩平台、confidence 不重複
+    with tempfile.TemporaryDirectory() as d:
+        rows = [
+            {"case_id": "KQT-1", "platform": "web", "recommend": "pass", "confidence": 0.9},
+            {"case_id": "KQT-1", "platform": "mweb", "recommend": "pass", "confidence": 0.8},
+        ]
+        passed = [("KQT-1", "web", True, "pass"), ("KQT-1", "mweb", True, "pass")]
+        led = os.path.join(d, "ledger.jsonl")
+        n = g._write_delivery_ledger(led, passed, rows)
+        assert n == 1
+        recs = _read_ledger(led)
+        assert recs[0]["caseid"] == "KQT-1"
+        assert recs[0]["platforms"] == ["mweb", "web"]
+        assert recs[0]["delivered"] is True and recs[0]["source"] == "fidelity_gate"
+        assert recs[0]["fidelity_confidence"] == [0.9, 0.8]  # 不重複
+
+
+def test_write_delivery_ledger_explicit_excludes_unclaimed_platform():
+    # 只 claim/pass web，fidelity 另有 mweb 列（本輪沒 claim）→ 不可把 mweb 記成交付
+    with tempfile.TemporaryDirectory() as d:
+        rows = [
+            {"case_id": "KQT-1", "platform": "web", "recommend": "pass"},
+            {"case_id": "KQT-1", "platform": "mweb", "recommend": "pass"},
+        ]
+        passed = [("KQT-1", "web", True, "pass")]
+        led = os.path.join(d, "ledger.jsonl")
+        g._write_delivery_ledger(led, passed, rows)
+        assert _read_ledger(led)[0]["platforms"] == ["web"]
+
+
+def test_write_delivery_ledger_wildcard_harvests_platforms():
+    # platform=None（wildcard）→ 從 fidelity 補全平台
+    with tempfile.TemporaryDirectory() as d:
+        rows = [
+            {"case_id": "KQT-1", "platform": "web", "recommend": "pass"},
+            {"case_id": "KQT-1", "platform": "mweb", "recommend": "pass"},
+        ]
+        passed = [("KQT-1", None, True, "pass")]
+        led = os.path.join(d, "ledger.jsonl")
+        g._write_delivery_ledger(led, passed, rows)
+        assert _read_ledger(led)[0]["platforms"] == ["mweb", "web"]
+
+
+def test_write_delivery_ledger_empty_passed():
+    with tempfile.TemporaryDirectory() as d:
+        led = os.path.join(d, "ledger.jsonl")
+        assert g._write_delivery_ledger(led, [], []) == 0
+        assert not os.path.exists(led)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
