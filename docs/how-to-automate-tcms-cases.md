@@ -92,6 +92,17 @@ flowchart TD
 | **Python playwright**（`scripts/verify_locator.py`） | 工具 | 驗 locator 的真實瀏覽器；**headless、無彈窗、各自 launch**——單案與批次並行**都用它**（不用 playwright MCP，避免彈窗/搶共用瀏覽器）。驗 mweb 加 `--device 'iPhone 15'`。 |
 | **kkday-QA-automation** | 本機 repo | 測試碼落地處（page object / test step / case yaml）。 |
 
+### 各 Agent 用哪個 model
+
+| 元件 | model | 為什麼 |
+| --- | --- | --- |
+| **主對話 Claude** | **非固定** —— 跟著你的 Claude Code session model（例如目前為 Opus 4.8） | 你直接對話的那個，由當下 session 決定，不寫死 |
+| **`qa-case-planner`** 🤖 | **opus** | 實作前規劃：讀 case 意圖 + 研究既有做法，需強推理 |
+| **`qa-case-automator`** 🤖 | **opus** | 主力實作：寫 code / 驗 locator / 判失敗 |
+| **`qa-case-fidelity-reviewer`** 🤖 | **sonnet**（一律） | 對抗式 review 故意跟 automator／planner（opus）**錯開模型**——同模型會共享盲點、變橡皮圖章，那就不叫 review 了。故不論走批次 workflow 或單獨 spawn 都用 sonnet。 |
+
+> **來源**：agent 的 model 寫在各定義檔 frontmatter 的 `model:`（`agents/qa-case-*.md`）。fidelity reviewer 的 frontmatter 已是 `model: sonnet`；批次 workflow [`batch_tcms_automate.js`](https://github.com/kkday-it/kkday-qa-skills/blob/master/workflows/batch_tcms_automate.js) 的 `verify` 步驟也明寫 `model: 'sonnet'`（防被改回），兩處一致——一律 sonnet。
+
 ---
 
 ## 「過」是什麼意思
