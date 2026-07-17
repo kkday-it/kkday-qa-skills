@@ -158,7 +158,7 @@ qatest 一 import 就需要 `SERVICE_URL`（非機密）+ `AUTOMATION_TOKEN`（m
 結果，逐一確認每筆都有對應 review 且判定 `pass`。
 
 **Gate C — locator 回寫（`scripts/check_locator_gate.py`）**：把「交付的每個 **UI** case×平台」
-（automator arm 進 `/tmp/locator_claimed.jsonl`）對到 `/tmp/locator_results.d/` 的 emit 證據
+（automator arm 進 session 專屬的 `/tmp/locator_claimed.$CLAUDE_CODE_SESSION_ID.jsonl`）對到 `/tmp/locator_results.d/` 的 emit 證據
 （`source==case`）——web/mweb 由 valve emit、app/from-scratch 由「測試通過後收成」emit。缺證據＝
 視同沒真的驗/收成，擋下。純 API case 不 arm、不受此 gate 管。生命週期同 Gate B（sender 不 --purge、
 gate pass 才清；後端 locator 是 upsert 冪等，重送無害）。這把「locator 靜默不回寫」從軟指令變硬約束。
@@ -182,7 +182,7 @@ python3 scripts/check_fidelity_gate.py --claimed <claimed-jsonl> --fidelity <res
 ```
 
 > **自動 enforce（不靠記憶，流程不可略過）：** `.claude/settings.json` 已掛 Stop hook `scripts/fidelity_gate_stop_hook.sh`，
-> 每次 turn 結束時**條件式**跑上面的 gate——**只要 `/tmp/case_fidelity_claimed.jsonl` 存在**（＝這輪有交付 TCMS case）
+> 每次 turn 結束時**條件式**跑上面的 gate——**只要 session 專屬的 `/tmp/case_fidelity_claimed.$CLAUDE_CODE_SESSION_ID.jsonl` 存在**（＝這 session 這輪有交付 TCMS case；並發的其他 session 各看各的、互不干擾）
 > 就對 `/tmp/case_fidelity_results.d/`（reviewer per case×平台 各寫一檔）逐筆驗，不過就 `decision:block` 擋下結束、逼你補跑 review；過了才放行並清掉 claimed + 本次通過的結果檔。
 > **結果檔生命週期由 gate 掌控**：送遙測的 `send_case_fidelity.py` 在 Stop hook 裡**不帶 `--purge`**（排在 gate 之前先送），只有 gate 在 pass 時才刪本次 claimed 的結果檔——否則 gate 擋下時被 sender 刪掉輸入，下輪會假性「找不到結果」卡死。
 >
