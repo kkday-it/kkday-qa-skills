@@ -44,13 +44,16 @@ Run 95 裡 Eden 的 case 自動化
 ```mermaid
 flowchart TD
     A["👤 KQT-T1234 實作"] --> B["🤖 主對話（總指揮）<br/>撈 case → 判平台"]
-    B --> P["平台共用一份<br/>web↔mweb、android↔ios"]
-    P --> E
+    B --> PL["🤖 planner (opus)<br/>實作前規劃：意圖＋既有做法＋specific 斷言"]
+    PL --> CFM{"人確認計畫<br/>（缺 swagger／UI 判準模糊→先問你補）"}
+    CFM -->|"確認/改好（互動）"| P
+    CFM -->|"套安全預設（自主/harness）"| P
+    P["平台共用一份<br/>web↔mweb、android↔ios"] --> E
 
     subgraph LOOP["每個 case × 共用組的閉環（達標才收）"]
         direction TB
-        E["🤖 automator<br/>實作 → 驗/收成 locator → 跑過"]
-        F["🤖 fidelity reviewer<br/>覆蓋率／信心"]
+        E["🤖 automator (opus)<br/>實作 → 驗/收成 locator → 跑過"]
+        F["🤖 fidelity reviewer (sonnet)<br/>錯開模型破盲點｜覆蓋率/信心"]
         GATE["per-platform 交付 gate<br/>每平台真跑出 0 failed？"]
         LOC["locator 回寫 gate<br/>UI case 有 emit 證據？"]
         E --> F
@@ -61,18 +64,21 @@ flowchart TD
         LOC -->|"缺 emit 證據，補跑 valve/收成"| E
     end
 
+    E -.->|"環境掛(登入/後端 5xx)"| BE["blocked-environment<br/>fast-fail 不重試｜環境好重跑"]
     LOC -->|"齊 ✅"| G["收下"]
     F -->|"修不過／低信心"| H["待人工 ⚠️"]
-    G --> R["批次報告<br/>rollup ＋ 逐 case×平台"]
+    G --> RP{"（選配·互動）headed<br/>重播看流程？web/mweb"}
+    RP --> R
+    BE --> R
     H --> R
-    R --> S{"開 PR？"}
+    R["批次報告<br/>rollup ＋ 逐 case×平台"] --> S{"開 PR？"}
     S -->|"好"| T["branch → commit → 一個 PR"]
     S -->|"先不要"| L["留工作區"]
 ```
 
 重點：**「跑得起來」不等於「過」**。每個 case 實作完會經 `qa-case-fidelity-reviewer` 檢查有沒有忠實覆蓋 case（每個 expected 有沒有真的被斷言）；不夠 → **自動丟回去修再檢查**（最多幾輪），還不行才標「待人工」。
 
-> **過程中遇缺資訊/待確認**（平台選擇、`web/API` 混用、缺 oid…）：**互動模式** → 問你；**自主/harness 模式** → 套安全預設續跑或標 `blocked`（不停等）。這條旁支不畫進主流程，免得線交錯。
+> **過程中遇缺資訊/待確認**：圖上的「人確認計畫」已含主要待確認點（缺 swagger、UI 判準模糊）；其餘細項（平台選擇、`web/API` 混用、缺 oid…）不逐一畫進圖裡，免得線交錯。一律**互動模式** → 問你；**自主/harness 模式** → 套安全預設續跑或標 `blocked`（不停等）。
 
 ### 元件各是什麼
 
