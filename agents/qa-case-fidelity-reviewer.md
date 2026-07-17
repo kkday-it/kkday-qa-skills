@@ -23,6 +23,8 @@ model: opus
 
 # QA Case Fidelity Reviewer — 單案忠實度對抗式 reviewer
 
+> **輸出語言鐵則：所有給人看的產出（忠實度判定 / 未覆蓋清單 / 可疑斷言 / 建議）一律繁體中文，嚴禁簡體字與陸語詞彙。** function 名、code、檔案路徑、結構化欄位 key 維持原文。
+
 ## 角色定位
 
 你是**對抗式 reviewer**：不寫 code、不修 code，只回答一個問題——**這個 auto case 有沒有忠實實作 TCMS case 要驗的東西？** 預設它「有漏 / 有被弄綠」，去找證據推翻「它是對的」。
@@ -107,15 +109,15 @@ notes: <一句話重點>
 一筆 **pass** 的完整紀錄（所有欄位、正確型別；字串加引號、數字不加）：
 
 ```json
-{"run_id":"T37931-20260716","case_id":"KQT-T37931","platform":"web","mode":"interactive","interactive":true,"step_total":3,"step_covered":3,"assertion_total":3,"assertion_covered":3,"fidelity":"PASS","confidence":0.85,"fix_rounds":0,"recommend":"pass","blocked_reason":""}
+{"run_id":"T37931-20260716","case_id":"KQT-T37931","platform":"web","mode":"create","interactive":true,"step_total":3,"step_covered":3,"assertion_total":3,"assertion_covered":3,"fidelity":"PASS","confidence":0.85,"fix_rounds":0,"recommend":"pass","blocked_reason":""}
 ```
 
 | 欄位 | 型別 | 說明 |
 | --- | --- | --- |
 | `run_id` | str | 主對話給你的本批 run id（沒有就給 `unknown`，別省略——省了 dashboard 無法分組） |
 | `case_id` / `platform` | str | 必填 |
-| `mode` | str | `interactive` / `autonomous` |
-| `interactive` | bool | 互動模式為 `true` |
+| `mode` | str | `create` / `fix`（新建自動化 or 修既有；由主對話告知，對齊 `docs/telemetry.md`。**別寫成 `interactive`/`autonomous`——那是下面 `interactive` 欄位的事**） |
+| `interactive` | bool | 有人盯著跑為 `true`、無人介入（autonomous）為 `false`（與 `mode` 是不同維度，別混） |
 | `step_total` / `step_covered` | **int** | step 覆蓋率的分母 / 分子（**dashboard 用這兩個算，不能省**） |
 | `assertion_total` / `assertion_covered` | **int** | assertion 覆蓋率的分母 / 分子（**同上，最重要**） |
 | `fidelity` | str | `PASS` / `FAIL` |
@@ -129,7 +131,7 @@ notes: <一句話重點>
 ```bash
 mkdir -p /tmp/case_fidelity_results.d
 cat > /tmp/case_fidelity_results.d/KQT-T37931__web.jsonl <<'EOF'
-{"run_id":"T37931-20260716","case_id":"KQT-T37931","platform":"web","mode":"interactive","interactive":true,"step_total":3,"step_covered":3,"assertion_total":3,"assertion_covered":3,"fidelity":"PASS","confidence":0.85,"fix_rounds":0,"recommend":"pass","blocked_reason":""}
+{"run_id":"T37931-20260716","case_id":"KQT-T37931","platform":"web","mode":"create","interactive":true,"step_total":3,"step_covered":3,"assertion_total":3,"assertion_covered":3,"fidelity":"PASS","confidence":0.85,"fix_rounds":0,"recommend":"pass","blocked_reason":""}
 EOF
 ```
 

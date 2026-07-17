@@ -13,6 +13,9 @@ export const meta = {
 const REPO = '/Users/eden.lai/Downloads/qa_test/test/kkday-QA-automation'
 const SKILLS = '/Users/eden.lai/Downloads/ai/kkday-qa-skills'
 const MAX_FIX_ROUNDS = 3
+// flaky 防護：高風險（Critical/High）case 每平台連續跑 N 次、全 pass 才算交付（gate --min-runs）。
+// 一般 case 維持 1 次（不加成本）；高風險才付 N 倍執行時間換「穩定過」保證。
+const RERUNS_HIGH_RISK = 3
 
 // ── 入口：args = 一串 TCMS ID（陣列/字串），或 {cases:[...], platforms:[...]}──────
 // platforms 用於限制本批平台（如無 App 實體機時限 web,mweb）；不給＝用各 case tag 全平台。
@@ -124,9 +127,13 @@ const VERDICT_SCHEMA = {
   required: ['caseid', 'delivered'],
 }
 
-function implPrompt(caseId, fixNote, plan) {
+function implPrompt(caseId, fixNote, plan, reruns) {
   const planStr = plan ? (typeof plan === 'string' ? plan : JSON.stringify(plan, null, 2)) : ''
-  return `你是 qa-case-automator，**並行模式**。case=${caseId}。
+  const flakyNote =
+    reruns > 1
+      ? `\n**flaky 防護（本 case 高風險）**：每個平台不是跑一次就好——用 qa-test-runner 對每平台**連續跑 ${reruns} 次**，必須 ${reruns} 次全 pass 才算該平台交付。任一次 fail 即視為不穩定，須先查穩定性（環境/等待/選擇器）再交付，不可「跑到一次綠」就收。\n`
+      : ''
+  return `你是 qa-case-automator，**並行模式**。case=${caseId}。${flakyNote}
 ${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 flow 建真實資源、關鍵 specific 斷言、沿用哪些現成、priority 都在裡面；別自己另生一套）：\n${planStr}\n` : ''}${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
 並行模式規則（照 qa-case-automator.md §3.5）：
 - 驗元素用**各自 launch 的 headless Python playwright**（scripts/verify_locator.py），不用 MCP（避免彈窗/搶共用瀏覽器）。
@@ -144,18 +151,21 @@ ${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 
 // 獨立驗證：確定性 gate（矇混不過）+ per-platform 忠實度 review。不信 automator 自評。
 // 破共享盲點：用 qa-case-fidelity-reviewer（帶「預設有漏/被弄綠」對抗式 mindset）且**模型與 automator（opus）錯開成 sonnet**——
 // 同一顆模型出題又改考卷會漏同樣的東西；錯開模型才抓得到對方的系統性盲點。gate 那半是確定性 script、不靠模型。
-async function verify(caseId, impl) {
+async function verify(caseId, impl, reruns) {
   const tags = (LIMIT_PLATFORMS || impl.tags_platforms || []).join(',')
-  const resultsLines = (impl.per_platform || [])
-    .map((p) => JSON.stringify({ caseid: caseId, platform: p.platform, status: p.status }))
-    .join('\n')
+  const minRuns = reruns > 1 ? reruns : 1
+  const minRunsFlag = minRuns > 1 ? ` --min-runs ${minRuns}` : ''
+  const flakyStep =
+    minRuns > 1
+      ? `本 case 為高風險，gate 帶 \`--min-runs ${minRuns}\`：每平台需**最近 ${minRuns} 次跑全 pass**才算交付。讀 JSON 的 \`flaky_platforms\`（最近 N 次有 fail＝不穩定）與 \`insufficient_runs\`（跑不足 N 次）——這兩者都算未交付，須退回 automator 補跑/查穩定性。`
+      : `本 case 一般風險，gate 用預設單次判定（看最後一次 pass）。`
   return await agent(
     `你是 per-platform 交付驗證員（獨立、對抗式，不信 automator 自評）。case=${caseId}，tag 要求平台=${tags}。
 
 步驟 1 — 確定性交付 gate（Bash，客觀 parse qatest.log、不靠 automator 自報）：
 執行：
-  python3 ${SKILLS}/scripts/check_platform_delivery.py --caseid ${caseId} --tags ${tags} --repo ${REPO} --qatest-log ~/Documents/QATest_Output/qatest.log
-它靠 \`pid+case+platform\` parse qatest.log，判每個 tag 平台是否真跑出 \`0 failed\`。讀 JSON 的 \`delivered\` / \`missing_pass\`（沒真跑出 pass 的平台）。**「有沒有真跑過 pass」gate 已客觀判定，你不用靠 automator 貼 stdout、也不碰全域 log 對應問題（parser 用 pid 分並行）。**
+  python3 ${SKILLS}/scripts/check_platform_delivery.py --caseid ${caseId} --tags ${tags} --repo ${REPO} --qatest-log ~/Documents/QATest_Output/qatest.log${minRunsFlag}
+它靠 \`pid+case+platform\` parse qatest.log，判每個 tag 平台是否真跑出 \`0 failed\`。讀 JSON 的 \`delivered\` / \`missing_pass\`（沒真跑出 pass 的平台）/ \`flaky_platforms\` / \`insufficient_runs\`。${flakyStep} **「有沒有真跑過 pass」gate 已客觀判定，你不用靠 automator 貼 stdout、也不碰全域 log 對應問題（parser 用 pid 分並行）。**
 
 步驟 2 — 忠實度（gate 判不出、靠你）：對每個 gate 判 pass 的平台，比對 case 規格 vs 實作斷言，抓「沒真驗到的 expected」「過弱/恆真斷言」「參數收了沒用」。判準是**該平台每個 expected 有沒有被真斷言驗到**——步驟與 web 相同就共用斷言、有差異才要對應斷言；**不是**看有沒有 \`if platform\` 分支（步驟一樣本來就沒分支，不代表沒交付）。
 
@@ -222,17 +232,32 @@ if (MODE === 'plan') {
   const out = caseIds
     .map((caseId, i) => ({ caseId, plan: plans[i] }))
     .filter((x) => x.plan != null)
-  log(`已產出 ${out.length}/${caseIds.length} 份計畫，待主對話攤給使用者確認`)
+  // #8 橡皮圖章防呆：高風險（Critical/High）計畫必須逐案確認，禁「一鍵全確認」；Medium/Low 才准批次。
+  // 這裡確定性分流出「哪些必須逐案確認」，供主對話對每個 high_risk case 各跑一次 AskUserQuestion。
+  const highRisk = out.filter((x) => isHighRisk(x.plan))
+  const batchable = out.filter((x) => !isHighRisk(x.plan))
+  log(
+    `已產出 ${out.length}/${caseIds.length} 份計畫；高風險 ${highRisk.length}（須逐案確認）／可批次 ${batchable.length}`
+  )
   return {
     mode: 'plan',
     plans: out,
+    // #8：主對話據此確認——high_risk 逐案 AskUserQuestion（把 specific 斷言攤出來，逼真的讀），
+    // 不可對高風險 case 一次「confirm all」；batchable 才可一次確認。
+    confirmation: {
+      high_risk: highRisk.map((x) => x.caseId),
+      batchable: batchable.map((x) => x.caseId),
+      rule: '高風險 case 禁一鍵全確認，須逐案確認關鍵斷言是否對到 expected；Medium/Low 可批次。',
+    },
     note:
-      '計畫已產出。主對話請把每份計畫攤給使用者確認/修正；確認後用 {mode:"execute", cases:[...], plans:{caseId:計畫}} 再跑本 workflow 執行。無人可確認的自主/harness 情境改用 mode:"auto"（現場 spawn planner 直接接實作，不停等）。',
+      '計畫已產出。主對話請把每份計畫攤給使用者確認/修正——**高風險 case（confirmation.high_risk）逐案跑 AskUserQuestion 確認關鍵斷言，不可一鍵全確認**；Medium/Low 可批次。' +
+      '確認後用 {mode:"execute", cases:[...], plans:{caseId:計畫}} 再跑本 workflow 執行。無人可確認的自主/harness 情境改用 mode:"auto"（現場 spawn planner 直接接實作，不停等）。',
   }
 }
 
 // ── mode=execute / auto：計畫 → 實作 → gate+review+回修，每案獨立不等 ──
 const planByCase = {} // caseId → 計畫（供 Evaluate 階段判高風險；每 case 各寫一次，並行安全）
+const rerunsByCase = {} // caseId → flaky 防護重跑次數（高風險=RERUNS_HIGH_RISK，一般=1）
 const results = await pipeline(
   caseIds,
   // stage 0：取得計畫（auto=現場 spawn planner；execute=用主對話確認過的）
@@ -249,11 +274,13 @@ const results = await pipeline(
       plan = CONFIRMED_PLANS[caseId] || null
     }
     planByCase[caseId] = plan
+    // 高風險 case 開 flaky 防護（每平台跑 N 次全 pass）；一次判定在 stage 0 定好，供 impl/verify 共用。
+    rerunsByCase[caseId] = isHighRisk(plan) ? RERUNS_HIGH_RISK : 1
     return plan
   },
   // stage 1：照計畫實作
   (plan, caseId) =>
-    agent(implPrompt(caseId, null, plan), {
+    agent(implPrompt(caseId, null, plan, rerunsByCase[caseId]), {
       label: `impl:${caseId}`,
       phase: 'Implement',
       isolation: 'worktree',
@@ -263,15 +290,16 @@ const results = await pipeline(
   // stage 2：gate + 忠實度 review + 回修
   async (impl, caseId) => {
     if (!impl) return { caseId, delivered: false, error: 'automator 無回傳（可能中途失敗）' }
+    const reruns = rerunsByCase[caseId] || 1
     let cur = impl
     let round = 0
-    let verdict = await verify(caseId, cur)
+    let verdict = await verify(caseId, cur, reruns)
     while (verdict && !verdict.delivered && round < MAX_FIX_ROUNDS) {
       round++
       const gaps = (verdict.gate_missing || []).concat(verdict.fidelity_issues || []).join('；')
       log(`${caseId} 未達標（round ${round}/${MAX_FIX_ROUNDS}）：${gaps}`)
       const fixNote = `gate 缺平台=${JSON.stringify(verdict.gate_missing || [])}；忠實度問題=${JSON.stringify(verdict.fidelity_issues || [])}。${verdict.fix_instructions || ''}`
-      cur = await agent(implPrompt(caseId, fixNote), {
+      cur = await agent(implPrompt(caseId, fixNote, planByCase[caseId], reruns), {
         label: `fix:${caseId}#${round}`,
         phase: 'Implement',
         isolation: 'worktree',
@@ -279,7 +307,7 @@ const results = await pipeline(
         schema: IMPL_SCHEMA,
       })
       if (!cur) break
-      verdict = await verify(caseId, cur)
+      verdict = await verify(caseId, cur, reruns)
     }
     const result = { caseId, rounds: round, ...(verdict || { delivered: false }), impl: cur }
     // 第三隻眼：只有達標 + 高風險（Critical/High）才跑 evaluator，省成本；不擋交付、只標記疑慮。
@@ -302,6 +330,23 @@ if (evaluatorConcerns.length) {
   log(`⚠️ ${evaluatorConcerns.length} 個高風險 case 交付達標但 evaluator 有本質疑慮，建議人工過目`)
 }
 
+// #5 地基：每個達標 case 產一筆交付記錄，供 escaped-defect/test-rot 迴路日後回查。
+// workflow 沙箱不能跑 shell，故只「回傳」記錄；由主對話寫成 jsonl 後用
+// scripts/send_case_delivery.py 寫進 ledger（見下方 note，比照 tool-usage emit 的分工）。
+const delivery_records = delivered.map((r) => {
+  const impl = r.impl || {}
+  return {
+    caseid: r.caseId,
+    platforms: (impl.per_platform || [])
+      .filter((p) => String(p.status).toLowerCase() === 'pass')
+      .map((p) => p.platform),
+    min_runs: rerunsByCase[r.caseId] || 1,
+    traceability: impl.traceability || '',
+    delivered: true,
+    repo: 'kkday-QA-automation',
+  }
+})
+
 return {
   total: caseIds.length,
   delivered: delivered.map((r) => r.caseId),
@@ -312,6 +357,10 @@ return {
     fidelity_issues: r.fidelity_issues,
   })),
   evaluator_concerns: evaluatorConcerns,
+  delivery_records,
   note:
-    '達標 case 已在各自 git worktree 完成全平台實作。主對話收攏各 worktree 改動、統一開「一個」PR（依規範須先問使用者是否開 PR）。未達標的排入待人工。',
+    '達標 case 已在各自 git worktree 完成全平台實作。主對話收攏各 worktree 改動、統一開「一個」PR（依規範須先問使用者是否開 PR）。' +
+    '開 PR 後，把 delivery_records 每筆補上 pr_url/commit 寫成 jsonl，跑 ' +
+    '`python3 <skills>/scripts/send_case_delivery.py --infile <jsonl>` 記進交付 ledger' +
+    '（#5：供日後 detect_test_rot / link_escaped_defect 回查「後來壞了/綠了卻出事」）。未達標的排入待人工。',
 }

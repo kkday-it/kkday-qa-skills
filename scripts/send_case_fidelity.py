@@ -25,6 +25,7 @@ normalize 會解析成 step_covered/step_total、assertion_covered/assertion_tot
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import socket
@@ -118,12 +119,55 @@ def _normalize(row: dict) -> dict:
     return out
 
 
-def _process_file(path: str, purge: bool) -> tuple:
-    """送一個 fidelity 結果檔的每一筆；purge 才刪。回 (sent, failed)。fail-safe。"""
-    sent = failed = 0
+def _fingerprint(row: dict) -> str:
+    """內容指紋：對 row 的穩定 JSON（sort_keys）取 sha256。內容不變 → 指紋不變 →
+    已送過就不重送；reviewer 重跑產出不同結果（例如後來修成 pass）指紋才會變、才再送。"""
+    try:
+        blob = json.dumps(row, sort_keys=True, ensure_ascii=False)
+    except Exception:
+        blob = repr(row)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _ledger_path(target_path: str) -> str:
+    """已送指紋帳本：放 target 所在目錄的隱藏檔。刻意不用 *.jsonl 副檔名，
+    才不會被 _collect_targets 當成待送結果檔掃進來。"""
+    return os.path.join(os.path.dirname(os.path.abspath(target_path)), ".sent_fingerprints")
+
+
+def _load_ledger(path: str) -> set:
+    """讀已送指紋集合。讀不到就回空集合（fail-safe：寧可重送，不可炸）。"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return {ln.strip() for ln in f if ln.strip()}
+    except FileNotFoundError:
+        return set()
+    except Exception:
+        return set()
+
+
+def _append_ledger(path: str, fp: str) -> None:
+    """把一筆指紋寫進帳本。fail-safe：寫不進去就算了（頂多下次重送，不影響主流程）。"""
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(fp + "\n")
+    except Exception:
+        pass
+
+
+def _process_file(path: str, purge: bool, dedup: bool = True) -> tuple:
+    """送一個 fidelity 結果檔的每一筆；purge 才刪。回 (sent, failed, skipped)。fail-safe。
+
+    dedup=True（預設）：送成功的 row 記內容指紋到帳本；下次讀到**內容相同**的同一筆就
+    跳過不重送。修的是「非 pass 的 case 檔不會被 gate 清（永遠不 pass），於是每次
+    Stop hook 都重讀同一個未 purge 的檔、把同一筆一直往 dashboard 灌」的重複列問題。
+    送失敗（5 次都掛）的不記帳本 → 下次會再試。"""
+    sent = failed = skipped = 0
     try:
         if not os.path.isfile(path):
-            return 0, 0
+            return 0, 0, 0
+        ledger_path = _ledger_path(path)
+        seen = _load_ledger(ledger_path) if dedup else set()
         with open(path, "r", encoding="utf-8") as f:
             lines = [ln.strip() for ln in f if ln.strip()]
         for ln in lines:
@@ -133,10 +177,17 @@ def _process_file(path: str, purge: bool) -> tuple:
                     continue
             except Exception:
                 continue
+            fp = _fingerprint(row)
+            if dedup and fp in seen:
+                skipped += 1  # 內容沒變、已送過 → 不重送
+                continue
             if _send_with_retry(_normalize(row)):
                 sent += 1
+                if dedup:
+                    _append_ledger(ledger_path, fp)
+                    seen.add(fp)
             else:
-                failed += 1  # 5 次都失敗，放棄這筆
+                failed += 1  # 5 次都失敗，放棄這筆（不記帳本，下次再試）
         if purge:
             try:
                 os.remove(path)
@@ -144,7 +195,7 @@ def _process_file(path: str, purge: bool) -> tuple:
                 pass
     except Exception:
         pass  # 絕對 fail-safe：不干擾主流程
-    return sent, failed
+    return sent, failed, skipped
 
 
 def _collect_targets(indir: str, infile: str) -> list:
@@ -169,19 +220,25 @@ def main() -> int:
                    help="每個檔送完後刪除。⚠️ 若該結果同時是忠實度 gate 的輸入（Stop hook 情境），"
                         "**不要 purge**——生命週期交給 gate：pass 才刪，否則會在 gate 擋下時把它的"
                         "輸入刪掉、下輪變成『找不到結果檔』。")
+    p.add_argument("--no-dedup", action="store_true",
+                   help="關閉內容去重（預設開啟）。預設會記已送指紋，未 purge 的檔內容不變就不重送，"
+                        "避免非 pass 的 case 被 Stop hook 每次重讀重送、灌爆 dashboard。"
+                        "後端遺失資料需強制重送時才用這個。")
     args = p.parse_args()
 
+    dedup = not args.no_dedup
     targets = _collect_targets(args.indir, args.infile)
-    sent = failed = 0
+    sent = failed = skipped = 0
     for path in targets:
-        s, fl = _process_file(path, args.purge)
+        s, fl, sk = _process_file(path, args.purge, dedup)
         sent += s
         failed += fl
+        skipped += sk
 
     # 只在手動執行（tty）時印摘要，hook 背景執行不印
     if sys.stdout.isatty():
         print(f"[case-fidelity] files={len(targets)} sent={sent} "
-              f"failed(gave up after {MAX_RETRIES})={failed}")
+              f"skipped(dup)={skipped} failed(gave up after {MAX_RETRIES})={failed}")
     return 0
 
 

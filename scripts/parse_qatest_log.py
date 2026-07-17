@@ -8,9 +8,12 @@ qatest.log 每行格式：`ts-[pid][thread]|[LEVEL]|[file:line][func]|msg`。
   - 過程若出現 `_handle_fail_case` + `TestCase failed` → 這次跑 fail；否則 pass
 caseid 比對容忍 -N 後綴（KQT-T37934 ↔ KQT-T37934-1）。同 case×platform 有多次跑時取最新一次。
 
+flaky 偵測：另回 `results`（該 case×platform 依時間排序的每次跑結果 ["pass"/"fail",...]），
+呼叫端（check_platform_delivery --min-runs N）可據此判「最近 N 次是否全 pass」——一次過≠穩定過。
+
 用法：
   parse_qatest_log.py --log ~/Documents/QATest_Output/qatest.log --caseid KQT-T37934 --platform mweb
-回 JSON：{caseid, platform, result: "pass"|"fail"|"not-run", run_count, last_ts}
+回 JSON：{caseid, platform, result: "pass"|"fail"|"not-run", run_count, results, last_ts}
 """
 import argparse
 import json
@@ -56,13 +59,17 @@ def parse(log_path, caseid, platform):
         if _base(r["caseid"]) == _base(caseid) and r["platform"] == platform
     ]
     if not matched:
-        return {"caseid": caseid, "platform": platform, "result": "not-run", "run_count": 0}
+        return {"caseid": caseid, "platform": platform, "result": "not-run",
+                "run_count": 0, "results": []}
+    # 依時間排序的每次跑結果（flaky 用：呼叫端可看「最近 N 次是否全 pass」）
+    results = ["fail" if r["failed"] else "pass" for r in matched]
     last = matched[-1]
     return {
         "caseid": caseid,
         "platform": platform,
         "result": "fail" if last["failed"] else "pass",
         "run_count": len(matched),
+        "results": results,
         "last_ts": last["ts"],
     }
 

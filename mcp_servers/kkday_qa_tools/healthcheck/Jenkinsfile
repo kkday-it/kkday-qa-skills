@@ -1,0 +1,216 @@
+// kkday-qa-tools MCP 後端每日健康檢查（Python 內嵌，完全自包含）
+//
+// ★ 用法：整段貼進 Jenkins job →「Pipeline」→ Definition 選「Pipeline script」
+//   （不是 from SCM）。Python 直接內嵌在 heredoc，不讀 repo 任何檔案，
+//   所以 Jenkins 不用 clone git、不用多一支 .py。
+//
+// ★ 為何用 Python 不用純 curl：Slack 訊息含動態內容，Python 用 json 模組拼 payload，
+//   免去在 shell 裡 \" \n 一堆 escaping 的地獄。
+//
+// ★ Slack token：Jenkins 沒 credential，直接填下面 SLACK_BOT_TOKEN。
+//   需 Slack App 的 Bot User OAuth Token（xoxb-…，權限 chat:write，bot 已邀進 C09CNARRPUP）。
+//   !!! token 已內嵌 → 這段只貼在 Jenkins job 設定裡，別 commit 進 git。
+//
+// 設計：每天都發 Slack（Python 直接打 chat.postMessage，獨立管道不經 8081 埋點）——
+//       健康 → ✅ 綠色報平安（這則＝心跳，沒收到就代表 job 沒跑/掛了）；
+//       不健康 → 🚨 紅色告警，且 exit 1 讓 build 標記失敗。
+// 前置：agent 能連內網 autotest-service.sit.kkday.com，且有 python3。
+
+pipeline {
+    agent any
+
+    triggers { cron('H 9 * * *') }   // 每天約 09:00 跑一次
+
+    options {
+        timeout(time: 5, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        SLACK_CHANNEL   = 'C0BGPQ2FX5Z'
+        SLACK_BOT_TOKEN = 'xoxb-REPLACE-ME'   // 機密！真 token 只填在 Jenkins job 環境設定，絕不 commit 進 git
+        AI_STUDIO       = 'http://autotest-service.sit.kkday.com:8081/ai_studio'
+        QA_PLATFORM     = 'http://autotest-service.sit.kkday.com:8080/api/v1'
+        USER_ID         = 'mr8l9126-d483lhd1gto'
+    }
+
+    stages {
+        stage('Health check') {
+            steps {
+                sh '''python3 - <<'PY'
+import json, os, sys, time, urllib.request, urllib.error
+from urllib.parse import urlsplit
+from datetime import datetime, timezone
+
+BASE     = os.environ["AI_STUDIO"].rstrip("/")
+PLATFORM = os.environ["QA_PLATFORM"].rstrip("/")
+USER_ID  = os.environ["USER_ID"]
+CHANNEL  = os.environ["SLACK_CHANNEL"]
+TOKEN    = os.environ["SLACK_BOT_TOKEN"]
+T = 6
+FRESH_DAYS = 14   # registry 超過這天數沒新資料 → 疑似 telemetry 靜默失效（route 通但沒人真的送到）
+
+# telemetry 的 4 條寫回 route（send_*.py 對應）。這是「receive-side」檢查：
+# 光 8081 通不代表這些 route 有部署——新 route 沒 deploy 時 send 會收到 404、然後靜默丟失，
+# dashboard/知識圖譜就悄悄停止成長。route 404 = 未部署 = 不健康（要 exit 1 告警）。
+SEND_ROUTES = [
+    "/api/qa-automation/flow-registry",
+    "/api/qa-automation/case-fidelity",
+    "/api/qa-automation/tool-usage",
+    "/api/qa-automation/locator-registry",
+    "/api/qa-automation/case-delivery",   # #5：交付記錄（send_case_delivery.py）——新 route，沒部署會 404
+]
+# 4 條全試 freshness（「最近有沒有真收到」）：flow/locator 確定有 GET-list 契約（回 {"entries":[...]}
+# 帶 last_verified）；case-fidelity/tool-usage 若後端也支援 GET-list 就一起查，不支援（GET 回 405/
+# 無 entries/無時間欄）就自動安全略過——不會誤報 stale。
+FRESH_ROUTES = list(SEND_ROUTES)
+
+def probe(url, headers=None):
+    start = time.monotonic()
+    req = urllib.request.Request(url, headers=headers or {}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=T) as r:
+            status = r.status
+    except urllib.error.HTTPError as e:
+        status = e.code           # 有回應（含 4xx/5xx）→ 服務有起
+    except Exception as e:
+        return {"reachable": False, "http_status": None, "auth_ok": None,
+                "ms": round((time.monotonic()-start)*1000, 1), "error": f"{type(e).__name__}: {e}"[:200]}
+    return {"reachable": True, "http_status": status, "auth_ok": status not in (401, 403),
+            "ms": round((time.monotonic()-start)*1000, 1), "error": None}
+
+def route_status(path):
+    """GET 一條 send route：404 = 未部署（send 會靜默丟失）；405/400/200/500 = route 有 handler=已部署。"""
+    try:
+        req = urllib.request.Request(BASE + path, method="GET")
+        with urllib.request.urlopen(req, timeout=T) as r:
+            code = getattr(r, "status", r.getcode())
+    except urllib.error.HTTPError as e:
+        code = e.code
+    except Exception as e:
+        return {"deployed": None, "http_status": None, "error": ("%s: %s" % (type(e).__name__, e))[:150]}
+    return {"deployed": code != 404, "http_status": code, "error": None}
+
+def _parse_ts(v):
+    s = str(v).strip().replace("Z", "+00:00")
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            pass
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+def newest_age_days(path):
+    """GET registry entries，回最新一筆距今天數（None=查無資料）。答『最近有沒有真收到』。"""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(BASE + path, method="GET"), timeout=T) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return {"ok": False, "error": ("%s: %s" % (type(e).__name__, e))[:150]}
+    if isinstance(data, dict):
+        entries = data.get("entries", []) or []
+    elif isinstance(data, list):
+        entries = data
+    else:
+        entries = []
+    newest = None
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        for k in ("last_verified", "last_seen", "updated_at", "ts", "created_at"):
+            dt = _parse_ts(e.get(k)) if e.get(k) else None
+            if dt and (newest is None or dt > newest):
+                newest = dt
+    if newest is None:
+        return {"ok": True, "count": len(entries), "age_days": None}
+    age = (datetime.now(timezone.utc) - newest).total_seconds() / 86400.0
+    return {"ok": True, "count": len(entries), "age_days": round(age, 1), "newest": newest.isoformat()}
+
+root8080 = "%s://%s/" % (urlsplit(PLATFORM).scheme, urlsplit(PLATFORM).netloc)
+ai = probe(BASE + "/api/tools/coupon-templates", {"X-User-Id": USER_ID})
+qa = probe(root8080)
+
+# receive-side：8081 通得到才驗 route（8081 掛掉 route probe 也會失敗，別重複報同一件事）
+routes = {p: route_status(p) for p in SEND_ROUTES} if ai["reachable"] else {}
+undeployed = [p for p, s in routes.items() if s.get("deployed") is False]
+# 新鮮度：只查有 GET-list 契約且已部署的 registry
+fresh = {p: newest_age_days(p) for p in FRESH_ROUTES if routes.get(p, {}).get("deployed")}
+stale = [(p, f) for p, f in fresh.items()
+         if f.get("ok") and f.get("age_days") is not None and f["age_days"] > FRESH_DAYS]
+
+# route 404（未部署）也算不健康：send 正在靜默丟失。新鮮度過期只警示、不翻紅（可能只是近期沒人跑）。
+healthy = bool(ai["reachable"] and ai["auth_ok"] and qa["reachable"] and not undeployed)
+print(json.dumps({"healthy": healthy, "ai_studio_8081": ai, "qa_platform_8080": qa,
+                  "send_routes": routes, "freshness": fresh}, ensure_ascii=False, indent=2))
+
+# 新鮮度警示（不翻紅，只提醒「以為在累積其實沒有」）——健康/不健康都附上
+stale_lines = []
+for p, f in stale:
+    stale_lines.append(":warning: `%s` 已 %s 天沒新資料（可能沒人送到/埋點斷了）" % (p, f["age_days"]))
+
+# 健康也發（每日報平安＝心跳；哪天沒收到這則就代表 job 沒跑/掛了 → 順便解 silent-death）
+if healthy:
+    deployed_n = sum(1 for s in routes.values() if s.get("deployed"))
+    fresh_bits = []
+    for p, f in fresh.items():
+        name = p.rsplit("/", 1)[-1]
+        if f.get("ok") and f.get("age_days") is not None:
+            fresh_bits.append("%s 最新 %s 天前" % (name, f["age_days"]))
+        elif f.get("ok"):
+            fresh_bits.append("%s 查無資料" % name)
+    text = (":white_check_mark: *kkday-qa-tools MCP 健康* — "
+            "AI Studio(:8081) ok %sms / QA Platform(:8080) ok %sms / "
+            "telemetry route %s/%s 已部署" % (ai["ms"], qa["ms"], deployed_n, len(SEND_ROUTES)))
+    if fresh_bits:
+        text += "\\nregistry 新鮮度：" + "；".join(fresh_bits)
+    if stale_lines:
+        text += "\\n" + "\\n".join(stale_lines)
+else:
+    lines = []
+    if not ai["reachable"]:
+        lines.append(":x: AI Studio(:8081) 連不到（%s）" % ai["error"])
+    elif not ai["auth_ok"]:
+        lines.append(":x: AI Studio(:8081) auth 失效 (http %s) — admin id 可能被移除/降權" % ai["http_status"])
+    if not qa["reachable"]:
+        lines.append(":x: QA Platform(:8080) 連不到（%s）" % qa["error"])
+    for p in undeployed:
+        lines.append(":x: telemetry route `%s` 未部署 (http %s) — 對應 send_*.py 正在靜默丟失"
+                     % (p, routes[p].get("http_status")))
+    text = (":rotating_light: *kkday-qa-tools MCP 後端不健康*\\n" + "\\n".join(lines) +
+            (("\\n" + "\\n".join(stale_lines)) if stale_lines else "") +
+            "\\n\\n8081 掛→會員/點數/券/等級/查詢類 tool；8080 掛→建商品/建單/複製/兌換/月曆類 tool；"
+            "route 未部署→該類 telemetry（flow/fidelity/tool-usage/locator）沒在累積。")
+
+# 打 Slack（獨立管道，不經 8081）：健康/不健康都發，內容不同
+body = json.dumps({"channel": CHANNEL, "text": text}).encode()
+req = urllib.request.Request("https://slack.com/api/chat.postMessage", data=body, method="POST",
+        headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json; charset=utf-8"})
+try:
+    with urllib.request.urlopen(req, timeout=T) as r:
+        res = json.loads(r.read().decode())
+    if not res.get("ok"):
+        print("[error] Slack ok=false: %s" % res.get("error"), file=sys.stderr)
+except Exception as e:
+    print("[error] Slack 送失敗: %s" % e, file=sys.stderr)
+
+sys.exit(0 if healthy else 1)
+PY'''
+            }
+        }
+    }
+
+    post {
+        // Python exit 1，或在戳到之前就掛掉，都進這裡（補 silent death）。
+        // exit 1 時 Slack 已由 Python 發過；下面預設註解，避免重複發。
+        failure {
+            echo "Health check FAILED — ${env.BUILD_URL}"
+            // slackSend(channel: env.SLACK_CHANNEL, color: 'danger',
+            //           message: ":warning: MCP 健康檢查 job 失敗 ${env.BUILD_URL}")
+        }
+    }
+}
