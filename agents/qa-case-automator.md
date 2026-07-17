@@ -80,6 +80,7 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
   - 步驟相同的平台 → **直接共用同一套 test_step,不需任何平台分支**；
   - 步驟有差異處 → 用 `if pages.platform == Platform.MWEB / Android / iOS:` 分支處理那幾步；
   - **絕不加 `limit_test_platform`** —— 它的作用是「限死只跑單一平台、其餘直接 Skip」（見 framework `common.py`），加了反而讓別的 tag 平台跑不了。
+  - 🔴 **改共用檔優先「加分支」、別動共用主幹**：要讓某平台行為不同時，用 `if platform==X` 加岔路，**別改大家都會走的共用邏輯/斷言/共用 locator**——那個 step/page-object 可能被**其他 case** 也用到，改主幹會把它們改壞，而只跑當前 case 看不到。**萬一非改共用主幹不可**：在回報裡明講「改了共用符號 X（也被誰用到）」，讓主對話/planner 的 `impacted_cases` 回歸涵蓋到（見 automate-tcms-cases「共用主幹改動攔截」）。只驗當前 case 兩平台不算數。
   - **「交付某平台」的唯一判準 = 真的用 `--platform X` 跑過、且 qatest 尾巴那行是 `0 failed`。** 不是口頭說 pass、不是「case 能跑」、更不是拿別平台硬套跑綠。
   - 某平台做不了（缺實體機/前置）→ 標 `blocked`＋原因，其餘平台照跑；tag 全部都無法進行才整個 case blocked。**逐平台列出結果,並附每平台那行 qatest summary 原文（見輸出規範）**；tag 平台缺任一「跑出 0 failed」即非完成。
 - **能安全帶預設就帶入並記錄假設**，繼續做：環境 `stage`、語系 `zh-tw`、商品 URL slug→oid、既定測試帳號、label 標的所有 UI 平台…
