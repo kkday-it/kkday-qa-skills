@@ -4,7 +4,8 @@ export const meta = {
   phases: [
     { title: 'Plan', detail: '每個 case 一個 qa-case-planner：抓 spec + 查 flow-registry + 出計畫（前置/斷言/假設），供人確認意圖' },
     { title: 'Implement', detail: '每個 case 一個 qa-case-automator（worktree 隔離、並行模式）照確認的計畫全平台實作' },
-    { title: 'Gate+Review', detail: 'per-platform 交付 gate + 忠實度 review，未達標回修（最多 3 輪）' },
+    { title: 'Gate+Review', detail: 'per-platform 交付 gate + 忠實度 review（對抗式 reviewer，模型與 automator 錯開破盲點），未達標回修（最多 3 輪）' },
+    { title: 'Evaluate', detail: '高風險/對外 case（Critical/High）達標後，qa-evaluator 獨立第三隻眼挑本質品質（不擋交付、標記給人）' },
   ],
 }
 
@@ -73,6 +74,7 @@ const PLAN_SCHEMA = {
     caseid: { type: 'string' },
     platform: { type: 'string' },
     plan: { type: 'string' },
+    priority: { type: 'string' }, // Critical | High | Medium | Low（TCMS 原始優先級，供 Evaluate 判高風險）
   },
   required: ['caseid', 'plan'],
 }
@@ -82,7 +84,7 @@ function planPrompt(caseId) {
 1. 抓 TCMS spec（tcms-fetch-cases）→ 讀懂要測的真正邏輯。
 2. 起手先查 flow-registry：\`python3 ${SKILLS}/scripts/get_verified_flow.py --q "<前置語意>" --platform <平台> --repo-path ${REPO} --registry ${SKILLS}/flow_registry/registry.json\`（用前先驗；只信 verified）。沒命中才 grep repo，挖到新可重用 flow **當下**用 \`${SKILLS}/scripts/send_flow_registry.py\` 寫回。
 3. 出計畫：解讀 / 平台 / 前置用哪個既有 flow 建真實資源（禁捏假 id）/ 關鍵 specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority（TCMS→框架：Critical→RAT/High→FAST/Medium→TOFT/Low→FET）/ 假設 / 待確認點。
-回傳結構化：caseid、platform、plan（完整計畫文字，供人確認）。`
+回傳結構化：caseid、platform、plan（完整計畫文字，供人確認）、priority（TCMS 原始優先級 Critical/High/Medium/Low；高風險 case 交付後會多跑一道獨立 evaluator）。`
 }
 
 const IMPL_SCHEMA = {
@@ -140,6 +142,8 @@ ${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 
 }
 
 // 獨立驗證：確定性 gate（矇混不過）+ per-platform 忠實度 review。不信 automator 自評。
+// 破共享盲點：用 qa-case-fidelity-reviewer（帶「預設有漏/被弄綠」對抗式 mindset）且**模型與 automator（opus）錯開成 sonnet**——
+// 同一顆模型出題又改考卷會漏同樣的東西；錯開模型才抓得到對方的系統性盲點。gate 那半是確定性 script、不靠模型。
 async function verify(caseId, impl) {
   const tags = (LIMIT_PLATFORMS || impl.tags_platforms || []).join(',')
   const resultsLines = (impl.per_platform || [])
@@ -156,7 +160,49 @@ async function verify(caseId, impl) {
 步驟 2 — 忠實度（gate 判不出、靠你）：對每個 gate 判 pass 的平台，比對 case 規格 vs 實作斷言，抓「沒真驗到的 expected」「過弱/恆真斷言」「參數收了沒用」。判準是**該平台每個 expected 有沒有被真斷言驗到**——步驟與 web 相同就共用斷言、有差異才要對應斷言；**不是**看有沒有 \`if platform\` 分支（步驟一樣本來就沒分支，不代表沒交付）。
 
 回傳：delivered（gate \`missing_pass\` 空 **且** 每平台 fidelity 達標才 true）、gate_missing（gate 的 missing_pass）、fidelity_issues、fix_instructions。`,
-    { label: `verify:${caseId}`, phase: 'Gate+Review', schema: VERDICT_SCHEMA }
+    {
+      label: `verify:${caseId}`,
+      phase: 'Gate+Review',
+      agentType: 'qa-case-fidelity-reviewer', // 真對抗式 reviewer，不再用匿名 inline agent
+      model: 'sonnet', // 與 automator（opus）錯開，破共享盲點
+      schema: VERDICT_SCHEMA,
+    }
+  )
+}
+
+// 高風險判定：Critical / High（或計畫文字裡出現的對應框架級 RAT/FAST）視為對外/高風險，交付後多跑 evaluator。
+function isHighRisk(plan) {
+  if (!plan) return false
+  const pr = typeof plan === 'object' && plan.priority ? String(plan.priority) : ''
+  const text = typeof plan === 'string' ? plan : JSON.stringify(plan || '')
+  return /critical|high|\bRAT\b|\bFAST\b/i.test(pr || text)
+}
+
+const EVAL_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    caseid: { type: 'string' },
+    verdict: { type: 'string' }, // clean | concerns
+    concerns: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['caseid', 'verdict'],
+}
+
+// 第三隻眼：gate+reviewer 都放行後，對高風險 case 再跑一次「跳脫框架」的獨立 critic。
+// 不擋交付（它是建議、非 gate），只把疑慮標記出來給人看。
+async function evaluate(caseId, impl, plan) {
+  const files = (impl.per_platform || []).flatMap((p) => p.files || [])
+  return await agent(
+    `你是 qa-evaluator（獨立 critic，跳脫 acceptance criteria、故意挑剔本質品質）。case=${caseId}，框架 repo=${REPO}。
+這個 case 已通過確定性 gate 與忠實度 reviewer，被判「交付達標」。你的任務**不是**再驗一次覆蓋率，而是換角度問：
+- 這些斷言真能抓到未來的 regression 嗎？還是只是「現在剛好綠」？
+- 有沒有測到「對的東西的錯法」——看似驗了 expected，其實驗的是恆真 / proxy / 環境副作用？
+- 前置真實資源是真的用既有 flow 建的，還是繞過去了？
+- 可維護性：下一個人改到相關功能時，這個 case 會不會誤報或漏報？
+實作檔案：${JSON.stringify(files)}。可用 Read/Grep 讀這些檔與 repo 既有做法比對（唯讀）。
+回傳：caseid、verdict（clean=無本質疑慮 / concerns=有）、concerns（具體疑慮清單，每條可執行）。`,
+    { label: `evaluate:${caseId}`, phase: 'Evaluate', agentType: 'qa-evaluator', schema: EVAL_SCHEMA }
   )
 }
 
@@ -186,19 +232,24 @@ if (MODE === 'plan') {
 }
 
 // ── mode=execute / auto：計畫 → 實作 → gate+review+回修，每案獨立不等 ──
+const planByCase = {} // caseId → 計畫（供 Evaluate 階段判高風險；每 case 各寫一次，並行安全）
 const results = await pipeline(
   caseIds,
   // stage 0：取得計畫（auto=現場 spawn planner；execute=用主對話確認過的）
   async (caseId) => {
+    let plan
     if (MODE === 'auto') {
-      return await agent(planPrompt(caseId), {
+      plan = await agent(planPrompt(caseId), {
         label: `plan:${caseId}`,
         phase: 'Plan',
         agentType: 'qa-case-planner',
         schema: PLAN_SCHEMA,
       })
+    } else {
+      plan = CONFIRMED_PLANS[caseId] || null
     }
-    return CONFIRMED_PLANS[caseId] || null
+    planByCase[caseId] = plan
+    return plan
   },
   // stage 1：照計畫實作
   (plan, caseId) =>
@@ -230,14 +281,26 @@ const results = await pipeline(
       if (!cur) break
       verdict = await verify(caseId, cur)
     }
-    return { caseId, rounds: round, ...(verdict || { delivered: false }), impl: cur }
+    const result = { caseId, rounds: round, ...(verdict || { delivered: false }), impl: cur }
+    // 第三隻眼：只有達標 + 高風險（Critical/High）才跑 evaluator，省成本；不擋交付、只標記疑慮。
+    if (result.delivered && cur && isHighRisk(planByCase[caseId])) {
+      result.evaluation = (await evaluate(caseId, cur, planByCase[caseId])) || null
+    }
+    return result
   }
 )
 
 // ── 收斂：達標 vs 未達標；統一開 PR 由主對話收 worktree 後處理（需先問使用者）──
 const delivered = results.filter((r) => r && r.delivered)
 const failed = results.filter((r) => r && !r.delivered)
+// 達標但獨立 evaluator 有本質疑慮的高風險 case：不擋交付，但要浮出來給人看。
+const evaluatorConcerns = delivered
+  .filter((r) => r.evaluation && r.evaluation.verdict === 'concerns')
+  .map((r) => ({ caseId: r.caseId, concerns: r.evaluation.concerns || [] }))
 log(`完成：${delivered.length}/${caseIds.length} 全平台交付達標；${failed.length} 未達標`)
+if (evaluatorConcerns.length) {
+  log(`⚠️ ${evaluatorConcerns.length} 個高風險 case 交付達標但 evaluator 有本質疑慮，建議人工過目`)
+}
 
 return {
   total: caseIds.length,
@@ -248,6 +311,7 @@ return {
     gate_missing: r.gate_missing,
     fidelity_issues: r.fidelity_issues,
   })),
+  evaluator_concerns: evaluatorConcerns,
   note:
     '達標 case 已在各自 git worktree 完成全平台實作。主對話收攏各 worktree 改動、統一開「一個」PR（依規範須先問使用者是否開 PR）。未達標的排入待人工。',
 }
