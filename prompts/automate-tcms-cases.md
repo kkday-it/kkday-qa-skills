@@ -16,10 +16,11 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 
 ## 模式：互動 vs 自主（決定「要不要問使用者」）
 
-- **互動模式**（有人在）：碰到待確認點（平台選擇、**App 裝置選擇**、`web/API` 混用、缺 oid、**打後端 API 但缺 swagger/API spec**、**UI 斷言判準模糊**…）→ **問使用者**。
+- **互動模式**（有人在）：碰到待確認點（平台選擇、**App 裝置選擇**、`web/API` 混用、缺 oid、**打後端 API 但缺 swagger/API spec**、**UI 斷言判準模糊**、**改到共用主幹**…）→ **問使用者**。
   - 🔴 **缺 swagger/spec（打後端 API 的 case）**：planner 的「endpoint 來源盤點」若標了「無 swagger、endpoint 待驗證」→ **spawn automator 前先問使用者要 spec**（swagger/OpenAPI/Postman URL 或 repo 路徑）。有 spec 就帶給 automator ground、endpoint 不用猜；使用者也沒有 → 明確告知「將改讀後端 code / 跑真實 API 觀察，風險較高」再續（不悶頭猜）。
   - 🔴 **UI 斷言判準模糊（有 UI 平台的 case）**：`ambiguous_ui_assertions` 非空 → **spawn automator 前先問使用者澄清**「這條 UI expected 具體要看到什麼才算成功？用哪個 SKU/帳號/資料？」（UI 沒有 swagger，case 步驟是唯一 source of truth；模糊就會被 automator 帶預設硬寫成假綠）。拿到判準併進計畫；使用者也給不出 → 明確告知「將用最合理判準且標低信心，交付後靠 fidelity gate 把關」。
-- **自主 / harness 模式**（無人）：**不停等輸入** → 套安全預設續跑（label 標的所有 UI 平台、env=stage、**裝置用唯一在線實體機**、**缺 spec 則讀後端 code/跑觀察並標待驗證**、**UI 判準模糊則用最合理判準並標低信心送 gate**…），把 `blocked` / 低信心排入**待人工佇列**。
+  - 🔴 **改到共用主幹（web↔mweb / android↔ios 共用 step/page-object/locator）**：`mutates_shared_mainpath=true` 且 `impacted_cases` 非空 → **問使用者要不要把受影響的其他 case 一併加進批次回歸**（只重跑當前 case 兩平台，證明不了共用改動沒把別人改壞）。要 → 加進 cases 清單一起跑；不要 → 標高風險、報告醒目列出。
+- **自主 / harness 模式**（無人）：**不停等輸入** → 套安全預設續跑（label 標的所有 UI 平台、env=stage、**裝置用唯一在線實體機**、**缺 spec 則讀後端 code/跑觀察並標待驗證**、**UI 判準模糊則用最合理判準並標低信心送 gate**、**改到共用主幹則自動把 `impacted_cases` 一併納入本批回歸**（無人可問，寧可多跑也不要漏回歸））把 `blocked` / 低信心排入**待人工佇列**。
 
 ### App 裝置選擇（spawn mobile automator「前」，主對話做）
 
@@ -60,6 +61,7 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
        → **把計畫攤給使用者確認/改**（治「不是我要的」的關鍵；別跳過）
        → 🔴 **缺 swagger 攔截**：任一案回傳 `needs_spec=true`（打後端 API 但沒找到 swagger/spec）→ **在 execute 前先問使用者要 spec**（AskUserQuestion：swagger/OpenAPI/Postman URL 或 repo 路徑）。拿到就併進該案計畫給 automator ground；使用者也沒有 → 記錄「改讀後端 code/跑觀察、endpoint 標待驗證、風險較高」再續。這是確定性觸發（讀旗標，不靠讀計畫文字猜）。
        → 🔴 **UI 判準模糊攔截**：任一案 `ambiguous_ui_assertions` 非空 → **在 execute 前先問使用者澄清**（AskUserQuestion：該 UI expected 具體看到什麼算成功、用哪個 SKU/資料）。拿到判準併進計畫；給不出 → 記錄「用最合理判準+標低信心，交付後靠 fidelity gate 把關」再續。同樣是讀旗標的確定性觸發。
+       → 🔴 **共用主幹改動攔截**：任一案 `mutates_shared_mainpath=true` 且 `impacted_cases` 非空（改到 web↔mweb / android↔ios 共用主幹，其他 case 也用到）→ **在 execute 前先問使用者**（AskUserQuestion：要不要把 `impacted_cases` 一併加進本批回歸？）。答要 → 把那些 case **加進 cases 清單一起跑**（走同一 pipeline + 三道 gate，自然回歸）；答不要 → 記錄「共用主幹已改、受影響 case 未回歸」為**高風險項**，在批次報告醒目標出（不可靜默略過）。只重跑當前 case 的兩平台證明不了共用改動沒改壞別人——這是讀旗標的確定性觸發。
        → 🔴 **橡皮圖章防呆（#8）**：回傳的 `confirmation.high_risk`（Critical/High）**禁一鍵全確認**——
          對每個高風險 case **各跑一次 AskUserQuestion**，把該案 specific 斷言攤出來、逼使用者針對
          「驗的是不是對的東西」做一個非讀不可的選擇；`confirmation.batchable`（Medium/Low）才准批次一次確認。

@@ -84,6 +84,8 @@ const PLAN_SCHEMA = {
     unverified_endpoints: { type: 'array', items: { type: 'string' } }, // 無權威來源、暫用猜測/觀察的 endpoint 清單
     has_ui: { type: 'boolean' }, // 這條 case 是否有 UI 平台要驗 expected（true 才需 UI 斷言意圖澄清）
     ambiguous_ui_assertions: { type: 'array', items: { type: 'string' } }, // 落不出「具體可觀察判準/變體」的 UI expected 清單，主對話須問使用者澄清
+    mutates_shared_mainpath: { type: 'boolean' }, // true = 會改到 web↔mweb / android↔ios 的共用主幹（非只加 platform 分支），可能改壞其他也用它的 case
+    impacted_cases: { type: 'array', items: { type: 'string' } }, // 共用主幹改動時，其他也用到該共用 step/page-object/locator 的 case id（建議一併回歸），主對話據此問使用者
   },
   required: ['caseid', 'plan'],
 }
@@ -94,8 +96,9 @@ function planPrompt(caseId) {
 2. 起手先查 flow-registry：\`python3 ${SKILLS}/scripts/get_verified_flow.py --q "<前置語意>" --platform <平台> --repo-path ${REPO} --registry ${SKILLS}/flow_registry/registry.json\`（用前先驗；只信 verified）。沒命中才 grep repo，挖到新可重用 flow **當下**用 \`${SKILLS}/scripts/send_flow_registry.py\` 寫回。
 3. 🔴 若這條 case 打後端 API（API case 或前端直打後端）→ 先做「endpoint 來源盤點」：按 merged helper → swagger/OpenAPI/Postman → 後端 source → PRD 順序找權威來源來 ground，endpoint 級知識**禁用猜的**。先自己找 swagger/spec（grep repo、後端 repo、TCMS 附連結）；找不到就把該 endpoint 標「待驗證」並列進待確認點請人提供。純 UI-locator case 跳過此步。
 4. 🔴 若這條 case 有 UI 平台要驗 expected → 做「UI 斷言意圖澄清」：UI 沒有 swagger，case 步驟是唯一 source of truth。對每條 UI expected 落出「具體可觀察成功判準（會出現/變成什麼元素或狀態）+ 用哪個變體/資料（SKU/帳號/圖檔）」；落不出來（case 太模糊）→ 標待確認點問人，**禁帶模糊預設（如「沒報錯就算」）硬過**。**禁在計畫寫死 xpath**（定位交 automator 對真實 DOM 驗）。能下壓到 API 驗的業務邏輯優先下壓，UI 只留不可約斷言。
-5. 出計畫：解讀 / 平台 / endpoint 來源盤點（打後端才填）/ UI 斷言意圖澄清（有 UI 才填）/ 前置用哪個既有 flow 建真實資源（禁捏假 id）/ 關鍵 specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority（TCMS→框架：Critical→RAT/High→FAST/Medium→TOFT/Low→FET）/ 假設 / 待確認點。
-回傳結構化：caseid、platform、plan（完整計畫文字，供人確認）、priority（TCMS 原始優先級 Critical/High/Medium/Low；高風險 case 交付後會多跑一道獨立 evaluator）、hits_backend_api、spec_source（找到的 swagger/spec/後端 source 位置，無則 "none"）、needs_spec（打後端但找不到 swagger/spec = true）、unverified_endpoints（無權威來源暫用猜測的 endpoint）、has_ui（是否有 UI 平台要驗）、ambiguous_ui_assertions（落不出具體判準/變體的 UI expected 清單，主對話會據此問使用者澄清）。`
+5. 🔴 若這條 case 會改到既有共用檔（web↔mweb 共用的 test_step/page-object、android↔ios 共用的 mobile step、或共用 locator）→ 做「共用主幹影響盤點」：grep 出還有哪些**其他 case** 也用到你要改的那個 step/page-object/函式/locator。判斷你的改法是「**只加 \`if platform==X\` 岔路、共用主幹不動**」（既有走原路、壞不了 → impacted_cases 留空）還是「**改到共用主幹本身**（改了大家都會走的邏輯/斷言/共用 locator）」（→ 列出受影響的其他 case id，建議一併回歸）。**優先用加分支、不改主幹**。
+6. 出計畫：解讀 / 平台 / endpoint 來源盤點（打後端才填）/ UI 斷言意圖澄清（有 UI 才填）/ 共用主幹影響（會不會動主幹、受影響 case）/ 前置用哪個既有 flow 建真實資源（禁捏假 id）/ 關鍵 specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority（TCMS→框架：Critical→RAT/High→FAST/Medium→TOFT/Low→FET）/ 假設 / 待確認點。
+回傳結構化：caseid、platform、plan（完整計畫文字，供人確認）、priority（TCMS 原始優先級 Critical/High/Medium/Low；高風險 case 交付後會多跑一道獨立 evaluator）、hits_backend_api、spec_source（找到的 swagger/spec/後端 source 位置，無則 "none"）、needs_spec（打後端但找不到 swagger/spec = true）、unverified_endpoints（無權威來源暫用猜測的 endpoint）、has_ui（是否有 UI 平台要驗）、ambiguous_ui_assertions（落不出具體判準/變體的 UI expected 清單，主對話會據此問使用者澄清）、mutates_shared_mainpath（會不會改到共用主幹＝非只加 platform 分支）、impacted_cases（改主幹時、其他也用到該共用 step/page-object 的 case id，主對話會據此問使用者要不要一併回歸）。`
 }
 
 const IMPL_SCHEMA = {

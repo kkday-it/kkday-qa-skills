@@ -18,7 +18,7 @@ description: |
 
   回傳：解讀 / 平台 / **endpoint 來源盤點（打後端 API 的 case：用了哪層 grounding、有無 swagger/spec、哪些 endpoint 待驗證）** /
   **前置建置計畫（引用哪個既有 setup flow / helper 建真實資源）** /
-  **關鍵 specific 斷言** / 已帶入假設 / 待人確認點（缺 swagger 時會在此請主對話向人要 spec）。
+  **關鍵 specific 斷言** / **共用主幹影響（會改到共用 step/page-object/locator 時，列出其他也用到它的 case，供一併回歸）** / 已帶入假設 / 待人確認點（缺 swagger 時會在此請主對話向人要 spec）。
 tools:
   - Read
   - Bash
@@ -164,6 +164,12 @@ endpoint 來源盤點（僅打後端 API 的 case 要填；純 UI 寫「不適�
     - 判準寫不出來（case 太模糊）→ 不要帶模糊預設，列進「待確認點」問人
   - ...
 
+共用主幹影響（會改到既有共用檔才填；否則寫「不適用」）:
+  - 要改的共用符號: <共用 test_step/page-object 函式名 / 共用 locator，及 file>
+  - 改法: <只加 `if platform==X` 岔路，共用主幹不動 → 既有壞不了 / 改到共用主幹本身 → 有回歸風險>
+  - 受影響的其他 case（還有誰用這個共用符號，grep 出來）: <case id 清單，或「無」>
+    - 只加分支 → 受影響清單留空；改到主幹 → 列出，建議一併回歸
+
 沿用既有: <會重用哪些現成 page object / test step / setup flow>
 帶入假設: <環境/語系/平台/關鍵字/裝置… 帶了哪些預設>
 待確認點: <真正需要人拍板的：解讀對不對、要不要這樣建前置、平台範圍…>
@@ -204,6 +210,7 @@ KQT-Txxxxx:
 2. **斷言綁 case 明確預期，禁鬆 proxy。** 要對到特定狀態碼 / 錯誤碼 / 值 / 狀態轉移；不准「只要不是成功值就算」這種——錯的路徑也會讓它成立 = 假綠。
 2.5. **有 UI 平台的 case → 動手前必跑「UI 斷言意圖澄清」（§3.8）：每條 UI expected 落出「具體可觀察成功判準 + 變體/資料」。** UI 沒有 swagger，case 步驟就是唯一 source of truth；判準寫不出來 → 列待確認點問人，不准帶模糊預設（如「沒報錯就算」）硬過。禁在計畫/spec 寫死 xpath（定位交 automator 對真實 DOM 驗）。能下壓到 API 驗的業務邏輯優先下壓，UI 只留不可約斷言。
 3. **先沿用既有做法**，不憑空造第二套（同時保「對」與「跟團隊一致」）。
+3.3. **會改到既有共用檔（web↔mweb / android↔ios 共用的 step/page-object/locator）→ 必跑「共用主幹影響盤點」。** 優先「只加 `if platform==X` 岔路、共用主幹不動」（既有走原路、壞不了）；**一旦改到共用主幹本身，就 grep 出所有還用它的其他 case 填進 `impacted_cases`**，主對話會據此問使用者要不要把那些一併加進批次回歸。只重跑當前 case 的兩平台**證明不了**共用改動沒把別的 case 改壞——別漏這道。
 3.5. **打後端 API 的 case → 動手前必跑「來源盤點」（§3.7），endpoint 級知識一律找權威來源（merged helper / swagger / 後端 source）來讀，禁用猜的。** 自己找不到 swagger/spec → 列進「待確認點」請人提供，並把該 endpoint 標 `← 待驗證`；不准產一個看似篤定其實用猜的計畫。
 4. **`priority` 要用 TCMS→框架的固定對照，禁止照抄 TCMS 字面。** 框架 yaml 的 `priority` 是 `Priority` enum `rat` / `fast` / `toft` / `fet`（見 `QATest/src/lib/constants/priority.py`），**不是** TCMS 的 `Critical / High / Medium / Low`。**照這張對照換算**：
 
