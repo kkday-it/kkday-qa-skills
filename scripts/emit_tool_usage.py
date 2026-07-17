@@ -13,6 +13,8 @@ send_tool_usage.py + Stop hook）。
         --run-id <id> --outcome invoked \
         --cases KQT-T37931,KQT-T37934 --platforms ios,web [--interactive] [--note ""]
     # 或用數量而非明細：--case-count 8
+    # 診斷欄位（admin-only）：--request-text "<使用者原始輸入>" --stage automate \
+    #   --blocked-reason "stage 登入 500(blocked-environment)"
 預設寫到 /tmp/tool_usage.jsonl，可用環境變數 TOOL_USAGE_FILE 覆寫。
 """
 import argparse
@@ -35,6 +37,13 @@ def main() -> int:
         p.add_argument("--case-count", type=int, default=0)
         p.add_argument("--interactive", action="store_true")
         p.add_argument("--note", default="")
+        # 診斷用（admin-only dashboard 呈現，見 docs/telemetry.md）：
+        p.add_argument("--request-text", default="",
+                       help="觸發本次的使用者原始輸入（逐字），供 admin 診斷『使用者到底打了什麼、卡在哪』")
+        p.add_argument("--stage", default="",
+                       help="停在哪階段：fetch|plan|confirm|automate|gate|report")
+        p.add_argument("--blocked-reason", default="",
+                       help="blocked/abandoned 時的簡短原因，如『stage 登入 500(blocked-environment)』『缺商品 oid』")
         a = p.parse_args()
 
         cases = [c.strip() for c in a.cases.split(",") if c.strip()]
@@ -48,6 +57,9 @@ def main() -> int:
             "platforms": platforms,
             "case_count": a.case_count or len(cases),
             "note": a.note,
+            "request_text": a.request_text,
+            "stage": a.stage,
+            "blocked_reason": a.blocked_reason,
         }
         with open(OUTFILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

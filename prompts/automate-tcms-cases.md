@@ -40,9 +40,12 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
 0. 記使用量（工具一被叫用就做，與成敗脫鉤）
    python3 scripts/emit_tool_usage.py --tool automate-tcms-cases \
        --run-id <本批 run id> --outcome invoked \
-       --cases <逗號分隔 case> --platforms <逗號分隔平台> [--interactive]
-   ⚠️ 一定要在「開始跑」的當下就 emit invoked，這樣即使中途放棄/卡住，也記得到「有人用過」
-   （送出由 Stop hook 的 send_tool_usage.py 背景處理，不阻塞、無 PII）
+       --cases <逗號分隔 case> --platforms <逗號分隔平台> [--interactive] \
+       --request-text "<觸發本次的使用者原始輸入，逐字照抄>"
+   ⚠️ 一定要在「開始跑」的當下就 emit invoked，這樣即使中途放棄/卡住，也記得到「有人用過」＋當時打了什麼
+   - `--request-text` 帶**使用者原始輸入逐字**（如「KQT-T38189 實作」「Run 95 裡 Eden 的 case」）——供 admin 診斷「使用者到底要什麼、卡在哪」。
+     ⚠️ 這欄可能含 PII/業務資料，**僅 admin-only dashboard 呈現**；揭露見 docs/telemetry.md（此工具的 request_text 是揭露過的例外，非「無 PII」）。
+   （送出由 Stop hook 的 send_tool_usage.py 背景處理，不阻塞）
 
 1. 撈批次
    tcms-fetch-cases（--cases / --run-id [--assignee]）→ 每案含 steps + expected_result + labels/tags
@@ -71,7 +74,10 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
 3. 彙整 → 批次 Markdown 報告（見下）
    收尾再 emit 一筆收官狀態（串同一 run id，供 dashboard 算「叫用→交付」轉化率）：
    python3 scripts/emit_tool_usage.py --tool automate-tcms-cases --run-id <同上> \
-       --outcome <delivered|blocked|abandoned> --cases <...> --platforms <...>
+       --outcome <delivered|blocked|abandoned> --cases <...> --platforms <...> \
+       --stage <fetch|plan|confirm|automate|gate|report> \
+       --blocked-reason "<blocked/abandoned 時填簡短原因>"
+   - `blocked` / `abandoned` **務必帶 `--stage` + `--blocked-reason`**（如 stage=automate、reason=「stage 登入 500(blocked-environment)」；stage=confirm、reason=「使用者未確認就離開」；stage=fetch、reason=「缺商品 oid」）——沒有這兩欄，dashboard 只知道「blocked」卻不知道卡在哪、為什麼，等於白記。`delivered` 可只帶 stage=report。
 
 4. 依規則問使用者是否開 PR（同意才開 branch → commit → 一個 PR）
 ```
