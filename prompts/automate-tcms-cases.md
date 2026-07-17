@@ -16,8 +16,10 @@ subagent 只做單一職責；**迴圈控制、忠實度把關、彙整呈現、
 
 ## 模式：互動 vs 自主（決定「要不要問使用者」）
 
-- **互動模式**（有人在）：碰到待確認點（平台選擇、**App 裝置選擇**、`web/API` 混用、缺 oid…）→ **問使用者**。
-- **自主 / harness 模式**（無人）：**不停等輸入** → 套安全預設續跑（label 標的所有 UI 平台、env=stage、**裝置用唯一在線實體機**…），把 `blocked` / 低信心排入**待人工佇列**。
+- **互動模式**（有人在）：碰到待確認點（平台選擇、**App 裝置選擇**、`web/API` 混用、缺 oid、**打後端 API 但缺 swagger/API spec**、**UI 斷言判準模糊**…）→ **問使用者**。
+  - 🔴 **缺 swagger/spec（打後端 API 的 case）**：planner 的「endpoint 來源盤點」若標了「無 swagger、endpoint 待驗證」→ **spawn automator 前先問使用者要 spec**（swagger/OpenAPI/Postman URL 或 repo 路徑）。有 spec 就帶給 automator ground、endpoint 不用猜；使用者也沒有 → 明確告知「將改讀後端 code / 跑真實 API 觀察，風險較高」再續（不悶頭猜）。
+  - 🔴 **UI 斷言判準模糊（有 UI 平台的 case）**：`ambiguous_ui_assertions` 非空 → **spawn automator 前先問使用者澄清**「這條 UI expected 具體要看到什麼才算成功？用哪個 SKU/帳號/資料？」（UI 沒有 swagger，case 步驟是唯一 source of truth；模糊就會被 automator 帶預設硬寫成假綠）。拿到判準併進計畫；使用者也給不出 → 明確告知「將用最合理判準且標低信心，交付後靠 fidelity gate 把關」。
+- **自主 / harness 模式**（無人）：**不停等輸入** → 套安全預設續跑（label 標的所有 UI 平台、env=stage、**裝置用唯一在線實體機**、**缺 spec 則讀後端 code/跑觀察並標待驗證**、**UI 判準模糊則用最合理判準並標低信心送 gate**…），把 `blocked` / 低信心排入**待人工佇列**。
 
 ### App 裝置選擇（spawn mobile automator「前」，主對話做）
 
@@ -47,11 +49,14 @@ python3 scripts/list_mobile_devices.py --json --pick   # iOS 走 idb、Android �
    ⚠️ 即時快照，實作當下才 fetch，不沿用舊 /tmp
 
 2. 🔴 一律跑 batch-tcms-automate workflow（**不管 1 個還是 N 個 case 都走這套**，不要自己手動 for-loop 串 agent）
+   > 🔴 **平行的關鍵，別退化成串行**：workflow 內用 `pipeline()` —— case A 在跑 automator（Implement）時，case B 可同時在跑 planner（Plan），**跨案自然平行**（上限≈CPU 核−2）。**絕不可自己在主對話一個一個 `Agent(qa-case-planner)`、`run_in_background:false` 串著等**——那會關掉跨案 pipeline，退化成「一案做完才換下一案」的串行（實測會慢非常多）。要 planner，就丟 workflow 讓它在 pipeline 裡跑。**同一份研究也別做兩遍**：計畫產出後傳給 automator 當地基，automator 只針對性驗證、不重跑整 repo discovery（見 qa-case-automator §0）。
    2a. 出計畫給人確認（互動預設，mode=plan）：
        Workflow('batch-tcms-automate', {cases:[...], platforms:[...可選]})
-       → 每案跑 qa-case-planner，回傳計畫：解讀（真正要測的邏輯）/ 前置用哪個既有 flow 建真實資源（禁捏假 id）/
-         specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority 對照 / 假設 / 待確認點
+       → 每案跑 qa-case-planner，回傳計畫：解讀（真正要測的邏輯）/ **endpoint 來源盤點（打後端 API 的 case：用了哪層 grounding、有無 swagger/spec、哪些 endpoint 待驗證）** / 前置用哪個既有 flow 建真實資源（禁捏假 id）/
+         specific 斷言（綁 expected，禁鬆 proxy）/ 沿用哪些現成 / priority 對照 / 假設 / 待確認點（**缺 swagger/spec 會在此請主對話向人要**）
        → **把計畫攤給使用者確認/改**（治「不是我要的」的關鍵；別跳過）
+       → 🔴 **缺 swagger 攔截**：任一案回傳 `needs_spec=true`（打後端 API 但沒找到 swagger/spec）→ **在 execute 前先問使用者要 spec**（AskUserQuestion：swagger/OpenAPI/Postman URL 或 repo 路徑）。拿到就併進該案計畫給 automator ground；使用者也沒有 → 記錄「改讀後端 code/跑觀察、endpoint 標待驗證、風險較高」再續。這是確定性觸發（讀旗標，不靠讀計畫文字猜）。
+       → 🔴 **UI 判準模糊攔截**：任一案 `ambiguous_ui_assertions` 非空 → **在 execute 前先問使用者澄清**（AskUserQuestion：該 UI expected 具體看到什麼算成功、用哪個 SKU/資料）。拿到判準併進計畫；給不出 → 記錄「用最合理判準+標低信心，交付後靠 fidelity gate 把關」再續。同樣是讀旗標的確定性觸發。
        → 🔴 **橡皮圖章防呆（#8）**：回傳的 `confirmation.high_risk`（Critical/High）**禁一鍵全確認**——
          對每個高風險 case **各跑一次 AskUserQuestion**，把該案 specific 斷言攤出來、逼使用者針對
          「驗的是不是對的東西」做一個非讀不可的選擇；`confirmation.batchable`（Medium/Low）才准批次一次確認。
@@ -108,7 +113,7 @@ qatest 一 import 就需要 `SERVICE_URL`（非機密）+ `AUTOMATION_TOKEN`（m
 ```
 ## 批次忠實度報告（模式：互動 / 自主）
 
-案數 8 ｜ pass 5 ｜ needs-fix 0 ｜ flag-for-human 2 ｜ blocked 1
+案數 8 ｜ pass 5 ｜ needs-fix 0 ｜ flag-for-human 2 ｜ blocked 1 ｜ blocked-environment 0（環境掛、非 case 錯，環境好重跑即可）
 平均 assertion_coverage 88% ｜ 最低 60%（KQT-T53888 mweb）
 ```
 
