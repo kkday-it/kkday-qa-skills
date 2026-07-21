@@ -28,7 +28,9 @@ Env vars:
                            預設 `kkday_qa_mcp`，讓後端 history 分辨 UI 操作 vs MCP 操作）
 """
 
+import base64
 import getpass
+import json as _json
 import os
 import re
 import socket
@@ -36,6 +38,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import date, timedelta
 from typing import Optional
 
 import requests
@@ -279,7 +282,7 @@ def help() -> dict:
             "會員查詢/註冊": [
                 "lookup_member: 查會員 UUID/tier/資訊",
                 "member_lookup_history: 最近查詢紀錄",
-                "register_member: 註冊測試會員",
+                "register_member: 註冊 KKday 平台買家測試會員（不是供應商，供應商用 create_scm_supplier）",
                 "register_member_history: 最近註冊紀錄",
             ],
             "點數": [
@@ -319,11 +322,16 @@ def help() -> dict:
                 "redeem_voucher: 用 voucher 兌換",
                 "redeem_history: 兌換紀錄",
             ],
+            "SCM 供應商": [
+                "create_scm_supplier: 一鍵建立 SCM 供應商測試帳號（註冊→申請→啟用全流程）",
+                "get_scm_otp: 取得 SCM 登入 OTP 驗證碼",
+            ],
         },
         "workflow_examples": [
             "把 xxx@kkday.com 拉到 gold: lookup_member → add_experience → update_member_tier",
             "建帶點數的測試會員: register_member → add_kkday_points → lookup_member 確認",
             "測 voucher 兌換: create_coupon (歸戶到會員) → fetch_packages → redeem_voucher",
+            "建 SCM 供應商帳號: create_scm_supplier → 使用者去登入 → get_scm_otp 取驗證碼",
         ],
         "discovery_tips": [
             "create_coupon 前先 coupon_templates 拿模板列表（template 值不能亂猜）",
@@ -469,7 +477,7 @@ def describe_tool(name: str) -> dict:
             "example": 'update_member_tier(uuid_or_email="user@kkday.com", env="stage", new_tier="04", new_expiry_date="2027-12-31 00:00:00")',
         },
         "register_member": {
-            "purpose": "註冊測試會員",
+            "purpose": "註冊 KKday 平台買家測試會員（consumer member）。供應商帳號請用 create_scm_supplier",
             "params": {
                 "login_id": "登入 ID（通常是 email）",
                 "password": "預設 'Aa12345678'",
@@ -498,6 +506,25 @@ def describe_tool(name: str) -> dict:
                 "qyt": "數量（字串型別）",
             },
             "example": 'redeem_voucher(env="stage", product_oid="123456", package_oid="789", qyt="1")',
+        },
+        "create_scm_supplier": {
+            "purpose": "一鍵建立 SCM 供應商測試帳號（從註冊到合作完成全自動）",
+            "note": "BE2 帳密自動從 secret service 取得，不需額外設定",
+            "params": {
+                "env": "環境（stage / sit / sitNNN 如 sit212），沒有預設值，先問使用者",
+                "country": "供應商國家代碼（預設 TW），影響公司資料和合約實體",
+            },
+            "returns": "login_url / email / password / supplier_oid / env + _next_step 引導取 OTP",
+            "example": 'create_scm_supplier(env="sit212")',
+            "example_stage": 'create_scm_supplier(env="stage", country="TW")',
+        },
+        "get_scm_otp": {
+            "purpose": "取得 SCM 登入 OTP 驗證碼（6 位數字）",
+            "note": "需要 Gmail token（預設讀 kkday-QA-automation repo 的 token.json，或設 GMAIL_TOKEN_PATH）",
+            "params": {
+                "email": "收 OTP 的 email（通常是 create_scm_supplier 回傳的 email）",
+            },
+            "example": 'get_scm_otp(email="b2c-qa-team+automation_test_1234567890@kkday.com")',
         },
     }
     if name in docs:
@@ -819,7 +846,7 @@ def trigger_dkron_tier(env: str) -> dict:
 
 @mcp.tool()
 def register_member(login_id: str, env: str, password: str = "Aa12345678") -> dict:
-    """註冊測試會員。
+    """註冊 KKday 平台買家測試會員（consumer member），不是供應商。建立供應商請用 create_scm_supplier。
 
     〔詢問模式（預設）〕呼叫前先向使用者確認 login_id / password / env；可附「沿用慣例」選項供一鍵確認
     （login_id 取 register_member_history 最大 +N 的下一個，如 xxx+1@kkday.com；password 預設 Aa12345678）。env 無預設、必須問。
@@ -1486,6 +1513,563 @@ def copy_product(
         async_=True,
         mcp_name="copy_product",
     )
+
+
+# ── SCM 供應商管理 ──────────────────────────────────────────────────────
+
+_SCM_DEFAULT_PASSWORD = "AutomationPwd12345678"
+_QA_GMAIL_BASE = os.getenv("QA_GMAIL_BASE", "b2c-qa-team@kkday.com")
+_GMAIL_TOKEN_PATH = os.getenv(
+    "GMAIL_TOKEN_PATH",
+    os.path.join(
+        os.path.expanduser("~"),
+        "Documents", "gitHub", "kkday-QA-automation",
+        "QATestData", "data", "common", "token.json",
+    ),
+)
+_SCM_TIMEOUT = (10, 120)
+
+_SCM_COUNTRY_CONTRACT_MAP = {
+    "TW": 3, "JP": 5, "KR": 4, "SG": 6, "MY": 6,
+    "HK": 15, "TH": 16, "VN": 10, "CN": 13, "AU": 18,
+}
+
+_SCM_AUTH_SERVICE_KEYS = {
+    "sit": "hGuTIy8HEwhEbRihRTafdy0dllGOmXNN",
+    "stage": "Exq9j7NRuEUcmZvMBxk8N7M23xUn3TEw",
+}
+
+_TINY_PDF_BASE64 = (
+    "JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwKL0xlbmd0aCAzIDAgUgovRmlsdGVyIC9GbGF0Z"
+    "URlY29kZQo+PgpzdHJlYW0KeJwzUvDiMlAwUDA1MTRSCEnlMjQyMTBVMDIyMTUKSeUKVDA0NTQwM"
+    "TQwUTAyMTAyMzVQ4AIA/owGgAplbmRzdHJlYW0KZW5kb2JqCjMgMCBvYmoKNjQKZW5kb2JqCjEgM"
+    "CBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCA0IDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyX"
+    "QovQ29udGVudHMgMiAwIFIKL1Jlc291cmNlcyA8PAovUHJvY1NldCBbL1BERl0KPj4KPj4KZW5kb"
+    "2JqCjQgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFsxIDAgUl0KL0NvdW50IDEKPj4KZW5kb"
+    "2JqCjUgMCBvYmoKPDwKL1R5cGUgL0NhdGFsb2cKL1BhZ2VzIDQgMCBSCj4+CmVuZG9iagp4cmVmC"
+    "jAgNgowMDAwMDAwMDAwIDY1NTM1IGYNCjAwMDAwMDAxNjIgMDAwMDAgbg0KMDAwMDAwMDAxNSAwM"
+    "DAwMCBuDQowMDAwMDAwMTQ0IDAwMDAwIG4NCjAwMDAwMDAyNzAgMDAwMDAgbg0KMDAwMDAwMDMyN"
+    "yAwMDAwMCBuDQp0cmFpbGVyCjw8Ci9TaXplIDYKL1Jvb3QgNSAwIFIKPj4Kc3RhcnR4cmVmCjM3N"
+    "Qo="
+)
+
+_SCM_FILE_CATEGORIES = ["REGISTER", "TOURISM_LICENSE", "ATTACHMENT", "BANK_PASSBOOK_COPY"]
+
+
+def _scm_env_domain(env: str) -> str:
+    return "stage" if env == "stage" else "sit"
+
+
+def _scm_api_base(env: str) -> str:
+    return f"https://api-scm.{_scm_env_domain(env)}.kkday.com/api"
+
+
+def _sofa_potato_base(env: str) -> str:
+    return f"https://sofa-potato.{_scm_env_domain(env)}.kkday.com/api"
+
+
+def _scm_frontend_login_url(env: str) -> str:
+    if env == "stage":
+        return "https://scm.stage.kkday.com/v2/zh-tw/auth/login"
+    m = re.match(r"sit(\d+)", env)
+    if m:
+        return f"https://scm-{m.group(1)}.sit.kkday.com/v2/zh-tw/auth/login"
+    return "https://scm.sit.kkday.com/v2/zh-tw/auth/login"
+
+
+def _scm_request(method: str, url: str, *,
+                 headers: Optional[dict] = None,
+                 json_body: Optional[dict] = None,
+                 timeout: tuple = _SCM_TIMEOUT) -> dict:
+    h = {"Content-Type": "application/json", "Accept": "application/json",
+         "locale": "zh-tw", "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"}
+    if headers:
+        h.update(headers)
+    resp = requests.request(method, url, headers=h, json=json_body, timeout=timeout)
+    if not resp.ok:
+        raise RuntimeError(f"{method} {url} → {resp.status_code}: {resp.text[:500]}")
+    return resp.json()
+
+
+def _scm_assert_success(body: dict, context: str) -> dict:
+    status = body.get("metadata", body.get("meta", {})).get("status")
+    if status != "0000":
+        desc = body.get("metadata", body.get("meta", {})).get("desc", "")
+        raise RuntimeError(f"{context} 失敗: status={status} desc={desc}")
+    return body
+
+
+def _gmail_get_otp(recipient: str, max_wait: int = 120, poll_interval: int = 8) -> str:
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    if not os.path.exists(_GMAIL_TOKEN_PATH):
+        raise RuntimeError(
+            f"Gmail token 檔案不存在: {_GMAIL_TOKEN_PATH}。"
+            "請設定環境變數 GMAIL_TOKEN_PATH 指向有效的 token.json"
+        )
+    creds = Credentials.from_authorized_user_file(
+        _GMAIL_TOKEN_PATH,
+        ["https://www.googleapis.com/auth/gmail.readonly",
+         "https://www.googleapis.com/auth/gmail.modify"],
+    )
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+    deadline = time.time() + max_wait
+    query = f"to:{recipient} subject:驗證碼 in:inbox"
+
+    while time.time() < deadline:
+        results = service.users().messages().list(
+            userId="me", q=query, maxResults=5,
+        ).execute()
+        messages = results.get("messages", [])
+        if messages:
+            msg = service.users().messages().get(
+                userId="me", id=messages[0]["id"],
+            ).execute()
+            body_data = msg["payload"].get("body", {}).get("data")
+            if not body_data and "parts" in msg["payload"]:
+                for part in msg["payload"]["parts"]:
+                    bd = part.get("body", {}).get("data")
+                    if bd:
+                        body_data = bd
+                        break
+            if body_data:
+                body = base64.urlsafe_b64decode(body_data).decode("utf-8")
+                text = re.sub(r"<[^>]+>", " ", body)
+                text = re.sub(r"\s+", " ", text).strip()
+                match = re.search(r"(\d{6})", text)
+                if match:
+                    return match.group(1)
+        time.sleep(poll_interval)
+
+    raise TimeoutError(f"等待 OTP 超過 {max_wait} 秒，recipient={recipient}")
+
+
+_AUTOMATION_TOKEN = "8b9dfbac-e863-4078-95e9-c2cc03abe84f"
+
+
+def _get_be2_credentials(env: str) -> tuple:
+    from urllib.parse import urlsplit
+    parts = urlsplit(BASE)
+    secret_host = f"{parts.scheme}://{parts.hostname}"
+    secret_env = "sit" if "sit" in env else env
+    envs_to_try = [secret_env] if secret_env == "sit" else [secret_env, "sit"]
+    for try_env in envs_to_try:
+        try:
+            resp = requests.get(
+                f"{secret_host}:8000/api/v1/data/",
+                headers={"authorization": f"Bearer {_AUTOMATION_TOKEN}"},
+                params={"env": try_env, "service": "be2", "key": f"be2_{try_env}"},
+                timeout=(5, 10),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                continue
+            cred = _json.loads(data[0]["value"])
+            account = cred.get("account", "")
+            password = cred.get("password", "")
+            if account and password:
+                return account, password
+        except Exception:
+            continue
+    raise RuntimeError(
+        f"Secret service 在 {envs_to_try} 都找不到有效的 BE2 帳密。"
+        "請確認 autotest-service 可連線。"
+    )
+
+
+def _be2_admin_login(env: str) -> tuple:
+    account, password = _get_be2_credentials(env)
+    domain = _scm_env_domain(env)
+
+    login_resp = requests.post(
+        f"https://auth.{domain}.kkday.com/api/v1/auth/be2/login",
+        headers={"Content-Type": "application/json", "x-qa-platform": "QA_TestPlatform"},
+        json={"account": account, "password": password,
+              "optional": {"locale": "zh-tw"}},
+        timeout=_SCM_TIMEOUT,
+    )
+    if not login_resp.ok:
+        raise RuntimeError(f"BE2 login 失敗: {login_resp.status_code}: {login_resp.text[:300]}")
+    auth_code = login_resp.json()["data"]["authorizationCode"]
+
+    service_key = _SCM_AUTH_SERVICE_KEYS.get(domain)
+    if not service_key:
+        raise RuntimeError(f"沒有 {domain} 環境的 auth service key")
+
+    token_resp = requests.get(
+        f"https://auth.{domain}.kkday.com/api/v1/login-authorization-code/{auth_code}/",
+        headers={"Authorization": service_key},
+        timeout=_SCM_TIMEOUT,
+    )
+    if not token_resp.ok:
+        raise RuntimeError(f"BE2 token 交換失敗: {token_resp.status_code}: {token_resp.text[:300]}")
+    access_token = token_resp.json()["data"]["accessToken"]
+
+    # 從 JWT 解出 platformId 作為 supplierOwner
+    payload_b64 = access_token.split(".")[1]
+    padding = 4 - len(payload_b64) % 4
+    if padding != 4:
+        payload_b64 += "=" * padding
+    jwt_payload = _json.loads(base64.urlsafe_b64decode(payload_b64))
+    owner_uuid = jwt_payload["platformId"]
+
+    return access_token, owner_uuid
+
+
+def _scm_register_and_login(env: str) -> tuple:
+    base = _scm_api_base(env)
+    local, domain_part = _QA_GMAIL_BASE.split("@")
+    ts = str(int(time.time() * 1000))
+    email = f"{local}+automation_test_{ts}@{domain_part}"
+    device = str(uuid.uuid4())
+
+    # 1. 註冊
+    body = _scm_request("POST", f"{base}/external-unauth/v1/user/register",
+                        json_body={"email": email, "password": _SCM_DEFAULT_PASSWORD,
+                                   "confirmPassword": _SCM_DEFAULT_PASSWORD,
+                                   "timezone": "Asia/Taipei"})
+    _scm_assert_success(body, "註冊")
+
+    # 2. 登入
+    body = _scm_request("POST", f"{base}/external-unauth/v1/auth/login",
+                        json_body={"email": email, "password": _SCM_DEFAULT_PASSWORD,
+                                   "device": device})
+    _scm_assert_success(body, "登入")
+
+    # 3. 觸發 OTP
+    otp_sent_at = time.time()
+    body = _scm_request("POST", f"{base}/external-unauth/v1/auth/two-fa/otp",
+                        json_body={"email": email, "device": device})
+    _scm_assert_success(body, "觸發 OTP")
+
+    # 4. 取 OTP
+    otp = _gmail_get_otp(email, max_wait=120, poll_interval=8)
+
+    # 5. 驗證 OTP
+    body = _scm_request("POST", f"{base}/external-unauth/v1/auth/two-fa/validate",
+                        json_body={"email": email, "code": otp,
+                                   "device": device, "rememberMe": True})
+    _scm_assert_success(body, "驗證 OTP")
+    session_token = body["data"]["sessionToken"]
+
+    return email, session_token
+
+
+def _scm_submit_application(env: str, session_token: str, email: str,
+                            country: str = "TW") -> int:
+    base = _scm_api_base(env)
+    auth_h = {"s-ci-sessions": session_token}
+    ts = str(int(time.time() * 1000))
+    readable_ts = time.strftime("%Y%m%d_%H%M%S")
+
+    # 1. 取 terms (agreementList)
+    body = _scm_request("GET", f"{base}/external/v1/supplier/apply/terms", headers=auth_h)
+    _scm_assert_success(body, "取 terms")
+    agreement_list = [
+        {"agreementOid": t["agreementOid"], "agreementType": t["agreementType"]}
+        for t in body["data"]["terms"]
+    ]
+
+    # 2. 上傳 4 份文件
+    file_oids = []
+    for cat in _SCM_FILE_CATEGORIES:
+        body = _scm_request("POST", f"{base}/external/v1/supplier/apply/files",
+                            headers=auth_h,
+                            json_body={"fileCategory": cat,
+                                       "fileName": f"qa_automation_{cat.lower()}.pdf",
+                                       "contentType": "application/pdf",
+                                       "encodeString": _TINY_PDF_BASE64})
+        _scm_assert_success(body, f"上傳 {cat}")
+        file_oids.append({"fileOid": str(body["data"]["fileOid"]), "fileCategory": cat})
+
+    # 3. 組 apply payload（TW）
+    ts_suffix = ts[-6:]
+    payload = {
+        "countryCd": country,
+        "supplierName": f"automation_{readable_ts}_台北測試旅行社",
+        "legalName": f"automation_{readable_ts}_台北測試旅行社有限公司",
+        "legalNameEng": f"Automation_{readable_ts} Taipei Test Travel Co., Ltd.",
+        "website": "https://automation.example.com",
+        "personInCharge": "王小明",
+        "personInChargeEng": "Wang Hsiao-ming",
+        "license": f"TW{ts_suffix}78",
+        "isProvideTaxInfo": False,
+        "stateCd": "TW-TPE",
+        "cityCd": "TW-TPE-XYI",
+        "postCd": "110",
+        "address1": "信義路五段 7 號",
+        "serviceTelArea": "+886",
+        "serviceTel": "0223456789",
+        "contactTitle": "Mr.",
+        "contact": "王小明",
+        "contactJobCd": "業務經理",
+        "timezone": "Asia/Taipei",
+        "contactEmail": email,
+        "contactTelArea": "+886",
+        "contactTel": "0912345678",
+        "prefLang": "zh-tw",
+        "contactOtherMethods": [{"methodType": "LINE", "contactValue": "automation_line_id"}],
+        "serviceCountryCd": country,
+        "serviceCategory": "CAT_14,CAT_21",
+        "serviceDesc": f"automation_{readable_ts} 提供台北市內景點導覽與旅遊體驗服務",
+        "serviceLang": "zh-tw,en",
+        "hasKkdayContact": False,
+        "agreementList": agreement_list,
+        "files": file_oids,
+        "bank": {
+            "kkdayMainContractNo": _SCM_COUNTRY_CONTRACT_MAP.get(country, 3),
+            "beneficiaryBankCountryCode": country,
+            "collectCurrency": "TWD",
+            "bankAccountType": None,
+            "bankName": "台灣銀行",
+            "bankCode": "004",
+            "branchName": None,
+            "branchCode": None,
+            "accountNo": f"1234{ts_suffix}01234",
+            "accountName": f"automation_{readable_ts}_台北測試旅行社",
+            "bankAddress": None,
+            "swiftCode": None,
+            "ibanCode": None,
+            "cnaps": None,
+            "bsbNumber": None,
+            "sknCode": None,
+            "beneficiaryIdentity": None,
+            "beneficiaryTelCountryCode": None,
+            "beneficiaryTel": None,
+            "beneficiaryEmail": email,
+            "beneficiaryAddress": "信義路五段 7 號",
+            "remittanceBurden": "01",
+            "supplierBankDesc": f"automation_{readable_ts}",
+        },
+    }
+
+    # 4. 送出申請（含 retry）
+    for attempt in range(3):
+        body = _scm_request("POST", f"{base}/external/v1/supplier/apply",
+                            headers=auth_h, json_body=payload)
+        meta = body.get("metadata", {})
+        if meta.get("status") == "0000":
+            return int(body["data"]["supplierOid"])
+        if meta.get("status") in ("9999", "C001") and attempt < 2:
+            time.sleep(10)
+            continue
+        _scm_assert_success(body, "送出申請")
+
+    raise RuntimeError("送出申請：重試 3 次仍失敗")
+
+
+def _scm_activate_supplier(env: str, supplier_oid: int, country: str = "TW") -> None:
+    potato = _sofa_potato_base(env)
+
+    # Step 0: BE2 admin login
+    be2_token, owner_uuid = _be2_admin_login(env)
+    be2_h = {"Authorization": f"Bearer {be2_token}",
+             "Content-Type": "application/json", "Accept": "application/json"}
+
+    # Step 1: 上傳合約 PDF
+    body = _scm_request("POST", f"{potato}/v1/files/supplier.attachment",
+                        headers=be2_h,
+                        json_body={"fileName": "qa_test_contract.pdf",
+                                   "contentType": "application/pdf",
+                                   "encodeString": _TINY_PDF_BASE64})
+    _scm_assert_success(body, "上傳合約 PDF")
+    contract_file_oid = body["data"]["fileOid"]
+    contract_access_key = body["data"].get("accessKey", "")
+
+    # Step 2: process — status 10 → 20
+    body = _scm_request("POST",
+                        f"{potato}/v1/suppliers/registration-application/process",
+                        headers=be2_h,
+                        json_body={"supplierOids": [supplier_oid],
+                                   "supplierOwner": owner_uuid})
+    _scm_assert_success(body, "Process 10→20")
+
+    # Step 3: submit-asf（不用 audit，避免 UserExistsRule）
+    body = _scm_request("POST",
+                        f"{potato}/v1/suppliers/{supplier_oid}/asf_summary",
+                        headers=be2_h, json_body={})
+    _scm_assert_success(body, "Submit ASF")
+
+    # Step 4: poll ASF 完成
+    deadline = time.time() + 180
+    asf_done = False
+    while time.time() < deadline:
+        time.sleep(10)
+        body = _scm_request("GET",
+                            f"{potato}/v1/suppliers/{supplier_oid}/asf_summary",
+                            headers=be2_h)
+        data = body.get("data", {})
+        report_list = data.get("reportList", [])
+        if report_list and report_list[0].get("result") is not None:
+            asf_done = True
+            time.sleep(20)  # MQ consumer 穩定化
+            break
+    # ASF 沒完成不硬擋，後面 approve 會報錯
+
+    # Step 5: PATCH supplier detail（設 kkdayMainContractNo + productMaintainer）
+    contract_no = _SCM_COUNTRY_CONTRACT_MAP.get(country, 3)
+    body = _scm_request("PATCH",
+                        f"{potato}/v2/suppliers/{supplier_oid}/detail",
+                        headers=be2_h,
+                        json_body={"kkdayMainContractNo": contract_no,
+                                   "productMaintainer": "SUPPLIER"})
+    _scm_assert_success(body, "PATCH supplier detail")
+
+    # Step 6: 建合約
+    today = date.today()
+    body = _scm_request("POST",
+                        f"{potato}/v1/suppliers/{supplier_oid}/contracts",
+                        headers=be2_h,
+                        json_body={
+                            "type": "KKDAY",
+                            "startDate": today.isoformat(),
+                            "endDate": (today + timedelta(days=365)).isoformat(),
+                            "autoRenew": True,
+                            "bdNote": "QA automation test contract",
+                            "bpmProcess": False,
+                            "topic": None,
+                            "reason": None,
+                            "reviewContractFile": {
+                                "fileOid": int(contract_file_oid),
+                                "fileName": "qa_test_contract.pdf",
+                                "ownerParam1": contract_access_key,
+                            },
+                        })
+    _scm_assert_success(body, "建合約")
+    contract_oid = body["data"]["supplierContractOid"]
+
+    # Step 7: 合約簽完
+    body = _scm_request("POST",
+                        f"{potato}/v1/suppliers/{supplier_oid}/contracts/{contract_oid}/print/done",
+                        headers=be2_h,
+                        json_body={"supplierContractFile": {
+                            "fileOid": int(contract_file_oid),
+                            "fileName": "qa_test_signed_contract.pdf",
+                            "ownerParam1": contract_access_key,
+                        }})
+    _scm_assert_success(body, "合約簽完")
+
+    # Step 8: 核准（先檢查是否已 status 80）
+    try:
+        status_body = _scm_request("GET",
+                                   f"{potato}/v1/suppliers/{supplier_oid}/",
+                                   headers=be2_h)
+        current_status = status_body.get("data", {}).get("status")
+        if current_status and int(current_status) >= 80:
+            return  # Java 已自動設 80
+    except Exception:
+        pass  # 查不到就繼續嘗試 approve
+
+    # Stage MQ consumer 寫入 asf_result_date 延遲可達 120+ 秒
+    for attempt in range(12):
+        try:
+            body = _scm_request(
+                "POST",
+                f"{potato}/v1/suppliers/{supplier_oid}/registration-application/approve",
+                headers=be2_h,
+                json_body={"supplierContractOid": int(contract_oid),
+                           "supplierSettleOid": None})
+            _scm_assert_success(body, "核准")
+            return
+        except RuntimeError as e:
+            if "SUPREG0011" in str(e) and attempt < 11:
+                time.sleep(15)
+                continue
+            raise
+
+
+@mcp.tool()
+def create_scm_supplier(env: str, country: str = "TW") -> dict:
+    """建立 SCM 供應商（supplier）測試帳號，全自動跑完註冊到合作完成。使用者說「建立供應商」「供應商帳號」「supplier」就是這個工具。
+
+    完整流程：註冊帳號 → 登入 + OTP → 提交供應商申請 → 管理員審核 → 合作完成（v2 供應商）。
+    回傳可直接登入 SCM 前台的帳號密碼和供應商 ID。
+
+    注意：這是供應商（supplier）帳號，不是買家（member）帳號。買家帳號用 register_member。
+
+    BE2 管理員帳密自動從 secret service 取得，不需額外設定。
+
+    ⚠️ 呼叫前先問使用者要用哪個環境，不要自己猜。
+
+    Args:
+        env: 環境（stage / sit / sitNNN 如 sit212），沒有預設值，請先問使用者
+        country: 供應商國家代碼（預設 TW）
+    """
+    _check_env(env)
+    start = time.monotonic()
+    tool_name = "create_scm_supplier"
+    params = {"env": env, "country": country}
+
+    try:
+        # Phase 1: 註冊 + 登入
+        email, session_token = _scm_register_and_login(env)
+
+        # Phase 2: 提交供應商申請
+        supplier_oid = _scm_submit_application(env, session_token, email, country)
+
+        # Phase 3: 啟用到合作完成
+        _scm_activate_supplier(env, supplier_oid, country)
+
+        login_url = _scm_frontend_login_url(env)
+        result = {
+            "status": "success",
+            "login_url": login_url,
+            "email": email,
+            "password": _SCM_DEFAULT_PASSWORD,
+            "supplier_oid": supplier_oid,
+            "env": env,
+            "country": country,
+            "message": (
+                f"供應商帳號建立完成（v2 狀態，供應商可自行管理商品）。\n\n"
+                f"網址：{login_url}\n"
+                f"帳號：{email}\n"
+                f"密碼：{_SCM_DEFAULT_PASSWORD}\n"
+                f"供應商 ID：{supplier_oid}\n"
+                f"環境：{env}\n\n"
+                f"請點擊上面的網址，輸入帳號密碼後登入，再跟我拿取 OTP。"
+            ),
+            "_next_step": f"給我 {email} 的 OTP",
+        }
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _emit_analytics(tool_name, _sanitize_params(params), result, None, duration_ms)
+        return result
+
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _emit_analytics(tool_name, _sanitize_params(params), None, exc, duration_ms)
+        raise
+
+
+@mcp.tool()
+def get_scm_otp(email: str) -> dict:
+    """取得指定 email 最新的 SCM 登入 OTP 驗證碼（6 位數字）。
+
+    搭配 create_scm_supplier 使用：建完帳號後使用者去 SCM 前台登入，
+    系統會寄 OTP 到信箱，再呼叫這個工具取得驗證碼。
+
+    也可以單獨使用：任何 SCM 帳號登入時需要 OTP 都可以呼叫。
+
+    Args:
+        email: 收 OTP 的 email（通常是 b2c-qa-team+automation_test_XXX@kkday.com）
+    """
+    start = time.monotonic()
+    tool_name = "get_scm_otp"
+    params = {"email": email}
+
+    try:
+        otp = _gmail_get_otp(email, max_wait=60, poll_interval=5)
+        result = {"otp": otp, "email": email}
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _emit_analytics(tool_name, _sanitize_params(params), result, None, duration_ms)
+        return result
+
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _emit_analytics(tool_name, _sanitize_params(params), None, exc, duration_ms)
+        raise
 
 
 def main() -> None:
