@@ -323,7 +323,8 @@ def help() -> dict:
                 "redeem_history: 兌換紀錄",
             ],
             "SCM 供應商": [
-                "create_scm_supplier: 一鍵建立 SCM 供應商測試帳號（註冊→申請→啟用全流程）",
+                "create_scm_supplier: 建立 SCM 供應商帳號（註冊→申請，完成後自動引導 activate）",
+                "activate_scm_supplier: 啟用供應商到合作完成（BE2 審核→ASF→合約→核准）",
                 "get_scm_otp: 取得 SCM 登入 OTP 驗證碼",
             ],
         },
@@ -331,7 +332,7 @@ def help() -> dict:
             "把 xxx@kkday.com 拉到 gold: lookup_member → add_experience → update_member_tier",
             "建帶點數的測試會員: register_member → add_kkday_points → lookup_member 確認",
             "測 voucher 兌換: create_coupon (歸戶到會員) → fetch_packages → redeem_voucher",
-            "建 SCM 供應商帳號: create_scm_supplier → 使用者去登入 → get_scm_otp 取驗證碼",
+            "建 SCM 供應商帳號: create_scm_supplier → activate_scm_supplier → 使用者去登入 → get_scm_otp 取驗證碼",
         ],
         "discovery_tips": [
             "create_coupon 前先 coupon_templates 拿模板列表（template 值不能亂猜）",
@@ -508,15 +509,27 @@ def describe_tool(name: str) -> dict:
             "example": 'redeem_voucher(env="stage", product_oid="123456", package_oid="789", qyt="1")',
         },
         "create_scm_supplier": {
-            "purpose": "一鍵建立 SCM 供應商測試帳號（從註冊到合作完成全自動）",
-            "note": "BE2 帳密自動從 secret service 取得，不需額外設定",
+            "purpose": "建立 SCM 供應商帳號（註冊 + 申請），完成後自動引導呼叫 activate_scm_supplier 啟用",
+            "note": "拆成兩步是因為啟用階段要等 ASF 背景審查，Stage 環境可能要 3-5 分鐘",
             "params": {
                 "env": "環境（stage / sit / sitNNN 如 sit212），沒有預設值，先問使用者",
                 "country": "供應商國家代碼（預設 TW），影響公司資料和合約實體",
             },
-            "returns": "login_url / email / password / supplier_oid / env + _next_step 引導取 OTP",
+            "returns": "email / password / supplier_oid / env + _next_step 引導呼叫 activate_scm_supplier",
             "example": 'create_scm_supplier(env="sit212")',
             "example_stage": 'create_scm_supplier(env="stage", country="TW")',
+        },
+        "activate_scm_supplier": {
+            "purpose": "啟用 SCM 供應商到合作完成（v2 狀態），通常由 create_scm_supplier 自動引導呼叫",
+            "note": "BE2 帳密自動取得。冪等設計，已完成的步驟會跳過，可安全重試",
+            "params": {
+                "env": "環境（stage / sit / sitNNN）",
+                "supplier_oid": "供應商 OID（從 create_scm_supplier 取得）",
+                "country": "供應商國家代碼（預設 TW）",
+                "email": "供應商 email（可選，用於回傳結果）",
+            },
+            "returns": "login_url / email / password / supplier_oid / env + _next_step 引導取 OTP",
+            "example": 'activate_scm_supplier(env="stage", supplier_oid=42950)',
         },
         "get_scm_otp": {
             "purpose": "取得 SCM 登入 OTP 驗證碼（6 位數字）",
@@ -1983,14 +1996,12 @@ def _scm_activate_supplier(env: str, supplier_oid: int, country: str = "TW") -> 
 
 @mcp.tool()
 def create_scm_supplier(env: str, country: str = "TW") -> dict:
-    """建立 SCM 供應商（supplier）測試帳號，全自動跑完註冊到合作完成。使用者說「建立供應商」「供應商帳號」「supplier」就是這個工具。
+    """建立 SCM 供應商（supplier）測試帳號：註冊 + 登入 + OTP + 提交申請。使用者說「建立供應商」「供應商帳號」「supplier」就是這個工具。
 
-    完整流程：註冊帳號 → 登入 + OTP → 提交供應商申請 → 管理員審核 → 合作完成（v2 供應商）。
-    回傳可直接登入 SCM 前台的帳號密碼和供應商 ID。
+    本工具完成前兩階段（註冊 + 申請），回傳 supplier_oid 後會自動引導呼叫 activate_scm_supplier 完成啟用。
+    兩步拆開是因為啟用階段需要等 Stage 環境的背景審查（ASF），可能要 3-5 分鐘。
 
     注意：這是供應商（supplier）帳號，不是買家（member）帳號。買家帳號用 register_member。
-
-    BE2 管理員帳密自動從 secret service 取得，不需額外設定。
 
     ⚠️ 呼叫前先問使用者要用哪個環境，不要自己猜。
 
@@ -2010,7 +2021,57 @@ def create_scm_supplier(env: str, country: str = "TW") -> dict:
         # Phase 2: 提交供應商申請
         supplier_oid = _scm_submit_application(env, session_token, email, country)
 
-        # Phase 3: 啟用到合作完成
+        result = {
+            "status": "success",
+            "email": email,
+            "password": _SCM_DEFAULT_PASSWORD,
+            "supplier_oid": supplier_oid,
+            "env": env,
+            "country": country,
+            "message": (
+                f"供應商帳號已註冊並提交申請，接下來自動啟用。\n\n"
+                f"帳號：{email}\n"
+                f"供應商 ID：{supplier_oid}\n"
+                f"環境：{env}\n\n"
+                f"⏳ 請繼續呼叫 activate_scm_supplier 完成啟用（Stage 環境可能需要 3-5 分鐘）。"
+            ),
+            "_next_step": f'activate_scm_supplier(env="{env}", supplier_oid={supplier_oid}, country="{country}", email="{email}")',
+        }
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _emit_analytics(tool_name, _sanitize_params(params), result, None, duration_ms)
+        return result
+
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _emit_analytics(tool_name, _sanitize_params(params), None, exc, duration_ms)
+        raise
+
+
+@mcp.tool()
+def activate_scm_supplier(env: str, supplier_oid: int, country: str = "TW",
+                           email: str = "") -> dict:
+    """啟用 SCM 供應商到合作完成（v2 狀態）。這是 create_scm_supplier 的第二步，通常會自動被引導呼叫。
+
+    流程：BE2 管理員登入 → 上傳合約 → 審核 → ASF 背景調查 → 建合約 → 簽約 → 核准。
+    Stage 環境的 ASF 背景調查可能需要 3-5 分鐘，工具會自動等待。
+
+    冪等設計：如果供應商已經是 status 80（合作中），會直接回傳成功。
+    如果中途失敗可以重試，已完成的步驟會自動跳過。
+
+    BE2 管理員帳密自動從 secret service 取得，不需額外設定。
+
+    Args:
+        env: 環境（stage / sit / sitNNN）
+        supplier_oid: 供應商 OID（從 create_scm_supplier 回傳值取得）
+        country: 供應商國家代碼（預設 TW）
+        email: 供應商 email（用於回傳結果，可選）
+    """
+    _check_env(env)
+    start = time.monotonic()
+    tool_name = "activate_scm_supplier"
+    params = {"env": env, "supplier_oid": supplier_oid, "country": country}
+
+    try:
         _scm_activate_supplier(env, supplier_oid, country)
 
         login_url = _scm_frontend_login_url(env)
@@ -2018,20 +2079,20 @@ def create_scm_supplier(env: str, country: str = "TW") -> dict:
             "status": "success",
             "login_url": login_url,
             "email": email,
-            "password": _SCM_DEFAULT_PASSWORD,
+            "password": _SCM_DEFAULT_PASSWORD if email else "",
             "supplier_oid": supplier_oid,
             "env": env,
             "country": country,
             "message": (
-                f"供應商帳號建立完成（v2 狀態，供應商可自行管理商品）。\n\n"
+                f"供應商帳號啟用完成（v2 狀態，供應商可自行管理商品）。\n\n"
                 f"網址：{login_url}\n"
-                f"帳號：{email}\n"
-                f"密碼：{_SCM_DEFAULT_PASSWORD}\n"
-                f"供應商 ID：{supplier_oid}\n"
+                + (f"帳號：{email}\n" if email else "")
+                + (f"密碼：{_SCM_DEFAULT_PASSWORD}\n" if email else "")
+                + f"供應商 ID：{supplier_oid}\n"
                 f"環境：{env}\n\n"
                 f"請點擊上面的網址，輸入帳號密碼後登入，再跟我拿取 OTP。"
             ),
-            "_next_step": f"給我 {email} 的 OTP",
+            "_next_step": f"給我 {email} 的 OTP" if email else "",
         }
         duration_ms = int((time.monotonic() - start) * 1000)
         _emit_analytics(tool_name, _sanitize_params(params), result, None, duration_ms)
