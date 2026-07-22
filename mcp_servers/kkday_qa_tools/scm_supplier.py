@@ -50,6 +50,13 @@ _AUTOMATION_TOKEN = os.getenv(
 
 _SCM_TIMEOUT = (10, 120)
 
+# Stage 環境 MQ consumer 延遲大，ASF + approve 需要較長等待
+_ASF_POLL_TIMEOUT = 300       # ASF 背景調查 polling 上限（秒）
+_ASF_POLL_INTERVAL = 10       # ASF polling 間隔（秒）
+_ASF_SETTLE_WAIT = 20         # ASF 完成後等 MQ consumer 穩定（秒）
+_APPROVE_MAX_RETRIES = 20     # approve 最大重試次數
+_APPROVE_RETRY_INTERVAL = 15  # approve 重試間隔（秒）
+
 _SCM_COUNTRY_CONTRACT_MAP = {
     "TW": 3, "JP": 5, "KR": 4, "SG": 6, "MY": 6,
     "HK": 15, "TH": 16, "VN": 10, "CN": 13, "AU": 18,
@@ -223,6 +230,7 @@ def _be2_admin_login(env: str, base_url: str) -> tuple:
         raise RuntimeError(f"BE2 token 交換失敗: {token_resp.status_code}: {token_resp.text[:300]}")
     access_token = token_resp.json()["data"]["accessToken"]
 
+    # 只需讀 platformId，不驗簽——避免多加 PyJWT 依賴
     payload_b64 = access_token.split(".")[1]
     padding = 4 - len(payload_b64) % 4
     if padding != 4:
@@ -399,16 +407,16 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
                         headers=be2_h, json_body={})
     _scm_assert_success(body, "Submit ASF")
 
-    deadline = time.time() + 300
+    deadline = time.time() + _ASF_POLL_TIMEOUT
     while time.time() < deadline:
-        time.sleep(10)
+        time.sleep(_ASF_POLL_INTERVAL)
         body = _scm_request("GET",
                             f"{potato}/v1/suppliers/{supplier_oid}/asf_summary",
                             headers=be2_h)
         data = body.get("data", {})
         report_list = data.get("reportList", [])
         if report_list and report_list[0].get("result") is not None:
-            time.sleep(20)
+            time.sleep(_ASF_SETTLE_WAIT)
             break
 
     contract_no = _SCM_COUNTRY_CONTRACT_MAP.get(country, 3)
@@ -461,7 +469,7 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
     except Exception:
         pass
 
-    for attempt in range(20):
+    for attempt in range(_APPROVE_MAX_RETRIES):
         try:
             body = _scm_request(
                 "POST",
@@ -472,8 +480,8 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
             _scm_assert_success(body, "核准")
             return
         except RuntimeError as e:
-            if "SUPREG0011" in str(e) and attempt < 19:
-                time.sleep(15)
+            if "SUPREG0011" in str(e) and attempt < _APPROVE_MAX_RETRIES - 1:
+                time.sleep(_APPROVE_RETRY_INTERVAL)
                 continue
             raise
 
