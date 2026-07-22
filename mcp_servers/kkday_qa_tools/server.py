@@ -1894,7 +1894,7 @@ def _scm_activate_supplier(env: str, supplier_oid: int, country: str = "TW") -> 
     _scm_assert_success(body, "Submit ASF")
 
     # Step 4: poll ASF 完成
-    deadline = time.time() + 180
+    deadline = time.time() + 300
     asf_done = False
     while time.time() < deadline:
         time.sleep(10)
@@ -1964,7 +1964,7 @@ def _scm_activate_supplier(env: str, supplier_oid: int, country: str = "TW") -> 
         pass  # 查不到就繼續嘗試 approve
 
     # Stage MQ consumer 寫入 asf_result_date 延遲可達 120+ 秒
-    for attempt in range(12):
+    for attempt in range(20):
         try:
             body = _scm_request(
                 "POST",
@@ -1975,7 +1975,7 @@ def _scm_activate_supplier(env: str, supplier_oid: int, country: str = "TW") -> 
             _scm_assert_success(body, "核准")
             return
         except RuntimeError as e:
-            if "SUPREG0011" in str(e) and attempt < 11:
+            if "SUPREG0011" in str(e) and attempt < 19:
                 time.sleep(15)
                 continue
             raise
