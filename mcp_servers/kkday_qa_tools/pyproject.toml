@@ -14,4 +14,4 @@ dependencies = [
 kkday-qa-tools-mcp = "server:main"
 
 [tool.setuptools]
-py-modules = ["server"]
+py-modules = ["server", "scm_supplier"]
