@@ -33,6 +33,19 @@ DELIVERY_LEDGER="${CASE_DELIVERY_LEDGER:-$HOME/.claude/harness/case_delivery.jso
 # 這輪不是 TCMS 批次（沒有 claimed 檔）→ 放行。這不是繞過：本來就沒有批次要擋。
 [ -f "$CLAIMED" ] || exit 0
 
+# in-flight aware（省 token）：本 session 仍有背景 task 在跑時，這批 claim 還在處理中，不是
+# 「收尾時漏驗」——放行 turn 結束、安靜等 completion 通知，避免每回合 block 造成忙等迴圈狂燒 token。
+# 判定：harness 的 per-session tasks 目錄裡，尚有 *.output 為 size 0（未寫入＝執行中）且近期（<120min）。
+# 找不到 tasks 目錄（無法判定）→ 不放行，落到下面照常 enforce（fail-closed，安全優先）。
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  for _td in /private/tmp/claude-*/*/"$CLAUDE_CODE_SESSION_ID"/tasks /tmp/claude-*/*/"$CLAUDE_CODE_SESSION_ID"/tasks; do
+    [ -d "$_td" ] || continue
+    if [ -n "$(find "$_td" -maxdepth 1 -name '*.output' -size 0 -mmin -120 2>/dev/null | head -1)" ]; then
+      exit 0
+    fi
+  done
+fi
+
 # 到這裡代表「這輪真的跑了 TCMS 批次」。守門一律 fail-CLOSED：任何讓 gate 跑不成的狀況
 # （腳本遺失、路徑錯、python 掛）都必須擋下，否則把關能被「刪掉/改名腳本」輕易繞過。
 if [ ! -f "$GATE" ]; then

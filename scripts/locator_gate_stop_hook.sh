@@ -24,6 +24,18 @@ GATE="${CLAUDE_PROJECT_DIR:-.}/scripts/check_locator_gate.py"
 # 這輪沒交付 UI case（沒有 claimed 檔）→ 放行。
 [ -f "$CLAIMED" ] || exit 0
 
+# in-flight aware（同 fidelity gate，省 token）：本 session 仍有背景 task 在跑（tasks/*.output size 0
+# 且 <120min）→ 這批還在處理中，放行 turn 結束、等 completion 通知，不每回合 block 忙等。
+# 找不到 tasks 目錄 → 落到下面照常 enforce（fail-closed）。
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  for _td in /private/tmp/claude-*/*/"$CLAUDE_CODE_SESSION_ID"/tasks /tmp/claude-*/*/"$CLAUDE_CODE_SESSION_ID"/tasks; do
+    [ -d "$_td" ] || continue
+    if [ -n "$(find "$_td" -maxdepth 1 -name '*.output' -size 0 -mmin -120 2>/dev/null | head -1)" ]; then
+      exit 0
+    fi
+  done
+fi
+
 # 守門 fail-CLOSED：gate 跑不成（腳本遺失等）也要擋，否則把關能被刪腳本繞過。
 if [ ! -f "$GATE" ]; then
   printf '{"decision":"block","reason":"locator gate 腳本找不到（%s），為避免把關被繞過，擋下結束。請確認 scripts/check_locator_gate.py 存在。"}\n' "$GATE"

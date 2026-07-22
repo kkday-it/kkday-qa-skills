@@ -67,16 +67,25 @@ def _to_locator_str(sel_type: str, value: str) -> str:
     return f"css={value}"
 
 
-def _open_page(pw, device: str):
-    """開 browser context；device 非空則套 Playwright 內建 device profile（帶手機 UA）。"""
+def _open_page(pw, device: str, storage_state: str = ""):
+    """開 browser context；device 非空則套 Playwright 內建 device profile（帶手機 UA）。
+    storage_state 非空則載入已登入 session（cookie/localStorage）→ 可探『登入後』頁面的選擇器，
+    不必每次重跑完整 E2E 登入流程。session 檔怎麼來由呼叫端負責（例：automator 一輪內
+    第一次登入後 context.storage_state(path=...) dump 一份、後續探測復用），本腳本只負責載入。"""
     browser = pw.chromium.launch(headless=True)
+    ctx_kwargs = {}
     if device:
         desc = pw.devices.get(device)
         if not desc:
             raise RuntimeError(f"未知 device profile: {device}")
-        context = browser.new_context(**desc)
+        ctx_kwargs.update(desc)
     else:
-        context = browser.new_context(viewport={"width": 1920, "height": 1080})
+        ctx_kwargs["viewport"] = {"width": 1920, "height": 1080}
+    if storage_state:
+        if not os.path.isfile(storage_state):
+            raise RuntimeError(f"--storage-state 檔不存在: {storage_state}")
+        ctx_kwargs["storage_state"] = storage_state
+    context = browser.new_context(**ctx_kwargs)
     return browser, context, context.new_page()
 
 
@@ -118,6 +127,91 @@ def _verify_candidates(page, candidates: list, per_wait_ms: int = 3000) -> dict:
     return {"status": "stale", "hit": None, "checked": checked}
 
 
+_SNAPSHOT_JS = r"""
+(opts) => {
+  const near = (opts.near || '').trim();
+  const max = opts.max || 60;
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  const vis = el => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    const st = getComputedStyle(el);
+    return st.visibility !== 'hidden' && st.display !== 'none' && st.opacity !== '0';
+  };
+  // 互動 / 有語意的元素：連結、按鈕、輸入、開關、tab、帶 role、或短文字葉節點（標題/標籤）
+  const sel = 'a,button,input,select,textarea,[role],[onclick],label,'
+            + '[class*=switch],[class*=toggle],[class*=tab],[class*=btn],h1,h2,h3';
+  let els = Array.from(document.querySelectorAll(sel)).filter(vis);
+  const attr = (el, n) => el.getAttribute(n) || '';
+  const describe = el => {
+    const cls = norm(el.className && el.className.toString ? el.className.toString() : '');
+    const txt = norm(el.textContent).slice(0, 40);
+    // 建議 selector：穩定屬性優先
+    let suggest = '';
+    if (attr(el, 'data-testid')) suggest = `css:[data-testid="${attr(el,'data-testid')}"]`;
+    else if (el.id) suggest = `css:#${el.id}`;
+    else if (attr(el, 'name')) suggest = `css:${el.tagName.toLowerCase()}[name="${attr(el,'name')}"]`;
+    else if (attr(el, 'aria-label')) suggest = `css:[aria-label="${attr(el,'aria-label')}"]`;
+    else if (txt) suggest = `xpath://${el.tagName.toLowerCase()}[normalize-space(.)="${txt}"]`;
+    else if (cls) suggest = `css:${el.tagName.toLowerCase()}.${cls.split(' ')[0]}`;
+    return {
+      tag: el.tagName.toLowerCase(),
+      role: attr(el, 'role') || '',
+      type: attr(el, 'type') || '',
+      text: txt,
+      id: el.id || '',
+      testid: attr(el, 'data-testid'),
+      name: attr(el, 'name'),
+      aria: attr(el, 'aria-label') || attr(el, 'placeholder'),
+      checked: el.tagName === 'INPUT' ? el.checked : (attr(el, 'aria-checked') || null),
+      cls: cls.slice(0, 80),
+      suggest,
+    };
+  };
+  if (near) {
+    // 聚焦：只留「文字含 near，或其祖先 4 層內含 near」的元素
+    els = els.filter(el => {
+      let p = el;
+      for (let i = 0; i < 4 && p; i++) { if (norm(p.textContent).includes(near)) return true; p = p.parentElement; }
+      return false;
+    });
+  }
+  const seen = new Set(), out = [];
+  for (const el of els) {
+    const d = describe(el);
+    const key = d.tag + '|' + d.text + '|' + d.suggest;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(d);
+    if (out.length >= max) break;
+  }
+  return { url: location.href, count: out.length, elements: out };
+}
+"""
+
+
+def _mode_snapshot(args) -> int:
+    """快照模式：headless 開頁，傾印當前頁「可見互動/標籤元素 + 建議 selector」給 AS 一眼挑對元素，
+    取代 playwright MCP 的 snapshot（無彈窗、可並行）。可搭 --device / --storage-state 探 mweb / 登入後頁。
+    --near 聚焦某文字附近，避免整頁太雜。"""
+    if _is_prod_url(args.url):
+        print(json.dumps({"status": "blocked", "error": f"現階段禁打 prod，拒絕開站：{args.url}"}, ensure_ascii=False))
+        return 3
+    with sync_playwright() as pw:
+        browser, _, page = _open_page(pw, args.device, args.storage_state)
+        try:
+            page.goto(args.url, wait_until="domcontentloaded", timeout=20000)
+            _settle(page)
+            result = page.evaluate(_SNAPSHOT_JS, {"near": args.near, "max": args.max_elements})
+        finally:
+            browser.close()
+    result["device"] = args.device or "desktop"
+    if args.near:
+        result["near"] = args.near
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _mode_single(args) -> int:
     candidates = []
     for raw in args.candidate:
@@ -132,7 +226,7 @@ def _mode_single(args) -> int:
         print(json.dumps({"status": "blocked", "error": f"現階段禁打 prod，拒絕開站：{args.url}"}, ensure_ascii=False))
         return 3
     with sync_playwright() as pw:
-        browser, _, page = _open_page(pw, args.device)
+        browser, _, page = _open_page(pw, args.device, args.storage_state)
         try:
             page.goto(args.url, wait_until="domcontentloaded", timeout=20000)
             _settle(page)
@@ -204,6 +298,10 @@ def main() -> int:
     p.add_argument("--url", help="單元素模式：要驗的頁面 URL")
     p.add_argument("--candidate", action="append", default=[], help="單元素模式：type:value（可重複，依優先序）")
     p.add_argument("--device", default="", help="套 Playwright device profile（mweb 用 'iPhone 15'）")
+    p.add_argument("--storage-state", default="", help="載入已登入 session（Playwright storage_state JSON）→ 可探登入後頁面（單元素/快照模式皆適用），免每次重跑完整登入")
+    p.add_argument("--snapshot", action="store_true", help="快照模式：headless 傾印該頁可見互動/標籤元素 + 建議 selector（取代 MCP snapshot），讓 AI 一眼挑對元素。搭 --url，可加 --device/--storage-state/--near")
+    p.add_argument("--near", default="", help="快照模式：只列「文字含此字串或其附近」的元素，聚焦目標區塊")
+    p.add_argument("--max-elements", type=int, default=60, help="快照模式：最多列幾個元素（預設 60）")
     p.add_argument("--registry", help="registry 模式：registry.json 路徑")
     p.add_argument("--flow", default="", help="registry 模式過濾：flow key")
     p.add_argument("--page", default="", help="registry 模式過濾：page key")
@@ -222,9 +320,13 @@ def main() -> int:
 
     if args.registry:
         return _mode_registry(args)
+    if args.snapshot:
+        if not args.url:
+            p.error("--snapshot 需搭 --url")
+        return _mode_snapshot(args)
     if args.url:
         return _mode_single(args)
-    p.error("需提供 --registry（批次）或 --url + --candidate（單元素）")
+    p.error("需提供 --registry（批次）、--url + --candidate（單元素）、或 --url --snapshot（快照）")
 
 
 if __name__ == "__main__":
