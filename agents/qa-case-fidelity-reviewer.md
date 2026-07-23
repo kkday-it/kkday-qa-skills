@@ -63,6 +63,11 @@ locator gate 只驗「有 source==本 case 的 emit 存在」，**不驗 emit �
 - 主要防 **app / from-scratch** 手寫 emit 與 code 脫節；web/mweb 的 emit 是 valve 驗過的，通常一致，但一併查無妨。
 - emit 目錄不存在 / 該 case 無 emit 列：那是 locator gate 的守備範圍（會擋），你這裡專注「有 emit 時內容對不對得上 code」。
 
+### 5. 框架慣例違規（driver-call；在我方 gate 就抓，別留給 repo PR reviewer）
+對本 case 改到的**非** `playwright_element.py`/`playwright_elements.py` 檔（test_steps、pages、common）跑：
+`grep -n "execute_js\|\.page\." <改到的檔>`（排除 `page_is_ready`/`keyboard` 等白名單）。
+有命中 → 違反 `qa-automation-writer/references/driver-call-rules.md`（元素查詢須用 Element API，禁底層直呼）→ 列進 `suspicious_assertions`、**`recommend=needs-fix`**（退回 automator 用 Element API 改寫）。這類上 PR 會被 repo reviewer 擋，要在這裡先擋掉。
+
 ## 輸出（結構化，給主對話當閘門）
 
 ```

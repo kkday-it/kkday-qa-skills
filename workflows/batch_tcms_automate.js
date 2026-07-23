@@ -89,8 +89,12 @@ const PLAN_SCHEMA = {
   },
   required: ['caseid', 'plan'],
 }
-function planPrompt(caseId) {
-  return `你是 qa-case-planner。case=${caseId}。框架 repo=${REPO}。
+function planPrompt(caseId, hint) {
+  const hintBlock = hint
+    ? `\n🔵 **已知脈絡/case owner 裁示（據此 ground，別重新翻案）**：\n${typeof hint === 'string' ? hint : JSON.stringify(hint, null, 2)}\n（這是先前同 case 其他平台交付 + 人的裁示累積下來的事實：例如某平台已交付可沿用、UI 斷言以站上實際文案為準、scope 已被人縮定。你的工作是把它 ground 到本批指定平台的真實頁面/DOM，不是推翻它。）\n`
+    : ''
+  return `你是 qa-case-planner。case=${caseId}。框架 repo=${REPO}。${hintBlock}${LIMIT_PLATFORMS ? `
+🔴 本批已由使用者**鎖定平台＝【${LIMIT_PLATFORMS.join(', ')}】**。只針對這些平台規劃：即使 case 標題/步驟看起來像別的平台（例如 App 的「我的」分頁字眼），也一律以「**指定平台上對應的頁面/流程**」來 ground（如 web 帳號設定頁），research 該平台上此功能的既有做法。**platform 欄位只填指定平台**、不要自行改判成別的平台。若該功能在指定平台上確實不存在 → 標 blocked ＋ 理由，不要捏一個、也不要偷換平台。` : ''}
 依你的職責產出實作前計畫（唯讀、不寫 code）：
 1. 抓 TCMS spec（tcms-fetch-cases）→ 讀懂要測的真正邏輯。
 2. 起手先查 flow-registry：\`python3 ${SKILLS}/scripts/get_verified_flow.py --q "<前置語意>" --platform <平台> --repo-path ${REPO} --registry ${SKILLS}/flow_registry/registry.json\`（用前先驗；只信 verified）。沒命中才 grep repo，挖到新可重用 flow **當下**用 \`${SKILLS}/scripts/send_flow_registry.py\` 寫回。
@@ -121,6 +125,10 @@ const IMPL_SCHEMA = {
       },
     },
     traceability: { type: 'string' },
+    // 已在真實頁面驗過的 locator / 頁面入口，供回修時沿用、免下一輪重挖 DOM。
+    // 例：[{platform:'mweb', entry:'登入→側邊欄行銷通知→/member/preference',
+    //       locators:[{name:'email_promo_switch', selector:'css:...'}]}]
+    verified_locators: { type: 'array', items: { type: 'object', additionalProperties: true } },
   },
   required: ['caseid', 'tags_platforms', 'per_platform'],
 }
@@ -131,6 +139,11 @@ const VERDICT_SCHEMA = {
   properties: {
     caseid: { type: 'string' },
     delivered: { type: 'boolean' },
+    // recommend：忠實度 reviewer 的處置建議，決定「未達標」該怎麼走——
+    //   pass         → 達標（delivered 應為 true）
+    //   needs-fix    → code 能修的缺口，丟回 automator 重修
+    //   flag-for-human → 規格衝突/判斷模糊，automator 修不好，須人拍板；**不進重修迴圈**（否則空轉燒滿輪次）
+    recommend: { type: 'string', enum: ['pass', 'needs-fix', 'flag-for-human'] },
     gate_missing: { type: 'array', items: { type: 'string' } },
     fidelity_issues: { type: 'array', items: { type: 'string' } },
     fix_instructions: { type: 'string' },
@@ -138,14 +151,21 @@ const VERDICT_SCHEMA = {
   required: ['caseid', 'delivered'],
 }
 
-function implPrompt(caseId, fixNote, plan, reruns) {
+function implPrompt(caseId, fixNote, plan, reruns, priorFindings) {
   const planStr = plan ? (typeof plan === 'string' ? plan : JSON.stringify(plan, null, 2)) : ''
+  const priorStr =
+    priorFindings && (priorFindings.verified_locators?.length || priorFindings.traceability)
+      ? `\n🔵 **上一輪已在真實頁面驗過的成果——直接沿用，別重看 DOM / 重挖 locator**（只針對下面 fix 點動）：\n` +
+        `已驗 locator/入口：${JSON.stringify(priorFindings.verified_locators || [], null, 0)}\n` +
+        (priorFindings.traceability ? `既有 step→斷言追溯：${priorFindings.traceability}\n` : '') +
+        `需要重新確認 locator 時，優先用 \`scripts/verify_locator.py --snapshot --url <頁> [--device 'iPhone 15'] [--storage-state <session>] [--near <文字>]\` **一次看真實頁面挑對元素**，不要猜→驗→重猜。\n`
+      : ''
   const flakyNote =
     reruns > 1
       ? `\n**flaky 防護（本 case 高風險）**：每個平台不是跑一次就好——用 qa-test-runner 對每平台**連續跑 ${reruns} 次**，必須 ${reruns} 次全 pass 才算該平台交付。任一次 fail 即視為不穩定，須先查穩定性（環境/等待/選擇器）再交付，不可「跑到一次綠」就收。\n`
       : ''
   return `你是 qa-case-automator，**並行模式**。case=${caseId}。${flakyNote}
-${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 flow 建真實資源、關鍵 specific 斷言、沿用哪些現成、priority 都在裡面；別自己另生一套）。🔴 **削重工（照 §0）：計畫是 planner 研究過 repo 的成果，直接當地基——別再把整個 repo 的 discovery 從頭 grep 一遍；只針對性驗證「計畫點名的 function 簽名/位置還在、要動的 locator 真實解析得到」，標 \`← 需新建\` 的才去挖新實作。**：\n${planStr}\n` : ''}${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
+${planStr ? `\n**照這份已確認的實作計畫做**（前置怎麼用既有 flow 建真實資源、關鍵 specific 斷言、沿用哪些現成、priority 都在裡面；別自己另生一套）。🔴 **削重工（照 §0）：計畫是 planner 研究過 repo 的成果，直接當地基——別再把整個 repo 的 discovery 從頭 grep 一遍；只針對性驗證「計畫點名的 function 簽名/位置還在、要動的 locator 真實解析得到」，標 \`← 需新建\` 的才去挖新實作。**：\n${planStr}\n` : ''}${fixNote ? `這是回修，請針對以下未達標點補實作：${fixNote}\n` : ''}${priorStr}${LIMIT_PLATFORMS ? `\n**本批只做這些平台：${LIMIT_PLATFORMS.join(', ')}**——其餘 tag 平台本批直接標 blocked、不嘗試（如無 App 實體機）。\n` : ''}
 並行模式規則（照 qa-case-automator.md §3.5）：
 - 驗元素用**各自 launch 的 headless Python playwright**（scripts/verify_locator.py），不用 MCP（避免彈窗/搶共用瀏覽器）。
 - 在你所在的 git worktree 內寫檔，不自己做 git 操作。
@@ -182,7 +202,11 @@ async function verify(caseId, impl, reruns) {
 
 步驟 2 — 忠實度（gate 判不出、靠你）：對每個 gate 判 pass 的平台，比對 case 規格 vs 實作斷言，抓「沒真驗到的 expected」「過弱/恆真斷言」「參數收了沒用」。判準是**該平台每個 expected 有沒有被真斷言驗到**——步驟與 web 相同就共用斷言、有差異才要對應斷言；**不是**看有沒有 \`if platform\` 分支（步驟一樣本來就沒分支，不代表沒交付）。
 
-回傳：delivered（gate \`missing_pass\` 空 **且** 每平台 fidelity 達標才 true）、gate_missing（gate 的 missing_pass）、fidelity_issues、fix_instructions。`,
+回傳：delivered（gate \`missing_pass\` 空 **且** 每平台 fidelity 達標才 true）、recommend、gate_missing（gate 的 missing_pass）、fidelity_issues、fix_instructions。
+🔴 **recommend 三選一，決定未達標怎麼走**：
+  - \`pass\`：達標（此時 delivered=true）。
+  - \`needs-fix\`：**code 能修**的缺口（漏斷言、弱斷言、gate 沒真跑 pass、參數沒用到）→ 會丟回 automator 重修。
+  - \`flag-for-human\`：**規格衝突或判斷模糊、automator 改 code 也修不好**（例：站上實際文案與 TCMS 步驟用字不一致、expected 有歧義、需 case owner 拍板）→ **不會丟回 automator**（那只會空轉燒輪次），直接送人工佇列等人決定。覆蓋率就算滿，只要你對「該不該這樣斷言」信心不足、需要人拍板，就選這個、別選 needs-fix。`,
     {
       label: `verify:${caseId}`,
       phase: 'Gate+Review',
@@ -277,7 +301,9 @@ const results = await pipeline(
   async (caseId) => {
     let plan
     if (MODE === 'auto') {
-      plan = await agent(planPrompt(caseId), {
+      // auto 也吃 CONFIRMED_PLANS 當「脈絡/裁示 hint」：planner 據此 ground（不重新翻案），
+      // 而非略過 planner。這樣既有 planner 的 mweb DOM/nav grounding，又不丟失人的裁示。
+      plan = await agent(planPrompt(caseId, CONFIRMED_PLANS[caseId] || null), {
         label: `plan:${caseId}`,
         phase: 'Plan',
         agentType: 'qa-case-planner',
@@ -307,12 +333,35 @@ const results = await pipeline(
     let cur = impl
     let round = 0
     let verdict = await verify(caseId, cur, reruns)
-    while (verdict && !verdict.delivered && round < MAX_FIX_ROUNDS) {
+    // 失敗簽章：同 gate 缺平台 + 同忠實度問題＝同一面牆。用來偵測「回修沒進展」。
+    const sigOf = (v) =>
+      JSON.stringify({ g: (v.gate_missing || []).slice().sort(), f: (v.fidelity_issues || []).slice().sort() })
+    const reasonOf = (v) => (v.gate_missing || []).concat(v.fidelity_issues || []).join('；') || '(無細節)'
+    let prevSig = null
+    let stuck = false
+    // flag-for-human：規格衝突/判斷模糊，automator 改 code 修不好——不進重修迴圈（避免空轉燒滿輪次），
+    // 直接跳出送人工佇列。只有 needs-fix（code 能修）才回修。
+    while (
+      verdict &&
+      !verdict.delivered &&
+      verdict.recommend !== 'flag-for-human' &&
+      round < MAX_FIX_ROUNDS
+    ) {
+      const sig = sigOf(verdict)
+      // 原地打轉偵測：這輪失敗與「上一輪剛修過的」完全同一簽章＝automator 沒推進，提前收手、不燒剩餘輪次。
+      // （有進步時 gate_missing/fidelity_issues 會變、簽章不同 → 照常續跑，不誤殺正在收斂的 case。）
+      if (prevSig !== null && sig === prevSig) {
+        stuck = true
+        log(`🔴 ${caseId} 回修無進展（連兩輪撞同一面牆），提前停止（round ${round}/${MAX_FIX_ROUNDS}）｜原因：${reasonOf(verdict)}`)
+        break
+      }
+      prevSig = sig
       round++
-      const gaps = (verdict.gate_missing || []).concat(verdict.fidelity_issues || []).join('；')
-      log(`${caseId} 未達標（round ${round}/${MAX_FIX_ROUNDS}）：${gaps}`)
+      // 每輪即時吐「具體失敗原因」，讓卡在哪當下就看得到、不必等跑完 3 輪。
+      log(`${caseId} 未達標（round ${round}/${MAX_FIX_ROUNDS}）｜原因：${reasonOf(verdict)}${verdict.fix_instructions ? '｜修法：' + verdict.fix_instructions : ''}`)
       const fixNote = `gate 缺平台=${JSON.stringify(verdict.gate_missing || [])}；忠實度問題=${JSON.stringify(verdict.fidelity_issues || [])}。${verdict.fix_instructions || ''}`
-      cur = await agent(implPrompt(caseId, fixNote, planByCase[caseId], reruns), {
+      // 帶上一輪 impl 的已驗 locator/追溯，讓回修沿用、不重看 DOM（新 worktree 也不必重挖）。
+      cur = await agent(implPrompt(caseId, fixNote, planByCase[caseId], reruns, cur), {
         label: `fix:${caseId}#${round}`,
         phase: 'Implement',
         isolation: 'worktree',
@@ -323,6 +372,11 @@ const results = await pipeline(
       verdict = await verify(caseId, cur, reruns)
     }
     const result = { caseId, rounds: round, ...(verdict || { delivered: false }), impl: cur }
+    // 未達標且「非可自動修好」→ 送人工佇列（別當可回修 fail 反覆燒）：
+    //   flag-for-human（reviewer 判規格/判斷問題）或 stuck（automator 連兩輪撞同一面牆、code 修不動）。
+    result.stuck = stuck
+    if (stuck && verdict) result.stuck_reason = reasonOf(verdict)
+    result.needs_human = !result.delivered && ((verdict && verdict.recommend === 'flag-for-human') || stuck)
     // 第三隻眼：只有達標 + 高風險（Critical/High）才跑 evaluator，省成本；不擋交付、只標記疑慮。
     if (result.delivered && cur && isHighRisk(planByCase[caseId])) {
       result.evaluation = (await evaluate(caseId, cur, planByCase[caseId])) || null
@@ -333,12 +387,16 @@ const results = await pipeline(
 
 // ── 收斂：達標 vs 未達標；統一開 PR 由主對話收 worktree 後處理（需先問使用者）──
 const delivered = results.filter((r) => r && r.delivered)
-const failed = results.filter((r) => r && !r.delivered)
+// 未達標拆兩類：needs_human（規格衝突/待人拍板，送人工佇列，別再自動重修）vs 真 fail（code 缺口用完輪次）。
+const needsHuman = results.filter((r) => r && !r.delivered && r.needs_human)
+const failed = results.filter((r) => r && !r.delivered && !r.needs_human)
 // 達標但獨立 evaluator 有本質疑慮的高風險 case：不擋交付，但要浮出來給人看。
 const evaluatorConcerns = delivered
   .filter((r) => r.evaluation && r.evaluation.verdict === 'concerns')
   .map((r) => ({ caseId: r.caseId, concerns: r.evaluation.concerns || [] }))
-log(`完成：${delivered.length}/${caseIds.length} 全平台交付達標；${failed.length} 未達標`)
+log(
+  `完成：${delivered.length}/${caseIds.length} 全平台交付達標；${failed.length} 未達標；${needsHuman.length} 待人拍板（flag-for-human，已短路不空轉）`
+)
 if (evaluatorConcerns.length) {
   log(`⚠️ ${evaluatorConcerns.length} 個高風險 case 交付達標但 evaluator 有本質疑慮，建議人工過目`)
 }
@@ -363,6 +421,16 @@ const delivery_records = delivered.map((r) => {
 return {
   total: caseIds.length,
   delivered: delivered.map((r) => r.caseId),
+  // 待人拍板：flag-for-human 短路出來的 case，主對話應寫進人工佇列（附 reviewer 疑慮），不要再自動重跑。
+  needs_human: needsHuman.map((r) => ({
+    caseId: r.caseId,
+    reason: r.stuck ? 'stuck（回修無進展、提前停止）' : 'flag-for-human（reviewer 判規格/判斷問題）',
+    recommend: r.recommend,
+    stuck_reason: r.stuck_reason,
+    fidelity_issues: r.fidelity_issues,
+    fix_instructions: r.fix_instructions,
+    rounds: r.rounds,
+  })),
   failed: failed.map((r) => ({
     caseId: r.caseId,
     rounds: r.rounds,
@@ -375,5 +443,6 @@ return {
     '達標 case 已在各自 git worktree 完成全平台實作。主對話收攏各 worktree 改動、統一開「一個」PR（依規範須先問使用者是否開 PR）。' +
     '開 PR 後，把 delivery_records 每筆補上 pr_url/commit 寫成 jsonl，跑 ' +
     '`python3 <skills>/scripts/send_case_delivery.py --infile <jsonl>` 記進交付 ledger' +
-    '（#5：供日後 detect_test_rot / link_escaped_defect 回查「後來壞了/綠了卻出事」）。未達標的排入待人工。',
+    '（#5：供日後 detect_test_rot / link_escaped_defect 回查「後來壞了/綠了卻出事」）。' +
+    'needs_human 的 case（flag-for-human）寫進人工佇列附 reviewer 疑慮等人拍板、不再自動重修；真 failed（code 缺口用完輪次）才排補做。',
 }

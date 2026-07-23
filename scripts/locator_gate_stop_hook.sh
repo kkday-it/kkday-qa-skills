@@ -24,6 +24,19 @@ GATE="${CLAUDE_PROJECT_DIR:-.}/scripts/check_locator_gate.py"
 # 這輪沒交付 UI case（沒有 claimed 檔）→ 放行。
 [ -f "$CLAIMED" ] || exit 0
 
+# in-flight aware（同 fidelity gate，省 token）：用「心跳」主動訊號——session 背景 subagent 檔
+# （*.jsonl）近 15 分鐘內仍被更新＝task 真的在跑 → 放行 turn 結束、等 completion 通知，不忙等。
+# hung/dead task 停止寫檔 → 15 分內自動恢復 enforce，不會被「output 永遠 size-0」繞過。
+# 找不到活動 → 落到下面照常 enforce（fail-closed）。
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  for _sd in "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID"/subagents; do
+    [ -d "$_sd" ] || continue
+    if [ -n "$(find "$_sd" -name '*.jsonl' -mmin -15 2>/dev/null | head -1)" ]; then
+      exit 0
+    fi
+  done
+fi
+
 # 守門 fail-CLOSED：gate 跑不成（腳本遺失等）也要擋，否則把關能被刪腳本繞過。
 if [ ! -f "$GATE" ]; then
   printf '{"decision":"block","reason":"locator gate 腳本找不到（%s），為避免把關被繞過，擋下結束。請確認 scripts/check_locator_gate.py 存在。"}\n' "$GATE"

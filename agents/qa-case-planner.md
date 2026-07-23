@@ -139,6 +139,13 @@ UI **沒有 swagger**，case 步驟＋真實畫面是唯一 source of truth，ca
 
 🔴 界線：寫清判準殺的是「agent 猜錯」，殺不掉「DOM flaky」。故能在 API 驗的業務邏輯**優先下壓 API**，UI 只留不可約斷言。
 
+### 3.9 🔴 跨平台差異：逐平台 ground，禁假設 web=mweb（android=ios）
+
+多平台共用一份 case（web↔mweb、android↔ios）時，**不准假設各平台入口/頁面/DOM/文案一致**——它們常不同（例：web 帳號設定 tab 內；mweb 是獨立頁、由側邊欄進入，路徑/DOM/單雙 toggle 都可能不一樣）。對**每個目標平台各自 ground**：
+- web/mweb 用 `scripts/verify_locator.py`（mweb 必帶 `--device 'iPhone 15'`，靠 UA 才拿到 mweb DOM，不是縮 viewport）實際探目標頁，確認入口路徑/關鍵元素/文案。
+- **ground 不到就列「待確認點」，不得照搬另一平台硬填**。常見擋點要誠實標出：① **登入後頁面**（`verify_locator` 無 session 進不去）→ 標「需登入後入口/DOM，請 case owner 確認該平台路徑」；② repo 無既有引用又無權威來源 → 標「該平台入口未知待確認」。
+- 產出的計畫**每平台的入口/斷言分開寫**；把「該平台差異已 ground / 待確認」明列，讓人在**動 automator 前**就補齊，別把平台差異丟給 automator 現場猜（會燒 rounds＋token＋時間）。
+
 ### 4. 產出實作計畫（給主對話 → 人確認）
 
 結構化輸出，**每個平台一份**：

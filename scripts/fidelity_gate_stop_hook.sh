@@ -33,6 +33,21 @@ DELIVERY_LEDGER="${CASE_DELIVERY_LEDGER:-$HOME/.claude/harness/case_delivery.jso
 # 這輪不是 TCMS 批次（沒有 claimed 檔）→ 放行。這不是繞過：本來就沒有批次要擋。
 [ -f "$CLAIMED" ] || exit 0
 
+# in-flight aware（省 token）：本 session 仍有背景 task「真的在跑」時，這批 claim 還在處理中，不是
+# 「收尾時漏驗」——放行 turn 結束、安靜等 completion 通知，避免每回合 block 造成忙等迴圈狂燒 token。
+# 用「心跳」主動訊號（非被動的 output 存在）：session 的背景 subagent 檔（agent/journal *.jsonl）
+# 近 15 分鐘內是否仍被更新。task 真的在跑才會持續寫檔；**hung/dead task 停止寫檔 → 15 分內本 gate
+# 自動恢復 enforce**，不會像「output 永遠 size-0」那樣被誤判 in-flight 而繞過守門。
+# 找不到活動（無法判定 in-flight）→ 落到下面照常 enforce（fail-closed，安全優先）。
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  for _sd in "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID"/subagents; do
+    [ -d "$_sd" ] || continue
+    if [ -n "$(find "$_sd" -name '*.jsonl' -mmin -15 2>/dev/null | head -1)" ]; then
+      exit 0
+    fi
+  done
+fi
+
 # 到這裡代表「這輪真的跑了 TCMS 批次」。守門一律 fail-CLOSED：任何讓 gate 跑不成的狀況
 # （腳本遺失、路徑錯、python 掛）都必須擋下，否則把關能被「刪掉/改名腳本」輕易繞過。
 if [ ! -f "$GATE" ]; then

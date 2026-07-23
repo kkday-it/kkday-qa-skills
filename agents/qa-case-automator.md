@@ -56,6 +56,11 @@ model: opus
 - 只做**針對性驗證**：計畫點名的 function 簽名/位置還在、要動的 locator 對真實 DOM 解析得到。
 - 標 `← 需新建` 的才挖新實作（§2.5），標既有的直接用。無計畫時才自己做完整研究。
 
+**🔴 additive 平台「先試再實作」（省最貴的重跑）**：計畫若指出**另一個共用同一份檔的平台已交付**（例：做 mweb 而 web 已交付，兩者共用 `web_playwright/` 同一份 case+test_step）——**先不改任何 code，直接 `--platform <目標平台>` 把現有實作跑一次**：
+- 跑出 `0 failed` → 這平台**零實作直接交付**（步驟與已交付平台相同、本來就共用一套；不用加任何分支，也別為了「看起來有做事」硬加 `if platform`）。
+- 沒過 → 只**針對失敗點加最小 `if platform==X` 岔路**（§2 平台鐵則：加分支、不動共用主幹），別把整份重寫、別重跑整 repo discovery。
+先試這一步的成本是「一次跑」，省下的是「從頭 discovery + 反覆重寫重跑」整條鏈。
+
 ### 1. 取 steps（每次實作前重新 fetch，不沿用舊檔）
 ```bash
 # --out 用 per-case 路徑（含 case id）：批次並行時各 case 各寫各的，不會互相覆寫。
@@ -106,11 +111,25 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
    - **App（Android/iOS）**：**valve 不涵蓋 app**（`--platform` 只吃 web/mweb；app 沒有可導航 URL 不能事前驗）。取 hints 直接跑 `scripts/fetch_locator_registry.py --platform android|ios ...`（app 唯一的 sanctioned GET 路徑，不必事前驗），寫進 page object；**驗證＝測試本身**：跑測試,定位不到就 fail → 重挖。測試通過後照「收尾 ②」把用到的 app locator 收成 emit。
    - ❌ 不准「讀了 `registry.json` 的 selector 就當作驗過」——那是候選 hint 不是真理,且不觸發回寫,共享記憶永遠不更新。
 3. **強制元素驗證，locator 不准猜定稿**（一律用 **Python playwright** 驗，不用 MCP，見 §3.5）：從零挖時 Web/MWeb 驗 DOM 用 `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`），皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
-4. Page Object / Test Step / API / case data 一律照 qa-automation-writer 規範。
+4. **🔴 動手寫 automation code 前，先 `Skill(qa-automation-writer)` 載入規範並遵守——不是「記得才用」，是硬前置。** Page Object / Test Step / API / case data 一律照它。
+5. **🔴 driver-call 硬規則（見 `qa-automation-writer/references/driver-call-rules.md`）：除 `playwright_element.py` / `playwright_elements.py` 外，任何檔案（含 test_steps、pages、common）禁止 `uidriver.execute_js`、`.page.*` 等底層直呼。**元素查詢用 page object 的 `Element`/`Elements` + Element API（`.count`/`.wait`/`.is_visible`/`.scroll_into_view`…）；框架缺方法要先在 `playwright_element.py` 擴充，不自己繞。診斷用途也不例外——不要為了 fail-loud 塞 `execute_js` dump DOM，讓 Element API wait 逾時自然拋錯即可。
+6. **產出乾淨**：只留必要的簡潔 docstring（Google style），不塞冗長中文說明、rationale 註解、TODO、debug scaffolding。程式碼要專業精簡，不贅述。
+7. **斷言不要 fail-fast，用「一個 dict 收全部 → function 最末一次驗」**：別連續 `assert_that(...)`（第一個掛後面全不跑、一次只看到一個錯）。用一個 `results: dict[str, bool] = {}` 累積**整個 function 的每一個檢查**（`results["step1_toggle_checked"] = ...`、`results["step3_persisted"] = ...`…），操作（點擊/切換/重載）照順序做，但**所有驗證結果都塞進 dict、不當場 assert**；到 function **最後最後**才一次 `failed = [k for k, v in results.items() if not v]; assert_that(not failed, equal_to(True), f"失敗項={failed}")`。這樣一次跑就攤出**所有**失敗點、且錯誤訊息直接指名哪些 key False。只有「操作本身」（非驗證）有真序列依賴才照順序，驗證一律進 dict 延到最後。
+8. **helper 的位置與命名（🔴 top-level 一律不帶 `_` 前綴）**：
+   - **單一父用** → 收成父 function 內的**巢狀 `def`**（closure 讀父層 `pages`/`uidriver`，不需 `@function_recorder`），照 repo 慣例（如 `verify_add_product_into_wish_list_playwright` 內含 `clean_text`/`add_into_wish_list`…）。
+   - **跨多個 test step 共用** → 留 top-level `@function_recorder()`，但**命名成正式 step（`open_…`/`read_…`/`check_…`，不帶 `_` 前綴）**。理由：top-level function 就是 step 表面（yaml 可呼叫、log 樹有記），`_open_…` 這種「掛 top-level 又帶私有前綴」是四不像。
+   - **鐵則：top-level `def` 一律不得有 `_` 開頭**；`_` 只允許出現在巢狀 local def。判準：單一父用→巢狀；跨 step 共用→top-level 且無 `_`。
+9. **挑元素用 snapshot、別猜→驗→重猜；回修沿用上一輪成果、別重看 DOM**：不確定要哪個元素時，用 `scripts/verify_locator.py --snapshot --url <頁> [--device 'iPhone 15'] [--storage-state <session>] [--near <文字>]` **一次傾印真實頁面的可見元素 + 建議 selector**（取代 MCP、headless 無彈窗可並行），直接挑對，不要反覆全跑 E2E 試 selector。回修（fixNote 帶「已驗 locator/入口」）時**直接沿用那些已驗成果**、只補失敗那點，不重挖整頁。回報時把「這次在真實頁面驗過的 locator/入口」填進輸出的 `verified_locators`，供下一輪／忠實度 review 沿用。
 
 ### 3.5 驗元素/寫檔的隔離：一律 Python playwright（不用 MCP）
 
 **驗 Web/MWeb 元素一律用 Python playwright，不用 playwright MCP。** MCP 會彈出可見瀏覽器、佔資源、影響使用者體驗，且並行時多個 automator 會搶同一個共享瀏覽器互相踩——所以無論單案或批次並行，統一走 **各自 launch 的 headless Python playwright**：用 kkday-qa-skills `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`）或 `~/.claude/skills/qa-automation-writer` 那套 Python playwright。**每個 automator 各開各的 headless browser**，天然隔離、可並行、無彈窗。
+
+**🔴 選擇器 debug 用輕量探測，別靠反覆跑完整 E2E（省最多時間的一招）**：
+除錯 locator 時最貴的反模式是「改 selector → 重跑整個 `python -m qatest run`（重註冊帳號＋登入＋導頁）→ 看掛在哪 → 再改再全跑」，一輪跑 7–8 次、每次 3–5 分。改成：
+- **一次探多個候選**：`scripts/verify_locator.py --url <頁面> --candidate <type:value> --candidate ...`（mweb 加 `--device 'iPhone 15'`）開**一次** headless browser 回報哪個候選命中——選對了再跑**一次**完整 E2E 確認即可。
+- **登入後頁面**（帳號設定、會員中心等 verify_locator 直接 goto 到不了的）：一輪內**第一次**完整登入時，用 `context.storage_state(path="/tmp/kkday_session.<case>.json")` dump 一份 session；之後探測改用 `verify_locator.py --url <登入後頁> --storage-state /tmp/kkday_session.<case>.json`，**免每次重跑登入**。
+- **硬上限**：同一輪內完整 E2E（`qatest run`）**最多重跑 3 次**；還沒對就停下回報「selector 卡在哪、已試哪些候選」，不要無上限地全跑試錯。
 
 **檔案隔離：**
 - **批次並行時**各 automator 應在自己的 **git worktree** 內寫檔（由 workflow 用 `isolation: worktree` 提供），避免多 case 同時改同一 repo 互相覆蓋。**你只管在給定的工作目錄實作，不自己開 worktree、不自己做 git 操作。**
