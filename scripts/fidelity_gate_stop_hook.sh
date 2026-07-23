@@ -33,14 +33,16 @@ DELIVERY_LEDGER="${CASE_DELIVERY_LEDGER:-$HOME/.claude/harness/case_delivery.jso
 # 這輪不是 TCMS 批次（沒有 claimed 檔）→ 放行。這不是繞過：本來就沒有批次要擋。
 [ -f "$CLAIMED" ] || exit 0
 
-# in-flight aware（省 token）：本 session 仍有背景 task 在跑時，這批 claim 還在處理中，不是
+# in-flight aware（省 token）：本 session 仍有背景 task「真的在跑」時，這批 claim 還在處理中，不是
 # 「收尾時漏驗」——放行 turn 結束、安靜等 completion 通知，避免每回合 block 造成忙等迴圈狂燒 token。
-# 判定：harness 的 per-session tasks 目錄裡，尚有 *.output 為 size 0（未寫入＝執行中）且近期（<120min）。
-# 找不到 tasks 目錄（無法判定）→ 不放行，落到下面照常 enforce（fail-closed，安全優先）。
+# 用「心跳」主動訊號（非被動的 output 存在）：session 的背景 subagent 檔（agent/journal *.jsonl）
+# 近 15 分鐘內是否仍被更新。task 真的在跑才會持續寫檔；**hung/dead task 停止寫檔 → 15 分內本 gate
+# 自動恢復 enforce**，不會像「output 永遠 size-0」那樣被誤判 in-flight 而繞過守門。
+# 找不到活動（無法判定 in-flight）→ 落到下面照常 enforce（fail-closed，安全優先）。
 if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-  for _td in /private/tmp/claude-*/*/"$CLAUDE_CODE_SESSION_ID"/tasks /tmp/claude-*/*/"$CLAUDE_CODE_SESSION_ID"/tasks; do
-    [ -d "$_td" ] || continue
-    if [ -n "$(find "$_td" -maxdepth 1 -name '*.output' -size 0 -mmin -120 2>/dev/null | head -1)" ]; then
+  for _sd in "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID"/subagents; do
+    [ -d "$_sd" ] || continue
+    if [ -n "$(find "$_sd" -name '*.jsonl' -mmin -15 2>/dev/null | head -1)" ]; then
       exit 0
     fi
   done

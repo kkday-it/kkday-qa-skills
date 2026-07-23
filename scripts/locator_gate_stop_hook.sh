@@ -24,13 +24,14 @@ GATE="${CLAUDE_PROJECT_DIR:-.}/scripts/check_locator_gate.py"
 # 這輪沒交付 UI case（沒有 claimed 檔）→ 放行。
 [ -f "$CLAIMED" ] || exit 0
 
-# in-flight aware（同 fidelity gate，省 token）：本 session 仍有背景 task 在跑（tasks/*.output size 0
-# 且 <120min）→ 這批還在處理中，放行 turn 結束、等 completion 通知，不每回合 block 忙等。
-# 找不到 tasks 目錄 → 落到下面照常 enforce（fail-closed）。
+# in-flight aware（同 fidelity gate，省 token）：用「心跳」主動訊號——session 背景 subagent 檔
+# （*.jsonl）近 15 分鐘內仍被更新＝task 真的在跑 → 放行 turn 結束、等 completion 通知，不忙等。
+# hung/dead task 停止寫檔 → 15 分內自動恢復 enforce，不會被「output 永遠 size-0」繞過。
+# 找不到活動 → 落到下面照常 enforce（fail-closed）。
 if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-  for _td in /private/tmp/claude-*/*/"$CLAUDE_CODE_SESSION_ID"/tasks /tmp/claude-*/*/"$CLAUDE_CODE_SESSION_ID"/tasks; do
-    [ -d "$_td" ] || continue
-    if [ -n "$(find "$_td" -maxdepth 1 -name '*.output' -size 0 -mmin -120 2>/dev/null | head -1)" ]; then
+  for _sd in "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID"/subagents; do
+    [ -d "$_sd" ] || continue
+    if [ -n "$(find "$_sd" -name '*.jsonl' -mmin -15 2>/dev/null | head -1)" ]; then
       exit 0
     fi
   done
