@@ -40,6 +40,7 @@ function _parseInput(a) {
       platforms: a.platforms ?? null,
       mode: a.mode ?? null, // plan | execute | auto
       plans: a.plans ?? null, // execute 模式：{caseId: 已確認計畫}
+      run_id: a.run_id ?? null, // 本批識別碼：串同批所有 case×平台×輪次的 fidelity 紀錄供 dashboard 分組
     }
   return { cases: [], platforms: null }
 }
@@ -69,6 +70,9 @@ log(
 //   mode=auto（自主/harness，無人確認）：現場 spawn planner → 直接接 automator，不停等。
 const MODE = _p.mode || 'plan'
 const CONFIRMED_PLANS = _p.plans || {}
+// 本批 run_id：主對話啟動時應帶入唯一值（如 <批名>-<時間戳>），讓同批所有 fidelity 紀錄共用同一
+// run_id，dashboard 才能把「同一次跑的多筆/多輪」合併成一條、展開看每次。沒帶＝unknown（無法分組）。
+const RUN_ID = (typeof _p.run_id === 'string' && _p.run_id.trim()) || 'unknown'
 
 const PLAN_SCHEMA = {
   type: 'object',
@@ -206,7 +210,9 @@ async function verify(caseId, impl, reruns) {
 🔴 **recommend 三選一，決定未達標怎麼走**：
   - \`pass\`：達標（此時 delivered=true）。
   - \`needs-fix\`：**code 能修**的缺口（漏斷言、弱斷言、gate 沒真跑 pass、參數沒用到）→ 會丟回 automator 重修。
-  - \`flag-for-human\`：**規格衝突或判斷模糊、automator 改 code 也修不好**（例：站上實際文案與 TCMS 步驟用字不一致、expected 有歧義、需 case owner 拍板）→ **不會丟回 automator**（那只會空轉燒輪次），直接送人工佇列等人決定。覆蓋率就算滿，只要你對「該不該這樣斷言」信心不足、需要人拍板，就選這個、別選 needs-fix。`,
+  - \`flag-for-human\`：**規格衝突或判斷模糊、automator 改 code 也修不好**（例：站上實際文案與 TCMS 步驟用字不一致、expected 有歧義、需 case owner 拍板）→ **不會丟回 automator**（那只會空轉燒輪次），直接送人工佇列等人決定。覆蓋率就算滿，只要你對「該不該這樣斷言」信心不足、需要人拍板，就選這個、別選 needs-fix。
+
+🔴 **寫 fidelity 結果檔時（見你的「收尾必做」）**：\`run_id\` 欄位一律填 \`${RUN_ID}\`（本批統一，dashboard 靠它把同批多筆/多輪合併成一條）；**非 pass（needs-fix / flag-for-human）時 \`blocked_reason\` 要填「一句話理由」**（為什麼判這個——最關鍵的那條 fidelity_issue / 卡點），別留空，dashboard 要顯示。`,
     {
       label: `verify:${caseId}`,
       phase: 'Gate+Review',

@@ -129,7 +129,7 @@ notes: <一句話重點>
 | `confidence` | float | 0–1 |
 | `fix_rounds` | int | 這是第幾輪修 |
 | `recommend` | str | `pass` / `needs-fix` / `flag-for-human` / `blocked`（gate 主要判定訊號） |
-| `blocked_reason` | str | 非 blocked 給空字串 |
+| `blocked_reason` | str | **非 pass（needs-fix / flag-for-human / blocked）一律填「一句話理由」**（為什麼判這個——最關鍵的 fidelity_issue / 卡點）；pass 才給空字串。dashboard 靠這欄顯示 Reason，別留空。 |
 
 寫檔（檔名 = `<case_id>__<platform>.jsonl`；每輪 re-review 都**覆寫**同一檔）：
 
