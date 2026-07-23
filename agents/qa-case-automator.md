@@ -128,7 +128,8 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 **🔴 選擇器 debug 用輕量探測，別靠反覆跑完整 E2E（省最多時間的一招）**：
 除錯 locator 時最貴的反模式是「改 selector → 重跑整個 `python -m qatest run`（重註冊帳號＋登入＋導頁）→ 看掛在哪 → 再改再全跑」，一輪跑 7–8 次、每次 3–5 分。改成：
 - **一次探多個候選**：`scripts/verify_locator.py --url <頁面> --candidate <type:value> --candidate ...`（mweb 加 `--device 'iPhone 15'`）開**一次** headless browser 回報哪個候選命中——選對了再跑**一次**完整 E2E 確認即可。
-- **登入後頁面**（帳號設定、會員中心等 verify_locator 直接 goto 到不了的）：一輪內**第一次**完整登入時，用 `context.storage_state(path="/tmp/kkday_session.<case>.json")` dump 一份 session；之後探測改用 `verify_locator.py --url <登入後頁> --storage-state /tmp/kkday_session.<case>.json`，**免每次重跑登入**。
+- **登入後頁面**（帳號設定、會員中心等 verify_locator 直接 goto 到不了的）：一輪內**第一次**完整登入時，用 `context.storage_state(path="/tmp/kkday_session.<case>.json")` dump 一份 session；之後探測改用 `verify_locator.py --url <登入後頁> --storage-state /tmp/kkday_session.<case>.json`，**免每次重跑登入**。若主對話已在 prompt 給了 ground 好的 recipe（真實 class/屬性），**直接照用、禁再自己猜元件型態**（是 select2？原生 select？猜錯整條做壞）。
+- **🔴 禁自建假 case ID 跑框架來 ground**：不准為了進到登入後頁面而在 yaml 塞一個假 case（如 `KQT-T99001`）跑 `qatest run`——會被誤判成亂跑/假綠、暫存檔還常漏刪進 PR。要 ground 登入後頁就用上面 storage-state 那招；真的開了暫存探索檔，**流程結束前一定刪掉**（用固定前綴、自己 `rm`，不靠記得）。
 - **硬上限**：同一輪內完整 E2E（`qatest run`）**最多重跑 3 次**；還沒對就停下回報「selector 卡在哪、已試哪些候選」，不要無上限地全跑試錯。
 
 **檔案隔離：**

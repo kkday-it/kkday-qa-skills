@@ -177,7 +177,13 @@ bootstrap 完成後驗可用性（`verify_locator.py` 能跑 / `adb devices` / `
 
 工具與裝置就緒後，把「所有新增/修改的 locator」一次列出，逐一對照**真實元素樹**驗證與修正：
 
-> **一律用 Python playwright（`scripts/verify_locator.py`），不用 playwright MCP。** MCP 會彈出可見瀏覽器、佔資源、影響使用者體驗，且並行時多個 automator 會搶同一個共享瀏覽器互踩。`verify_locator.py` 是 headless、無彈窗、各自獨立、天然可並行。
+> **automator 一律用 Python playwright（`scripts/verify_locator.py`），禁用 playwright MCP。** 真正原因是**隔離性**（不只是彈窗）：MCP server 是**單一共用瀏覽器、一個 page，沒有 per-call 隔離**，並行時多個 automator driving 同一 page 會互相沖掉 navigation / 登入態；就算 MCP 跑 headless 也一樣互踩。`verify_locator.py` 每次呼叫開**獨立 headless 瀏覽器**（per-process），天然可並行、不彈窗。
+>
+> **MCP 只給主對話**做一次性探索 grounding（單人用、不並行），**永遠不給 spawn 出去的 automator**。
+>
+> **🔴 登入後頁面 grounding（禁猜元件型態、禁自建假 case）：**
+> - 登入後頁面（如 `/member/basic`）的 locator **必須經真實 logged-in DOM 定案**，禁憑經驗猜元件型態（是 select2？KkSelect？原生 select？——猜錯會整條做壞）。取得登入後 DOM 兩條合法路徑：① 主對話用 MCP 探索後把 ground 好的 recipe（真實 class/屬性）交給 automator；② 用框架既有 `login_with_email_playwright` 跑到登入後 dump `storage_state`，再 `verify_locator.py --storage-state <檔>` 探該頁。
+> - **禁止自建假 case ID（如 `KQT-T99001`）塞進 yaml 跑框架來 ground** —— 那會被誤判成亂跑 / 假綠，且暫存檔容易漏刪進 PR。若真要暫存探索檔，用固定前綴且**流程結束強制清除**（不靠記得刪）。
 
 - **Web（Python playwright / `verify_locator.py`）**
   1. 對 `https://www.stage{suffix}.kkday.com/...`（**禁用** prod `www.kkday.com`）逐一驗候選 locator：
@@ -310,7 +316,12 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 ### 操作規範
 
 - 互動前必須呼叫 `.wait()`：`pages.page.element.wait().click()`；禁止直接 `.click()` 不加 wait
-- 禁止用變數暫存 page object（如 `page = pages.xxx_page`），必須每次完整寫 `pages.xxx_page.element`
+- 禁止用變數暫存 page object **或其 element property**，必須每次完整寫 `pages.xxx_page.element`（每次重新 locate）。
+  - ❌ `page = pages.xxx_page`（暫存 page 物件）
+  - ❌ `native = pages.personal_info_page.nationality_select_native`（暫存 element property；即使只是為了少打字也不行）
+  - ✅ 每次用完整 dot chain：`pages.personal_info_page.nationality_select_native.is_disabled`
+  - helper 內同理；只有「從 element 取出的**純值**」（如 `text = pages.x.y.text`、`count = pages.x.y.count`）可暫存，因為那已不是 page/element 物件。
+  - repo AI reviewer 會擋 element alias；本規範明文收嚴以免每次被退。（既有 code 尚有未清的 alias 屬 tech-debt，碰到再清，勿在不相干 PR 動它。）
 - **禁止在 test_step 內 inline 建構 `Element(...)` / `Elements(...)`**：所有 locator 一律定義在對應 page object 的 `@property`，test_step 只透過 `pages.<page>.<element>` 取用（取 `.center`、`.text`、`.wait()` 等也一樣，先在 page object 定義好 element）。
   ```python
   # ❌ 錯：locator 寫死在 test_step、繞過 page object
@@ -362,6 +373,12 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 ## 通用 Coding Style
 
 縮排、import 排序、命名、pre-commit 等通用規範見 [references/coding-style.md](references/coding-style.md) 與 [Confluence Coding Style](https://kkday.atlassian.net/wiki/spaces/QS/pages/473661593/Coding+Style)。
+
+### 註解精簡（禁大段 essay）
+
+- `#` 註解**只寫「為什麼」的非顯而易見理由**（一兩行），禁止把 grounding 過程、DOM 結構、平台差異寫成整段 essay 塞在 code 裡——那屬回報 / PR 描述 / commit message 的內容，不是 code 註解。
+- docstring 保持精簡（pre-commit 要求函式有 docstring，但一句話講清用途即可，不要多段落解釋）。
+- 判準：如果一段 `#` 註解超過 2~3 行在解釋「這個元素長怎樣 / 當初怎麼驗出來的」，就是多餘，刪掉或濃縮成一句 why。
 
 ## 發 PR
 
