@@ -334,6 +334,7 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 - 斷言必須用 hamcrest：`assert_that(actual, equal_to(expected))`
 - 測試資料必須從 `testcase.static_test_data` 或 `testcase.dynamic_test_data` 取得，禁止硬編碼
 - iOS/Android 共用同一個 test step 檔案，流程內須用 `match TestRunConfig.platform` 做平台判斷
+- **App（iOS/Android）輸入文字欄位後，下一步互動前必須收鍵盤**：`.input(...)` 後軟鍵盤會蓋住畫面、擋住後續點擊/讀值（如填完「中文姓」要接著點國籍下拉）。收鍵盤用既有 `press_device_btn(btn_type="close_keyboard")`（iOS drag、Android back，`test_steps/kkday/app/common.py`），不要自己 `driver.back()`。踩過的坑：填完欄位沒收鍵盤，後續元素被鍵盤遮到 located failed。
 - 禁止在同一個 function 中混用 Playwright 和 Selenium 寫法
 
 ### 禁止直接呼叫底層 driver
