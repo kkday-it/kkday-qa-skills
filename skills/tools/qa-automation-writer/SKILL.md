@@ -226,6 +226,16 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 
 失敗時交給 **qa-test-runner** 的診斷/修復流程（它同樣會用上述元素樹抓取來修 locator）。
 
+> **🔴 失敗（locator located failed）先「看那一頁」，別盲改盲跑（踩過的坑，尤其 App 一次跑 12–18 分）。**
+> 失敗的 locator，正確答案就在**失敗當下那一頁**——先看它，再修，別憑猜改 locator 又重跑整個 E2E：
+> 1. **框架失敗時已存截圖**：`~/Documents/QATest_Output/<run>/<feature>/<case>_<ts>.png`（App/Web 皆有）——先 Read 這張圖，肉眼確認失敗頁上目標元素長怎樣、值是什麼。
+> 2. **再 dump 失敗頁的真實元素**定 locator（**用真實屬性、禁猜元件型態/巢狀**）：
+>    - Web/MWeb：`verify_locator.py --snapshot`（登入後頁配 `--storage-state`）。
+>    - Android：`adb -s <udid> shell uiautomator dump` 拉 hierarchy（看 resource-id/text/clickable/enabled）。
+>    - iOS 實機：idb `describe-all` 不支援 → 起 Appium session（`noReset`+`autoLaunch:false` attach 當前畫面）取 `driver.page_source`（看 name/label/value/enabled；文字多在 **label**）。
+> 3. 用 dump 到的真實屬性一次修對，再重跑驗證。**禁「改一個 locator → 重跑 12 分 → 再猜再跑」的盲改迴圈。**
+> 平台差異也常在此現形（同一設計 Android 與 iOS 呈現不同，如鎖定：一邊欄位 disabled、一邊值回復）——以失敗頁實況為準，別假設兩平台一致。
+
 ### 階段 4 — 產出 step→assertion 可追溯表（供忠實度 review）
 
 **跑過 ≠ 有測對 case。** 定稿時必須產出一張**可追溯表**，把 TCMS case 的每個 step / expected_result 對到實作中的斷言，供 `qa-case-fidelity-reviewer` 比對（也逼自己確認每個 expected 都真的有斷言）。
