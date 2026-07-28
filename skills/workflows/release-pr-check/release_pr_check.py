@@ -31,6 +31,7 @@ load_dotenv()
 
 CLOUD_ID = "8b890302-cc52-42ce-a15e-697446426613"
 JIRA_DOMAIN = "kkday.atlassian.net"
+TIMEOUT = 30  # seconds, applied to every Atlassian HTTP call
 SKIP_STATUSES = {"Closed", "Won't Fix", "Duplicate", "Cancelled"}
 
 # Issue key prefixes (project keys) to skip — non-RD coordination tickets that
@@ -80,7 +81,7 @@ def fetch_storage(page_id, auth):
     r = requests.get(
         f"https://api.atlassian.com/ex/confluence/{CLOUD_ID}/wiki/api/v2/pages/{page_id}",
         params={"body-format": "storage"},
-        auth=auth, headers={"Accept": "application/json"},
+        auth=auth, headers={"Accept": "application/json"}, timeout=TIMEOUT,
     )
     r.raise_for_status()
     return r.json()["body"]["storage"]["value"]
@@ -129,6 +130,7 @@ def search_issues(jql, auth):
         r = requests.get(
             f"https://api.atlassian.com/ex/jira/{CLOUD_ID}/rest/api/3/search/jql",
             params=params, auth=auth, headers={"Accept": "application/json"},
+            timeout=TIMEOUT,
         )
         r.raise_for_status()
         data = r.json()
@@ -139,7 +141,13 @@ def search_issues(jql, auth):
     return issues
 
 
+_pr_cache = {}  # issue_id -> PR list; the same ticket shows up in multiple sections
+
+
 def get_prs(issue_id, auth):
+    if issue_id in _pr_cache:
+        return _pr_cache[issue_id]
+    prs = []
     # oAuth-com.github.integration.production: GitHub cloud integration after
     # Atlassian migrated it to the OAuth-based app (observed 2026-07)
     for app_type in ("oAuth-com.github.integration.production",
@@ -148,13 +156,15 @@ def get_prs(issue_id, auth):
             f"https://{JIRA_DOMAIN}/rest/dev-status/latest/issue/detail",
             params={"issueId": issue_id, "applicationType": app_type,
                     "dataType": "pullrequest"},
-            auth=auth, headers={"Accept": "application/json"},
+            auth=auth, headers={"Accept": "application/json"}, timeout=TIMEOUT,
         )
         if r.ok:
             detail = r.json().get("detail", [])
             if detail and detail[0].get("pullRequests"):
-                return detail[0]["pullRequests"]
-    return []
+                prs = detail[0]["pullRequests"]
+                break
+    _pr_cache[issue_id] = prs
+    return prs
 
 
 def get_prs_for_issue(issue, auth):
@@ -341,7 +351,7 @@ def create_subpage(parent_page_id, title, body_html, auth):
     # v2 API needs spaceId, not spaceKey — fetch it from the parent
     r = requests.get(
         f"https://api.atlassian.com/ex/confluence/{CLOUD_ID}/wiki/api/v2/pages/{parent_page_id}",
-        auth=auth, headers={"Accept": "application/json"},
+        auth=auth, headers={"Accept": "application/json"}, timeout=TIMEOUT,
     )
     r.raise_for_status()
     space_id = r.json()["spaceId"]
@@ -357,6 +367,7 @@ def create_subpage(parent_page_id, title, body_html, auth):
         },
         auth=auth,
         headers={"Accept": "application/json", "Content-Type": "application/json"},
+        timeout=TIMEOUT,
     )
     r.raise_for_status()
     return r.json()
@@ -370,7 +381,7 @@ def lookup_account_ids(emails, auth):
         r = requests.get(
             f"https://api.atlassian.com/ex/jira/{CLOUD_ID}/rest/api/3/user/search",
             params={"query": email},
-            auth=auth, headers={"Accept": "application/json"},
+            auth=auth, headers={"Accept": "application/json"}, timeout=TIMEOUT,
         )
         users = r.json() if r.ok else []
         # Prefer exact email match (case-insensitive)
@@ -403,6 +414,7 @@ def restrict_page(page_id, account_ids, auth):
         f"https://api.atlassian.com/ex/confluence/{CLOUD_ID}/wiki/rest/api/content/{page_id}/restriction",
         json=body, auth=auth,
         headers={"Accept": "application/json", "Content-Type": "application/json"},
+        timeout=TIMEOUT,
     )
     if not r.ok:
         print(f"[warn] Failed to set restrictions: HTTP {r.status_code} — {r.text[:200]}")
