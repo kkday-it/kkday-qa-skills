@@ -424,10 +424,22 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
                         f"{potato}/v2/suppliers/{supplier_oid}/detail",
                         headers=be2_h,
                         json_body={"kkdayMainContractNo": contract_no,
-                                   "productMaintainer": "SUPPLIER",
-                                   "msgHandler": "SUPPLIER",
-                                   "orderHandler": "SUPPLIER"})
+                                   "productMaintainer": "SUPPLIER"})
     _scm_assert_success(body, "PATCH supplier detail")
+
+    try:
+        body = _scm_request("POST",
+                            f"{potato}/v1/suppliers/{supplier_oid}/audit-supplier-applicant",
+                            headers=be2_h,
+                            json_body={"purchaseWay": "DIRECT",
+                                       "productMaintainer": "SUPPLIER",
+                                       "isEcShowKkdayDirect": "Y",
+                                       "orderHandler": "SUPPLIER",
+                                       "msgHandler": "SUPPLIER",
+                                       "isRezioActivity": "false"})
+        _scm_assert_success(body, "audit-supplier-applicant")
+    except RuntimeError:
+        pass
 
     today = date.today()
     body = _scm_request("POST",
