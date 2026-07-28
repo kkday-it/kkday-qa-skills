@@ -424,7 +424,9 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
                         f"{potato}/v2/suppliers/{supplier_oid}/detail",
                         headers=be2_h,
                         json_body={"kkdayMainContractNo": contract_no,
-                                   "productMaintainer": "SUPPLIER"})
+                                   "productMaintainer": "SUPPLIER",
+                                   "msgHandler": "SUPPLIER",
+                                   "orderHandler": "SUPPLIER"})
     _scm_assert_success(body, "PATCH supplier detail")
 
     today = date.today()
