@@ -238,7 +238,9 @@ def _be2_admin_login(env: str, base_url: str) -> tuple:
     jwt_payload = _json.loads(base64.urlsafe_b64decode(payload_b64))
     owner_uuid = jwt_payload["platformId"]
 
-    return access_token, owner_uuid
+    admin_email = jwt_payload.get("authKey", "")
+
+    return access_token, owner_uuid, admin_email
 
 
 # ── 公開 API（server.py 呼叫）──────────────────────────────────────
@@ -382,7 +384,7 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
     """BE2 審核 → ASF → 合約 → 核准，啟用供應商到 v2 狀態。"""
     potato = _sofa_potato_base(env)
 
-    be2_token, owner_uuid = _be2_admin_login(env, base_url)
+    be2_token, owner_uuid, admin_email = _be2_admin_login(env, base_url)
     be2_h = {"Authorization": f"Bearer {be2_token}",
              "Content-Type": "application/json", "Accept": "application/json"}
 
@@ -402,10 +404,25 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
                                    "supplierOwner": owner_uuid})
     _scm_assert_success(body, "Process 10→20")
 
+    contract_no = _SCM_COUNTRY_CONTRACT_MAP.get(country, 3)
+    body = _scm_request("PATCH",
+                        f"{potato}/v2/suppliers/{supplier_oid}/detail",
+                        headers=be2_h,
+                        json_body={"kkdayMainContractNo": contract_no,
+                                   "productMaintainer": "SUPPLIER",
+                                   "supStmtConfirmors": [admin_email]})
+    _scm_assert_success(body, "PATCH supplier detail")
+
     body = _scm_request("POST",
-                        f"{potato}/v1/suppliers/{supplier_oid}/asf_summary",
-                        headers=be2_h, json_body={})
-    _scm_assert_success(body, "Submit ASF")
+                        f"{potato}/v1/suppliers/{supplier_oid}/audit-supplier-applicant",
+                        headers=be2_h,
+                        json_body={"purchaseWay": "DIRECT",
+                                   "productMaintainer": "SUPPLIER",
+                                   "isEcShowKkdayDirect": "Y",
+                                   "orderHandler": "SUPPLIER",
+                                   "msgHandler": "SUPPLIER",
+                                   "isRezioActivity": "false"})
+    _scm_assert_success(body, "audit-supplier-applicant（設定 handler + 觸發 ASF）")
 
     deadline = time.time() + _ASF_POLL_TIMEOUT
     while time.time() < deadline:
@@ -418,28 +435,6 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
         if report_list and report_list[0].get("result") is not None:
             time.sleep(_ASF_SETTLE_WAIT)
             break
-
-    contract_no = _SCM_COUNTRY_CONTRACT_MAP.get(country, 3)
-    body = _scm_request("PATCH",
-                        f"{potato}/v2/suppliers/{supplier_oid}/detail",
-                        headers=be2_h,
-                        json_body={"kkdayMainContractNo": contract_no,
-                                   "productMaintainer": "SUPPLIER"})
-    _scm_assert_success(body, "PATCH supplier detail")
-
-    try:
-        body = _scm_request("POST",
-                            f"{potato}/v1/suppliers/{supplier_oid}/audit-supplier-applicant",
-                            headers=be2_h,
-                            json_body={"purchaseWay": "DIRECT",
-                                       "productMaintainer": "SUPPLIER",
-                                       "isEcShowKkdayDirect": "Y",
-                                       "orderHandler": "SUPPLIER",
-                                       "msgHandler": "SUPPLIER",
-                                       "isRezioActivity": "false"})
-        _scm_assert_success(body, "audit-supplier-applicant")
-    except RuntimeError:
-        pass
 
     today = date.today()
     body = _scm_request("POST",
