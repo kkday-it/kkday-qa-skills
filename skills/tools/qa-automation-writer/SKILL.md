@@ -346,6 +346,19 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
   center = pages.home_page.search_bar.wait().center
   ```
 - 禁止用 `time.sleep()` 或 `driver.page.wait_for_timeout()` 做硬等待，若需硬等待請用 `common.sleep_by_seconds()` 搭配 `TimeoutConstants`
+- **等元素/等數量一律用 page object element 的既有 wait API「直接呼叫」，讓等不到時自然拋錯——禁止自己用 `try/except` 把 wait 包起來吞逾時。** 等可見用 `.wait()`/`.wait_for_visible()`；等集合數量到位用 `.wait_for_min_count(n)`/`.wait_for_count(n)`（框架既有方法，見 `playwright_elements.py`；既有 code 如 `search_result_page.py` 都是直接呼叫）。逾時＝元素沒出現＝測試本來就該失敗，不准用 `try: ...wait_for_min_count(n)... except Exception: pass` 把它吞掉再讀 `.count` 斷言——那會把「沒等到」的真失敗靜默成假綠、也不是框架慣例。
+  ```python
+  # ❌ 錯：自建 try/except 吞掉 wait 逾時（非慣例、把真失敗靜默）
+  try:
+      pages.loyalty_page.benefit_cards.wait_for_min_count(2)
+  except Exception:
+      pass
+  card_count = pages.loyalty_page.benefit_cards.count
+  # ✅ 對：直接呼叫，逾時自然拋錯（＝該失敗）
+  pages.loyalty_page.benefit_cards.wait_for_min_count(2)
+  card_count = pages.loyalty_page.benefit_cards.count
+  ```
+  真的需要「等不到但不丟錯」時，用框架既有的 `no_exception=True` 參數（如 `Elements.wait(no_exception=True)`），**不要自建 try/except**。框架缺對應能力就先在 `playwright_element.py`/`playwright_elements.py` 擴充（改底層要附 unit test + 回歸既有呼叫者），不要在 test_step 裡繞。
 - 斷言必須用 hamcrest：`assert_that(actual, equal_to(expected))`
 - 測試資料必須從 `testcase.static_test_data` 或 `testcase.dynamic_test_data` 取得，禁止硬編碼
 - iOS/Android 共用同一個 test step 檔案，流程內須用 `match TestRunConfig.platform` 做平台判斷
