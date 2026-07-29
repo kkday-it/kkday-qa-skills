@@ -226,6 +226,16 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 
 失敗時交給 **qa-test-runner** 的診斷/修復流程（它同樣會用上述元素樹抓取來修 locator）。
 
+> **🔴 失敗（locator located failed）先「看那一頁」，別盲改盲跑（踩過的坑，尤其 App 一次跑 12–18 分）。**
+> 失敗的 locator，正確答案就在**失敗當下那一頁**——先看它，再修，別憑猜改 locator 又重跑整個 E2E：
+> 1. **框架失敗時已存截圖**：`~/Documents/QATest_Output/<run>/<feature>/<case>_<ts>.png`（App/Web 皆有）——先 Read 這張圖，肉眼確認失敗頁上目標元素長怎樣、值是什麼。
+> 2. **再 dump 失敗頁的真實元素**定 locator（**用真實屬性、禁猜元件型態/巢狀**）：
+>    - Web/MWeb：`verify_locator.py --snapshot`（登入後頁配 `--storage-state`）。
+>    - Android：`adb -s <udid> shell uiautomator dump` 拉 hierarchy（看 resource-id/text/clickable/enabled）。
+>    - iOS 實機：idb `describe-all` 不支援 → 起 Appium session（`noReset`+`autoLaunch:false` attach 當前畫面）取 `driver.page_source`（看 name/label/value/enabled；文字多在 **label**）。
+> 3. 用 dump 到的真實屬性一次修對，再重跑驗證。**禁「改一個 locator → 重跑 12 分 → 再猜再跑」的盲改迴圈。**
+> 平台差異也常在此現形（同一設計 Android 與 iOS 呈現不同，如鎖定：一邊欄位 disabled、一邊值回復）——以失敗頁實況為準，別假設兩平台一致。
+
 ### 階段 4 — 產出 step→assertion 可追溯表（供忠實度 review）
 
 **跑過 ≠ 有測對 case。** 定稿時必須產出一張**可追溯表**，把 TCMS case 的每個 step / expected_result 對到實作中的斷言，供 `qa-case-fidelity-reviewer` 比對（也逼自己確認每個 expected 都真的有斷言）。
@@ -286,6 +296,11 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 - 必須有 abstract base（`mobile/base/`）+ 具體實作（`android/`、`ios/`），改一邊要確認另一邊
 - 定義新元件前先確認 base 是否已有相同元件，避免重複定義
 - 元件文字建議用 `t('key', locale=AppConfig.language)` 取多語言，避免寫死中文
+- **iOS XCUITest locator 屬性慣例（踩過的坑，以真機 page source 為準、勿只賭 `@name`）**：
+  - StaticText 的文字常在 **`@label`**（`@name` 可能空或被截斷）→ 文字比對要 `@name` 或 `@label` 都查。
+  - 顯示值元素**可能是 `Button`（其 `name`/`label` = 值）而非 StaticText**（如國籍欄選值鈕）→ 別硬接 `//XCUIElementTypeStaticText`，直接讀那顆 Button。
+  - 輸入框（email/姓名等）文字在 **`TextField` 的 `@value`**（name/label 常空）。
+  - **iOS 實機無法用 `idb ui describe-all`**（回 FBAccessibilityCommands 不支援）→ 要 ground 就起 Appium session（`noReset`+`autoLaunch:false` attach 當前畫面）取 `driver.page_source`。
 
 ### Web/MWeb (Playwright)
 
@@ -331,9 +346,25 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
   center = pages.home_page.search_bar.wait().center
   ```
 - 禁止用 `time.sleep()` 或 `driver.page.wait_for_timeout()` 做硬等待，若需硬等待請用 `common.sleep_by_seconds()` 搭配 `TimeoutConstants`
+- **等元素/等數量一律用 page object element 的既有 wait API「直接呼叫」，讓等不到時自然拋錯——禁止自己用 `try/except` 把 wait 包起來吞逾時。** 等可見用 `.wait()`/`.wait_for_visible()`；等集合數量到位用 `.wait_for_min_count(n)`/`.wait_for_count(n)`（框架既有方法，見 `playwright_elements.py`；既有 code 如 `search_result_page.py` 都是直接呼叫）。逾時＝元素沒出現＝測試本來就該失敗，不准用 `try: ...wait_for_min_count(n)... except Exception: pass` 把它吞掉再讀 `.count` 斷言——那會把「沒等到」的真失敗靜默成假綠、也不是框架慣例。
+  ```python
+  # ❌ 錯：自建 try/except 吞掉 wait 逾時（非慣例、把真失敗靜默）
+  try:
+      pages.loyalty_page.benefit_cards.wait_for_min_count(2)
+  except Exception:
+      pass
+  card_count = pages.loyalty_page.benefit_cards.count
+  # ✅ 對：直接呼叫，逾時自然拋錯（＝該失敗）
+  pages.loyalty_page.benefit_cards.wait_for_min_count(2)
+  card_count = pages.loyalty_page.benefit_cards.count
+  ```
+  真的需要「等不到但不丟錯」時，用框架既有的 `no_exception=True` 參數（如 `Elements.wait(no_exception=True)`），**不要自建 try/except**。框架缺對應能力就先在 `playwright_element.py`/`playwright_elements.py` 擴充（改底層要附 unit test + 回歸既有呼叫者），不要在 test_step 裡繞。
 - 斷言必須用 hamcrest：`assert_that(actual, equal_to(expected))`
 - 測試資料必須從 `testcase.static_test_data` 或 `testcase.dynamic_test_data` 取得，禁止硬編碼
 - iOS/Android 共用同一個 test step 檔案，流程內須用 `match TestRunConfig.platform` 做平台判斷
+- **App（iOS/Android）輸入文字欄位後，下一步互動前必須收鍵盤**：`.input(...)` 後軟鍵盤會蓋住畫面、擋住後續點擊/讀值（如填完「中文姓」要接著點國籍下拉）。收鍵盤用既有 `press_device_btn(btn_type="close_keyboard")`（iOS drag、Android back，`test_steps/kkday/app/common.py`），不要自己 `driver.back()`。踩過的坑：填完欄位沒收鍵盤，後續元素被鍵盤遮到 located failed。
+- **App 判斷欄位「是否為空」不能只看 `.text`/`.value`**：空的輸入框讀回的是 **placeholder/hint**（Android 如「中文姓 *」、iOS 如「例：陳」），非空字串 → 直接 `not field.text` 會誤判「已填」而跳過必填、導致儲存被擋。判空要把 placeholder 一併視為空（比對已知 hint 字樣 / `例：` 前綴 / label 文字），或乾脆每次都重填該必填欄。踩過的坑：中文姓沒填→儲存鈕沒反應→整條 case 走不到驗證。
+- **鎖定/停用等 UI 狀態，斷言要綁「真實狀態屬性」，且逐平台 ground、勿套用單一行為模型**：例如「國籍鎖定」的真實訊號是欄位 `enabled=false`（Android `layout_country`、iOS 選值 Button 皆然）——不要自己發明「改第二次會回復原值」這種**未經真機驗證的行為模型**去斷言（讀值常讀到本地未存的暫值而誤判）。以失敗頁/真機 dump 的實際屬性為準。
 - 禁止在同一個 function 中混用 Playwright 和 Selenium 寫法
 
 ### 禁止直接呼叫底層 driver
