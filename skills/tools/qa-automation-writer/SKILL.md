@@ -320,7 +320,11 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 - 所有函式必須加 `@function_recorder()` 裝飾器
 - 參數必須有 type hint（`pages: Pages`、`testcase: TestCase` 等），return 也必須標註型別（如 `-> None`）
 - `pages`、`uidriver`、`test_run_config`、`testcase`、`api_request`、`api_response` 等參數由框架 fixture 自動注入，呼叫時不需手動傳入
-- 🔴 **私有共用 helper（被其他 test step 呼叫、抽出來的斷言/操作）也一律加 `@function_recorder()`**——`function_recorder` 靠參數名注入 fixture（見 `lib/decorators/function_recorder.py`），有 decorator 才會自動注入 `pages`/`uidriver`。**禁止**寫成「沒 decorator 的普通函式，再從呼叫端手動傳 `pages`/`uidriver`」——那會噴 `missing positional argument`、也違反「所有函式都要 decorator」。正解二擇一：① helper 也 `@function_recorder()`，呼叫時只傳業務參數（`_assert_xxx(keyword=...)`，不傳 fixture）；② 不抽 helper，把斷言 inline 進每個 decorated step。
+- 🔴 **私有 helper 一律禁止放在 module top-level（包含 `_` 開頭的普通函式）。** test_step 檔的 top-level 只能有「加了 `@function_recorder()` 的正式 test step」，不准出現 top-level 的私有 helper。抽出來的斷言/操作，依「被幾個 step 用」歸位：
+  - **只被單一 step 用** → 寫成該 step 內的 **nested function**（inner function，靠 closure 直接取用外層注入的 `pages`/`uidriver`，不必自己收 fixture、不用 `_` 前綴），或直接 **inline 進該 step**。
+  - **真的被多個 step 共用** → **升格成正式 public test step**（snake_case、**無 `_` 前綴**、加 `@function_recorder()`），當一個正規 step 用，而不是 top-level 私有 helper。
+  - **禁止**（兩種都不行）：① top-level `_xxx` 沒 decorator 的普通函式，再從呼叫端手動傳 `pages`/`uidriver`——會噴 `missing positional argument`、也違反「所有函式都要 decorator」；② top-level `_xxx` **就算加了 decorator 也不行**——那不是「私有 helper」的正確歸位，共用就升格成正規 step、單用就 nest 進去。
+  - 為什麼：`function_recorder` 靠參數名注入 fixture（見 `lib/decorators/function_recorder.py`）；top-level 私有 helper 會逼你手動傳 fixture、或讓輔助邏輯散落 top-level 難維護。nested function 用 closure 拿 `pages`/`uidriver` 最乾淨。
 - Docstring 使用 Google style + 雙引號，包含 Args 和 Returns 區塊
 
 ### 命名
