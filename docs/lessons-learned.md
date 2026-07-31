@@ -67,6 +67,21 @@
 
 ---
 
+## symlink 只讓「已連上的檔案」更新——**新增**的 skill/agent 不會自己冒出來
+
+**症狀**：上游新增 `qa-case-planner` 後，早裝的隊友 `~/.claude/agents/` 裡沒有它，於是回報「install.sh 缺少裝 qa-case-planner」。但 `install.sh` 是 `for a in agents/*.md` 全撈，並沒有漏。
+
+**根因（兩層）**：
+
+1. `session_autopull.sh` 有更新時只重跑 `sync_hooks.py`，**不重建 symlink**。symlink 的語意是「已連上的那個檔案跟著更新」，repo 裡多出一個新檔案不會自動產生新 symlink → 只有「新安裝的人」拿得到新 agent。
+2. 更根本：autopull 用 `CLAUDE_PROJECT_DIR`（= 當下開的專案）當同步目標，但 hook 是掛在 user-level、**在任何專案都會跑**。所以隊友在 `kkday-QA-automation` 開 session 時，它 pull 的是 QA-automation（然後找不到那裡的 `scripts/sync_hooks.py` 就跳過），qa-skills 從頭到尾沒被同步——這就是「不知道有更新」的機制性根因，順帶還會 auto-pull 別人的產品 repo。
+
+**對策（已落地）**：link 邏輯抽成 `scripts/link_assets.sh`（單一來源，`--quiet` 給 hook 用）；`install.sh` 與 `session_autopull.sh` 共用它。autopull 呼叫它的位置有兩個刻意的選擇：**(a) 放在 pull 之外、不分有無更新都跑**——只在「有更新」時補救不到「HEAD 早就最新、但當初裝的時候上游還沒有那個 agent」的人，離線時也照樣自我修復；**(b) 同步目標改成「本 script 所屬的 clone」**（`dirname $BASH_SOURCE/..`），不再看 `CLAUDE_PROJECT_DIR`。
+
+**通則**：「自動保持最新」要分清楚**更新既有物**與**取得新增物**是兩件事——前者 symlink 免費，後者一定要有人重跑安裝步驟。自我修復的動作要**無條件跑**（冪等且便宜的話），別綁在「偵測到變更」上，否則救不到已經處於壞狀態的人。另外：user-level hook 的工作目錄是**使用者的專案**，不是它自己的 repo，凡是要對「自己的 repo」動作的 hook 都得從 `$BASH_SOURCE` 推路徑。
+
+---
+
 ## 「元件層 done」≠「流程層 done」——armed 但沒接線，會被下一輪 review 當新問題重複挖出
 
 **症狀**：同一批工作，每重跑一次 review 就冒出「新」缺口（「偵測器沒觸發」「記錄靠主對話記得寫」「gate 沒接進 Stop hook」）。使用者觀感是「怎麼補不完」。
