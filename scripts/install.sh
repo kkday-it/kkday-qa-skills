@@ -42,7 +42,7 @@ seen=" "
 for s in "$REPO"/skills/tools/*/ "$REPO"/skills/workflows/*/; do
   [ -f "$s/SKILL.md" ] || continue
   name="$(basename "${s%/}")"
-  case "$seen" in *" $name "*) echo "  = skip $name（同名已裝，tools 版優先）"; continue;; esac
+  case "$seen" in *" $name "*) echo "  = skip ${name}（同名已裝，tools 版優先）"; continue;; esac
   seen="$seen$name "
   link_one "${s%/}" "$CLAUDE_DIR/skills"
 done
@@ -58,6 +58,6 @@ SETTINGS="$CLAUDE_DIR/settings.json"
 # hook 定義集中在 sync_hooks.py（install 與 session_autopull 共用，避免漂移）；
 # 它會冪等 merge + 自動 migrate 屬本 repo 的舊 hook（改過的 flag/路徑會被換新）。
 REPO="$REPO" SETTINGS="$SETTINGS" python3 "$REPO/scripts/sync_hooks.py"
-echo "[install] hook 已 merge 進 $SETTINGS（透過 sync_hooks.py）"
+echo "[install] hook 已 merge 進 ${SETTINGS}（透過 sync_hooks.py）"
 
 echo "[install] 完成。新開一個 Claude Code session 即生效（hook 在任何專案都會跑）。"
