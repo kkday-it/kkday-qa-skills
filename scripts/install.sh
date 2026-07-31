@@ -25,31 +25,9 @@ echo "[install] repo = $REPO"
 echo "[install] target = $CLAUDE_DIR"
 
 # ── 1. symlink skills + agents ───────────────────────────────────────
-link_one() {  # $1=src $2=dstdir
-  local src="$1" dst="$2/$(basename "$1")"
-  if [ -L "$dst" ]; then
-    ln -sfn "$src" "$dst"; echo "  ~ relink $(basename "$1")"
-  elif [ -e "$dst" ]; then
-    echo "  ! skip $(basename "$1")（已存在且非 symlink，不覆蓋——如要接管請先手動移除）"
-  else
-    ln -s "$src" "$dst"; echo "  + link $(basename "$1")"
-  fi
-}
-echo "[install] skills:"
-# tools 先於 workflows；同名 skill（如 qa-test-runner 兩處都有）以 tools 版為準（first-wins），
-# 用字串 seen 清單去重（相容 macOS 內建 bash 3.2，不用 assoc array）。
-seen=" "
-for s in "$REPO"/skills/tools/*/ "$REPO"/skills/workflows/*/; do
-  [ -f "$s/SKILL.md" ] || continue
-  name="$(basename "${s%/}")"
-  case "$seen" in *" $name "*) echo "  = skip ${name}（同名已裝，tools 版優先）"; continue;; esac
-  seen="$seen$name "
-  link_one "${s%/}" "$CLAUDE_DIR/skills"
-done
-echo "[install] agents:"
-for a in "$REPO"/agents/*.md; do
-  [ -f "$a" ] && link_one "$a" "$CLAUDE_DIR/agents"
-done
+# link 邏輯集中在 link_assets.sh（install 與 session_autopull 共用，避免漂移）；
+# autopull 每個 session 也會跑它，所以上游新增的 skill/agent 會自動補 symlink。
+bash "$REPO/scripts/link_assets.sh"
 
 # ── 2. merge hook 進 ~/.claude/settings.json（絕對路徑、備份、不覆蓋）──
 SETTINGS="$CLAUDE_DIR/settings.json"

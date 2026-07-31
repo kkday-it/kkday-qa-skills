@@ -18,7 +18,10 @@
 set -u
 
 THROTTLE="${1:-0}"
-D="${CLAUDE_PROJECT_DIR:-$PWD}"
+# 目標一律是「本 script 所屬的 clone」，不是 CLAUDE_PROJECT_DIR。用當下專案會踩兩個雷：
+# (1) session 開在別的 repo（多半是 kkday-QA-automation）時，pull 的是那個 repo，qa-skills
+#     根本沒被同步 → 夥伴永遠不知道有更新；(2) 順手 auto-pull 別人的產品 repo 不是本意。
+D="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -d "$D/.git" ] || exit 0
 
 b=$(git -C "$D" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -43,4 +46,11 @@ if git -C "$D" pull --ff-only --quiet 2>/dev/null; then
     printf '{"systemMessage":"qa-skills repo 已自動同步 %s → %s（skills/agents/hook 為最新）"}\n' "$before" "$after"
   fi
 fi
+
+# 補 symlink：放在 pull 之外、且**不分有無更新**都跑。理由：
+#   - 只在「有更新」時補，救不到「HEAD 早就最新、但當初安裝時上游還沒有那個 skill/agent」的人
+#     ——symlink 只讓已連上的檔案跟著更新，新增檔案永遠不會自己出現（qa-case-planner 就是這樣漏的）。
+#   - 放在 pull 之外，離線 / pull 失敗時也照樣自我修復。
+# link_assets.sh 冪等、不連網、只做幾個 ln，成本可忽略；輸出全丟掉以免污染 hook 的 stdout 協定。
+bash "$D/scripts/link_assets.sh" --quiet >/dev/null 2>&1 || true
 exit 0

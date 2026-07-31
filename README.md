@@ -48,12 +48,12 @@ bash ~/kkday-qa-skills/scripts/install.sh
 
 `install.sh` 做三件事（冪等，可重跑）：
 
-1. **symlink** skills（tools + workflows，同名以 tools 版優先）與 agents 進 `~/.claude`——用 symlink 才會跟著 `git pull` 更新，不會像 copy 變舊。
+1. **symlink** skills（tools + workflows，同名以 tools 版優先）與 agents 進 `~/.claude`——用 symlink 才會跟著 `git pull` 更新，不會像 copy 變舊。實際 link 邏輯在 `scripts/link_assets.sh`（install 與 autopull 共用）。
 2. 把 hook **用本 clone 的絕對路徑 merge 進 `~/.claude/settings.json`（user-level）**：`SessionStart` / `UserPromptSubmit`（自動 `git pull` 保持最新）、`Stop`（忠實度硬 gate + 遙測）。
    > **為什麼 user-level**：hook 若只放本 repo 的 checked-in `.claude/settings.json`（專案級），**只有「在本 repo 裡開 Claude Code」才觸發**；但實際跑 QA 自動化多半在框架 repo 或別的資料夾——那裡不是本 repo，hook 就不會跑。放 user-level 才能**在任何專案**都生效。
 3. 會先**備份** `~/.claude/settings.json` 再 merge（不覆蓋既有設定）。
 
-> 裝完**新開一個 session** 才生效（`SessionStart` 在啟動時跑）。之後 skill/agent 靠 symlink + autopull 自動保持最新；但 `install.sh` 本身若有更新（例如加新 hook），要**重跑一次**。
+> 裝完**新開一個 session** 才生效（`SessionStart` 在啟動時跑）。之後 skill/agent 靠 symlink + autopull 自動保持最新——**上游新增的 skill/agent 也會自動補 symlink**（autopull 每個 session 都跑 `link_assets.sh`），不必為了新 agent 重跑 `install.sh`。
 
 > ⚠️ 註：Claude Code 的 skill discovery 只掃一層 `<root>/<skill-name>/SKILL.md`，所以是逐個 symlink 進 `~/.claude/skills/` 而非連整個 `skills/` 目錄——`install.sh` 已處理。
 
