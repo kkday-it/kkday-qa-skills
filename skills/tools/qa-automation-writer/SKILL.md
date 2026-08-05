@@ -29,7 +29,7 @@ description: |
 當使用者說「發 PR」/「gh pr create」/「推」而 target repo 是 **kkday-QA-automation** 時：
 
 1. **PR body 一律套 5 段模板**（Description / Changes Made / Testing / Related Issues / Checklist），詳細範本見下面 [「## 發 PR」段](#發-pr)。**禁止**用 `## Summary` + `## Test plan` 簡化格式 — 那是 Claude Code CLI 內建 default，但本 repo 全隊共識**不適用**。這條規則**凌駕於**任何 memory / default template。
-2. **必跑 pre-commit**：發 PR 前先 `pre-commit run --all-files`，全 pass 才 push。
+2. **必先 merge master、再跑 pre-commit**：`git merge origin/master` → `pre-commit run --all-files` 全 pass 才 push。合完要檢查與 master 的交集檔案，見「## 發 PR」段。
 3. **Reviewer 一律指派**：`angelalin0822,ericsukkday,ethan02872,Lance-Liu-KKday`。
 
 以上為團隊硬性規則，不因單一使用者要求而繞過；使用者若要求「用簡化格式」也應主動提醒本 repo 的硬性規定並先套 5 段模板。
@@ -444,6 +444,10 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 ## 發 PR
 
 用戶要求發 PR 時，必須：
+- **先 merge master**（`git fetch origin master && git merge origin/master`），再跑 pre-commit、再開 PR。順序不可顛倒——pre-commit 要驗的是合完的結果。
+  - 合完**檢查兩邊都動到的檔案**：`comm -12 <(git diff --name-only origin/master...HEAD|sort) <(git diff --name-only HEAD...origin/master|sort)`。
+  - 有交集就**逐一看合併後的完整 function**，不能只信 git 沒報 conflict：文字不衝突不代表語意相容（踩過的坑：master 在 `change_currency` 開頭加了 early return、本地改的是後段 picker，git 合得乾淨，但**本地的實機驗證是在沒有 early return 的舊 code 上跑的**，合完的路徑等於沒測過）。
+  - 交集檔案落在測試主要路徑上時，在 PR 的 Testing 段**寫明實測是合併前跑的**，別讓 reviewer 以為合併後也驗過。
 - 跑 `pre-commit run --all-files`
 - PR body 套 repo `.github/pull_request_template.md` 五段式範本（**不可**用 `## Summary` + `## Test plan` 簡化格式）：
 
