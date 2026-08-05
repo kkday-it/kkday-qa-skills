@@ -153,7 +153,8 @@ source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest ru
 
 1. **讀取終端輸出的錯誤訊息** — 找出失敗的步驟和異常類型
 2. **定位失敗的 test step 函式** — 從 YAML 案例的 steps 找到對應的 Python 函式
-3. **分類失敗原因**：
+3. **Mobile 一律加讀 Appium server log，不要只看 `qatest.log`** — 「某個分支完全沒動作」「元素明明在畫面上卻 `located failed`」時，真正的錯誤只寫在 Appium server log 裡。最常見是 **uiautomator2 對合法 XPath 回 500**（`ArrayList$ListItr cannot be cast to ...NodeType`，通常是 `following::`／`preceding::` 接 `ancestor::` 的反向軸串接）：元素永遠 resolve 不到 → `is_present` 恆為 False → 分支靜默 no-op；`qatest.log` 只會看到一直 swipe，容易誤判成「文字沒抓到」而一路改錯方向。修法與「在真機 session 上實打候選 locator」的做法見 `qa-automation-writer` SKILL.md「階段 2 — App / Android」。
+4. **分類失敗原因**：
 
 #### A. 元件路徑更改（自動修復）
 
@@ -209,6 +210,10 @@ source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest ru
 
 補值規範：
 - **必須有 ground truth** — 真機截圖（`<debug_folder>/<feature>/<case>_<timestamp>.png`）或元素樹，**不可自行翻譯**
+- 🔴 **取值順序：先看該平台有沒有 Lokalise 已 commit 的靜態檔，沒有才動真機**（省時間）：
+  - **iOS 有** —— Lokalise 在 CI/build time 下載後 commit 進 repo（`.github/workflows/update-lokalise-strings.yml` + `Scripts/lokalise_download.sh`），直接 `gh api` 讀 `kkday-it/kkday-ios-member` 的 `<locale>.lproj/Localizable.strings`，一次撈整包。
+  - **Android 沒有** —— Lokalise 走**執行期 OTA 下發**（`LokaliseContextWrapper.wrap()`），`app/src/main/res/values-*/` 只有 `strings_nationality_restriction.xml`，**沒有一般 UI 字串**。只能真機挖：裝置切語系 → seed 已知值進 yaml → **讓框架真的跑一次**，在失敗頁一次 dump 收割整頁 key，別手動點完整條 flow。
+  - **不准跨平台照抄**：iOS 的值只能當 Android 的候選。實測 Android 法文 Lokalise 匯入不完整（設定頁「其他」header 在 Français 下仍是中文），照抄會寫進畫面上根本沒有的字。
 - 反查 app 的 `<locale>.lproj/Localizable.strings` 只能當候選：同一個中文值常對到多個 strings key，挑錯會整段等到逾時（例：`email_login_button` 對成 `Continuer avec l'e-mail`，實際介面是 `Utilisez E-mail pour continuer`）
 - 補完在 yaml 註解註明「值來自真機截圖」，避免下次又被 lproj 反查覆蓋回去
 

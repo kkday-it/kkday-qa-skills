@@ -93,9 +93,26 @@ grep -rn "KQT-T35108" QATestData/cases/yaml/
 
 | 用途 | iOS 找什麼 | Android 找什麼 |
 | --- | --- | --- |
-| 多語系值（補 `QATestData/data/i18n/<platform>/<locale>.yaml`） | `*.lproj/Localizable.strings` | `res/values-<locale>/strings.xml` |
+| 多語系值（補 `QATestData/data/i18n/<platform>/<locale>.yaml`） | `*.lproj/Localizable.strings`（**有靜態檔，優先查**） | **repo 沒有靜態語系檔**（走 Lokalise 執行期下發）→ 只能真機挖，見下面 🔴 |
 | accessibility id / testTag 的正式名稱 | `accessibilityIdentifier` 設定處 | `resource-id` / `testTag` 設定處 |
 | 列舉值（語系清單、幣別對應等） | 如 `MemberCenterLanguageViewModel.swift` 的 `LangRegionOption` | 對應 enum / constants |
+
+#### 🔴 補 i18n 值的取值順序：**先問 Lokalise 有沒有靜態檔，沒有才動真機**（省時間，兩平台做法不同）
+
+兩個 app 都用 Lokalise 管翻譯，但**落地方式不同**，決定了你該去哪裡拿值：
+
+| | iOS (`kkday-ios-member`) | Android (`kkday-android-member`) |
+| --- | --- | --- |
+| Lokalise 何時進 app | **CI/build time 下載後 commit 進 repo** | **執行期 OTA 下發**（`LokaliseContextWrapper.wrap()` / `Lokalise.updateTranslations()`，每個 Activity 的 `attachBaseContext` 都包） |
+| repo 內有沒有值 | **有** —— `Solution/kkday-ios-member/kkday-ios-member/<locale>.lproj/Localizable.strings`，由 `.github/workflows/update-lokalise-strings.yml` + `Scripts/lokalise_download.sh` 產生 | **沒有** —— `app/src/main/res/values-*/` 只有 `strings_nationality_restriction.xml`（ja/ko/th/vi/zh-rCN/zh-rHK/zh-rTW），**沒有任何一般 UI 字串、也沒有 fr** |
+| 怎麼補值 | **先 `gh api` 讀那個 `.strings` 檔**（一次撈整包，幾秒），拿到後再抽你要的 key | **直接真機挖**：裝置切到該語系 → `adb shell uiautomator dump` 逐頁抓 `text` |
+
+**規則：**
+
+1. **先查靜態檔（Lokalise 已 commit 的）** —— 有就用，一次可撈幾百個 key，**不要為了有靜態檔的平台去手動點真機**（那是十幾分鐘 vs 幾秒的差距）。
+2. **靜態檔不存在才 fallback 真機** —— Android 目前就是這種。真機挖法：先把值 seed 進 yaml（能填多少填多少），**再讓框架真的跑一次**，在第一個失敗頁 dump page source 一次收割整頁的 key，**不要手動一頁一頁點過整條 booking flow**。
+3. **不准跨平台照抄當定案** —— iOS 的 `fr.lproj` 值可以當 Android 的**候選 hint**，但**必須用 Android 真機畫面確認**才寫進 `android/<locale>.yaml`。兩邊 Lokalise 專案的 key/翻譯進度不同步：實測 Android 法文匯入**不完整**（設定頁的「其他」section header 在 Français 模式下仍渲染中文），照抄 iOS 會寫進根本不存在於畫面上的字。
+4. **註明出處** —— yaml 補值時標「來自 iOS `fr.lproj/Localizable.strings`」或「來自 Android 真機 dump」，讓下一個人知道哪些值已被真機驗過、哪些只是候選。
 
 **界線（不可越過）：**
 
@@ -232,6 +249,37 @@ bootstrap 完成後驗可用性（`verify_locator.py` 能跑 / `adb devices` / `
   解析 `/tmp/android_ui.xml` 的 hierarchy，優先用 `resource-id` → `content-desc` → `text` 找真實 locator。
   前提：`adb devices` 要有裝置在線。
 
+  🔴 **dump 命中 ≠ Appium 打得中：候選 locator 必須在真機 Appium session 上真的 `find_elements` 打一次。**
+  dump 是 XML、用 lxml 驗只證明「XPath 語意對」；真正執行的是 uiautomator2 的 XPath2 引擎，**它會對某些
+  合法 XPath 直接回 500**，元素永遠 resolve 不到 → `is_present` 恆為 False → 分支靜默 no-op（外層又常有
+  `try/except: pass`），只看框架 log 完全看不出原因，會誤判成「文字沒抓到」而一路改錯方向。踩過的實例：
+  ```
+  # 這條在 dump 上唯一命中，實機回 500：
+  //android.widget.TextView[@text='旅遊期間聯絡方式']/following::android.widget.TextView[...][1]/ancestor::android.view.View[@clickable='true'][1]
+  # UiAutomator2Exception: java.util.ArrayList$ListItr cannot be cast to ...NodeType
+  # 改成只用 descendant 述詞就 n=1：
+  //android.view.View[@clickable='true'][.//android.widget.TextView[contains(@text, '請填寫資料')]]
+  ```
+  → **避免 `following::` / `preceding::` 接 `ancestor::` 的反向軸串接**（尤其再帶位置述詞 `[1]`）；
+  改用 `[.//...]` / `[descendant::...]` 述詞直接選中目標容器。
+
+  **實打的做法**（畫面就停在目標頁時，別浪費一輪 13~20 分的 E2E 去試）：自起一個 Appium server，用
+  `noReset:true` + `autoLaunch:false` attach 當前畫面，一次把整段互動（點入口 → sheet 內每個元素 →
+  存檔 → 閘門是否關閉）都打過再寫進 code。
+  ```bash
+  nohup appium server -p 10099 --base-path / > /tmp/appium_probe.log 2>&1 &
+  ```
+  ```python
+  caps = {"platformName": "android", "automationName": "UIAutomator2", "udid": "<udid>",
+          "noReset": True, "autoLaunch": False, "skipDeviceInitialization": True}
+  d = webdriver.Remote("http://127.0.0.1:10099", options=UiAutomator2Options().load_capabilities(caps))
+  for xp in CANDIDATES:          # try/except 分開印「n=幾」與「ERR 500」——兩者意義完全不同
+      ...
+  ```
+  驗完 `pkill -f "appium server -p 10099"`，再交回框架跑正式 run。
+  （USB 線會擋事時先切 wifi：`adb tcpip 5555` → `adb connect <ip>:5555`，正式 run 用
+  `--device <ip>:5555` 綁 transport。）
+
 - **App / iOS（idb dump accessibility tree）**
   ```bash
   idb ui describe-all --json > /tmp/ios_ui.json    # 需 booted 模擬器/實機 + idb companion
@@ -319,9 +367,24 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 - 必須有 abstract base（`mobile/base/`）+ 具體實作（`android/`、`ios/`），改一邊要確認另一邊
 - 定義新元件前先確認 base 是否已有相同元件，避免重複定義
 - 元件文字建議用 `t('key', locale=AppConfig.language)` 取多語言，避免寫死中文
+- 🔴 **把 i18n 值內插進 XPath 時一律用 `xpath_literal()`（`lib/helpers/string_helper.py`），不准直接寫 `@text='{t(...)}'`。**
+  中日韓語系的值不含 `'`，所以 `@text='{...}'` 一直沒出事；但**法文（及其他拉丁語系）到處是撇號** —— `l'itinéraire`、`J'ai compris.`、`d'identité` ——
+  XPath 1.0 沒有引號逸出機制，值裡的 `'` 會直接把字面量截斷，Appium 回 `InvalidSelectorException: XPathParserException ... CUP parser error`。
+  這不是 locator 寫錯，是**字串組裝**錯，改 locator 沒用。`xpath_literal()` 會依內容自動選 `'...'` / `"..."` / `concat()`。
+  正確寫法（`pages/mobile/android/product_page.py` 已是這樣）：
+  ```python
+  # ❌ 錯：法文值一含撇號就炸
+  f"//android.widget.TextView[@text='{t('fill_travel_info', locale=AppConfig.language)}']"
+  # ✅ 對：注意 xpath_literal 自帶引號，外面不要再包 '
+  f"//android.widget.TextView[@text={xpath_literal(t('fill_travel_info', locale=AppConfig.language))}]"
+  ```
+  **新增非中日韓 locale 時，先掃一遍該平台 page object**：把 locale yaml 裡含 `'` 的 key 抓出來，比對哪些被 `'{t(...)}'` 內插，一次全改，別等跑到那一步才逐個炸（一輪真機 run 10~20 分鐘）。
+- 🔴 **i18n locale yaml 內只准有 `key: value`，不准寫說明性註解。** 出處、取值方法、為什麼略過某些 key、候選值可信度——這些一律寫在 **PR description**，不要塞進 yaml 檔頭。repo 慣例就是這樣（`android/*.yaml`、`ios/*.yaml` 除了少數 1~2 行 section 分隔註解外都是純 key-value），寫一大段檔頭會被退。
 - **新增／擴充 locale 檔（`QATestData/data/i18n/<platform>/<locale>.yaml`）時，先靜態盤點該 locale 缺哪些 key，一次補齊再跑**：
   key 缺漏不會拋錯，`i18N.get()` 會回傳 key 本身，locator 變成去找字面上的 key 名，只能靠跑到那一步才發現 —— 一輪真機 run 13~20 分鐘，逐顆試很貴。
   盤點與補值（含 ground truth 要求）的完整做法見 `qa-test-runner` SKILL.md「失敗分析 → C. 多語系（i18n）缺 key」。
+  **值從哪裡拿**：先看上面「例外：kkday app 可讀 app 原始碼」段的 [🔴 補 i18n 值的取值順序](#-補-i18n-值的取值順序先問-lokalise-有沒有靜態檔沒有才動真機)
+  —— iOS 有 commit 進 repo 的 Lokalise `.strings` 可直接撈；Android 是執行期 OTA、repo 無靜態檔，只能真機挖。**別對兩平台用同一套做法。**
 - **iOS XCUITest locator 屬性慣例（踩過的坑，以真機 page source 為準、勿只賭 `@name`）**：
   - StaticText 的文字常在 **`@label`**（`@name` 可能空或被截斷）→ 文字比對要 `@name` 或 `@label` 都查。
   - 顯示值元素**可能是 `Button`（其 `name`/`label` = 值）而非 StaticText**（如國籍欄選值鈕）→ 別硬接 `//XCUIElementTypeStaticText`，直接讀那顆 Button。
