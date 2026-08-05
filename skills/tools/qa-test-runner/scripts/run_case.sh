@@ -67,4 +67,6 @@ esac
 source "$REPO/venv/bin/activate"
 cd "$REPO/QATest/src"
 echo "[run_case] repo=$REPO caseid=$CASEID platform=$PLATFORM HEADLESS=${HEADLESS:-<unset>} driver=${EXTRA[*]:-<none>}"
-exec python -m qatest run --caseid "$CASEID" --platform "$PLATFORM" "${EXTRA[@]}"
+# macOS 內建 bash 3.2 在 set -u 下展開空陣列會噴 unbound variable（ios/android 走這條），
+# 故用 ${arr[@]+...} 形式：陣列為空就整段不展開。
+exec python -m qatest run --caseid "$CASEID" --platform "$PLATFORM" ${EXTRA[@]+"${EXTRA[@]}"}
