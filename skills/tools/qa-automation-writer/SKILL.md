@@ -14,6 +14,7 @@ description: |
 
   ⚠️ **順序：先 TCMS 拿 spec，再回 kkday-QA-automation repo 找 yaml 實作**。case spec（steps/expected/platform）的權威來源是 TCMS（用 `tcms-fetch-cases`）；repo 的 `QATestData/cases/yaml/**` 是實作定義、`QATest/src/{pages,test_steps}` 是 code。
   🚫 **只准在 kkday-QA-automation repo 內找 case / 實作，不准去任何其他 repo**（含 `kkday-qa-skills`、`kkday-qa-ai` 及其 backup / cache / db_data）——那裡沒有 case 真身，只會撈到過期快照、繞遠路。case spec 一律來自 TCMS。
+  ✅ **唯一例外：kkday app（iOS / Android）的 case，允許讀 app 產品原始碼當輔助 grounding** —— `kkday-it/kkday-ios-member`、`kkday-it/kkday-android-member`。詳細界線見「起手」段的例外說明。
 
   必要工具：Read、Edit、Write、Bash（撰寫＋跑驗證）。**定稿前的元素驗證階段**用 Python playwright（`scripts/verify_locator.py`，Web/MWeb，headless 無彈窗、不用 MCP）、adb（Android）、idb（iOS）抓真實元素樹——這些工具與模擬器若沒裝/沒開，skill 會**自動 bootstrap**（不依賴使用者事先準備，見「撰寫流程 階段 2」）。
   前置條件：本機需有 kkday-QA-automation repo（無則先引導 clone，見「前置」段）。
@@ -80,6 +81,28 @@ grep -rn "KQT-T35108" QATestData/cases/yaml/
 | **yaml 沒有**（要新增） | 純新增 | 找**同 feature 的相鄰 case**（同一份 yaml 內）當範本，照結構寫新節點；規格照 ① 的 TCMS spec |
 
 > 🚫 **只准在 kkday-QA-automation repo 內找 case / 實作。** 不准去 `kkday-qa-skills`、`kkday-qa-ai` 或**任何其他 repo**（含其 backup / cache / db_data）翻 case——那裡沒有 case 真身，只有過期快照，找了只會繞路。case spec 一律來自 TCMS，實作一律在 kkday-QA-automation。
+
+### ✅ 例外：kkday app（iOS / Android）可讀 app 產品原始碼當輔助
+
+平台是 **iOS / Android kkday app** 時，允許去下面兩個 repo 找輔助資訊（**只有這兩個**）：
+
+- `https://github.com/kkday-it/kkday-ios-member`
+- `https://github.com/kkday-it/kkday-android-member`
+
+理由：app 的 UI 文字與 accessibility id 是**編譯進 app 內的產品資料**，不是後端回傳，用元素樹只能看到「畫面現在長什麼樣」，看不到「這個字串是哪個 key、其他語系對應什麼值」。典型用途：
+
+| 用途 | iOS 找什麼 | Android 找什麼 |
+| --- | --- | --- |
+| 多語系值（補 `QATestData/data/i18n/<platform>/<locale>.yaml`） | `*.lproj/Localizable.strings` | `res/values-<locale>/strings.xml` |
+| accessibility id / testTag 的正式名稱 | `accessibilityIdentifier` 設定處 | `resource-id` / `testTag` 設定處 |
+| 列舉值（語系清單、幣別對應等） | 如 `MemberCenterLanguageViewModel.swift` 的 `LangRegionOption` | 對應 enum / constants |
+
+**界線（不可越過）：**
+
+- 只能**讀**，不准改、不准在那邊開 branch / 發 PR。
+- **case spec 仍然只來自 TCMS，實作仍然只在 kkday-QA-automation** ——這兩個 repo 不是 case 來源，也不准去那裡翻測試 case。
+- 反查出來的字串是**候選 hint 不是真理**：同一個中文值常對到多個 strings key，挑錯會整段流程逾時。最終仍以**真機畫面 / page source 的實際值**為準（踩過的坑：fr 的 `email_login_button` 反查挑錯 key，改用真機截圖才對）。
+- yaml 補值時**註明出處**（來自哪個 repo 的哪個檔／或來自真機截圖），讓下一個人知道可信度。
 
 定位到 case 後，再進下面的「撰寫流程」。
 
@@ -296,6 +319,9 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 - 必須有 abstract base（`mobile/base/`）+ 具體實作（`android/`、`ios/`），改一邊要確認另一邊
 - 定義新元件前先確認 base 是否已有相同元件，避免重複定義
 - 元件文字建議用 `t('key', locale=AppConfig.language)` 取多語言，避免寫死中文
+- **新增／擴充 locale 檔（`QATestData/data/i18n/<platform>/<locale>.yaml`）時，先靜態盤點該 locale 缺哪些 key，一次補齊再跑**：
+  key 缺漏不會拋錯，`i18N.get()` 會回傳 key 本身，locator 變成去找字面上的 key 名，只能靠跑到那一步才發現 —— 一輪真機 run 13~20 分鐘，逐顆試很貴。
+  盤點與補值（含 ground truth 要求）的完整做法見 `qa-test-runner` SKILL.md「失敗分析 → C. 多語系（i18n）缺 key」。
 - **iOS XCUITest locator 屬性慣例（踩過的坑，以真機 page source 為準、勿只賭 `@name`）**：
   - StaticText 的文字常在 **`@label`**（`@name` 可能空或被截斷）→ 文字比對要 `@name` 或 `@label` 都查。
   - 顯示值元素**可能是 `Button`（其 `name`/`label` = 值）而非 StaticText**（如國籍欄選值鈕）→ 別硬接 `//XCUIElementTypeStaticText`，直接讀那顆 Button。

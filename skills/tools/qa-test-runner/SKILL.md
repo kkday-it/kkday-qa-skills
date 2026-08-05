@@ -167,7 +167,7 @@ source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest ru
    - **Mobile**：用 Appium WebDriver 連接設備取 page source（XML）
    - **Web / MWeb**：用 Playwright 取 DOM（必須用 `https://www.stage.kkday.com`，不可用 `www.kkday.com`）
 3. 比對現有 XPath 和實際頁面結構，找出正確的新 locator
-4. **如果 locator 用 i18n key（如 `t('register_button', locale=AppConfig.language)`）**，檢查 `QATestData/data/i18n/<platform>/<locale>.yaml` 的值是否跟 App 實際文字一致，不一致就更新 yaml
+4. **如果 locator 用 i18n key（如 `t('register_button', locale=AppConfig.language)`）**，檢查 `QATestData/data/i18n/<platform>/<locale>.yaml` 的值是否跟 App 實際文字一致，不一致就更新 yaml；**若是整個 key 沒收在 yaml 裡，走下面 C，不要補一顆就重跑**
 5. 修改對應 `pages/` 下的 page object 檔案
 6. **同時檢查同組另一平台的 page object**，確認兩邊都沒問題：
    - Web ↔ MWeb 共用 test step，改一邊要確認另一邊
@@ -183,6 +183,34 @@ source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest ru
 - API 回傳結構改變
 
 處理：回報用戶，說明哪個步驟的流程發生了什麼變化，讓用戶決定如何調整。
+
+#### C. 多語系（i18n）缺 key — **一次盤完才重跑**
+
+特徵：
+- locator 變成去找「字面上的 key 名」，例如 `//XCUIElementTypeStaticText[contains(@name, 'credit_card_title')]`
+- 因為 `lib/locales.py` 的 `i18N.get()` 找不到 key 時會 warn 並**回傳 key 本身**，不會拋錯
+
+🔴 **禁止「補一顆 → 重跑 → 再噴下一顆」**。一輪 iOS 真機 run 要 13~20 分鐘，逐顆試是拿 20 分鐘換一行 yaml。
+發現缺 key 時，先把「這個 locale 到底缺什麼」評估完，一次補齊再重跑。
+
+盤點步驟（兩邊都要做，缺一個就會漏）：
+
+1. **動態**：run log 裡已有完整清單，直接撈（別 grep `missing`，字串不是這個）
+   ```bash
+   grep -rhoE "Translation not found for key '[a-z0-9_]+' in locale '[a-z_]+'" <debug_folder>/ | sort -u
+   ```
+   這只涵蓋「已經跑到」的路徑 —— run 死在中途，後面的 key 還沒被讀到，所以不能只靠這個。
+
+2. **靜態**：抓 `pages/mobile/<platform>/*.py` 裡所有 `t('key')`，跟 `QATestData/data/i18n/<platform>/<locale>.yaml` 的 key 取差集。
+   - regex 要加 word boundary（`(?<![A-Za-z0-9_.])t\(`），否則 `format(`、`print(`、`wait(` 的尾巴 `t` 會全被當成 `t()` 呼叫
+   - **iOS 與 Android 各有自己的 `i18n/` 目錄**，`android_fill_*` 用的 key 不在 iOS yaml 裡是正常的，不要混比後誤判成缺漏
+
+3. **分類再決定補哪些**：在本 case 路徑上的必補；不在路徑上的（其他登入方式、其他付款方式、日鐵專用…）列給使用者看，不要順手亂填。
+
+補值規範：
+- **必須有 ground truth** — 真機截圖（`<debug_folder>/<feature>/<case>_<timestamp>.png`）或元素樹，**不可自行翻譯**
+- 反查 app 的 `<locale>.lproj/Localizable.strings` 只能當候選：同一個中文值常對到多個 strings key，挑錯會整段等到逾時（例：`email_login_button` 對成 `Continuer avec l'e-mail`，實際介面是 `Utilisez E-mail pour continuer`）
+- 補完在 yaml 註解註明「值來自真機截圖」，避免下次又被 lproj 反查覆蓋回去
 
 ### 5. 修復後驗證
 
