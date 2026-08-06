@@ -287,6 +287,10 @@ PYTHONPATH=<你這份>/QATest/src caffeinate -i venv/bin/python -m qatest run --
 ### 6. 發 PR
 
 修復完成後用戶要求發 PR 時，必須：
+- 🔴 **先還原所有「為了跑測試而加的本地暫時調整」**，再看 `git status --short` 逐項確認改動清單裡
+  沒有跟本次 case 無關的檔案。最常見的就是 `QATest/src/lib/fixtures/mobile.py` 的 iOS
+  `wdaLaunchTimeout`／`wdaConnectionTimeout`（見上面「WDA 一直瞬斷」段）——那是本地跑測試用的，
+  **絕對不進 case 的 PR**。用 worktree 的話每個 worktree 各自還原。
 - 跑 `pre-commit run --all-files`
 - PR body 套 repo `.github/pull_request_template.md` 五段式範本（**不可**用 `## Summary` + `## Test plan` 簡化格式）：
 
@@ -372,6 +376,44 @@ Port 規則：
   ```bash
   appium -p <port> --use-drivers=xcuitest,uiautomator2 &
   ```
+
+### 🔴 iOS 實機「WDA 一直瞬斷」＝ 冷建超時，本地加 timeout 跑、發 PR 前一定要改回來
+
+症狀：iOS 實機 run 時好時壞，appium log 出現 `WDA is not listening` → `Connection was refused` →
+`Retrying WDA startup (2 of 2)` → `xcodebuild failed with code 65` → 一串 `uncaughtException: write EIO`
+把 appium server 打爆。看起來像裝置或 WDA 壞了，**其實是 timeout 邊界問題**。
+
+原因（實測數據，別再從 code 65 那行往下猜）：
+
+| 狀況 | WDA 起來要多久 |
+| --- | --- |
+| **冷建**（DerivedData 沒有 WDA build products，要 `xcodebuild build-for-testing`） | **~80 秒** |
+| 熱啟（build 已快取） | **~10 秒** |
+
+而 `wdaLaunchTimeout` **預設只有 60 秒** → 冷建必逾時 → 進 retry → retry 那條路徑更容易掛掉整個
+session。所以「第一次跑或很久沒跑就死、連著跑就正常」＝ 這個。
+
+> ⚠️ `clearSystemFiles: true` **不是**元凶——它只清 DerivedData 底下的 `Logs/`，不砍 build products
+> （見 `appium-xcuitest-driver/lib/utils.js` 的 `clearSystemFiles()`）。不要順手把它關掉當解法。
+
+**做法：本地暫時加，跑完發 PR 前改回來。**
+
+`QATest/src/lib/fixtures/mobile.py` 的 `case Platform.IOS:` 區塊（`wdaStartupRetries` 附近）暫時加兩行：
+
+```python
+desired_caps["wdaLaunchTimeout"] = 240000
+desired_caps["wdaConnectionTimeout"] = 240000
+```
+
+- 🔴 **這是本地跑測試用的暫時調整，不進 PR。** `mobile.py` 是全隊共用的 framework fixture，改 timeout
+  會影響所有人的 iOS run，不該夾帶在功能 case 的 PR 裡。
+- 🔴 **發 PR 前必須先還原**，並用 `git diff` 確認 `mobile.py` 不在改動清單內：
+  ```bash
+  git checkout -- QATest/src/lib/fixtures/mobile.py   # 還原本地暫時調整
+  git status --short                                   # 確認 mobile.py 沒出現
+  ```
+  用 worktree 跑的話**每個 worktree 都要各自還原**（改的是各自那份檔）。
+- 真的要讓這個 timeout 變成團隊預設，**另開一支獨立 PR** 討論，不要混進 case 的 PR。
 
 ## 參考
 
