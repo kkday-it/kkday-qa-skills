@@ -79,6 +79,18 @@ grep -rn "KQT-T35108" QATestData/cases/yaml/
 | **yaml 有** | 修復（case 已存在） | 從該 yaml 的 `feature`/`steps` 順藤摸瓜到 `QATest/src/test_steps`、`QATest/src/pages` 對應實作，對照 ① 的 spec 進「撰寫流程」修 |
 | **使用者說「新增」但 yaml 已有** | 其實是修復 | 提醒使用者已存在，改走修復，別重複建 |
 | **yaml 沒有**（要新增） | 純新增 | 找**同 feature 的相鄰 case**（同一份 yaml 內）當範本，照結構寫新節點；規格照 ① 的 TCMS spec |
+| **grep 有命中，但命中的是「別平台」那份**（例：要做 App，卻只在 `WebRegression/*.yaml` 命中） | **是新增，不是修復** | 照下面「跨平台同 case_id」規則，在該平台的 yaml 另建一筆 |
+
+#### 跨平台同 case_id：是慣例，不是撞號
+
+多平台 case（label 如 `FE (Web/mWeb/Android/iOS)`）**同一個 case_id 會在 web 與 app 兩份 yaml 各存一份**，repo 內這種先例有 50 筆以上。**不要**因為「已經有了」就不建，也**不要**改 case id 或換 yaml 落點來閃開。
+
+兩個必須同時滿足的條件，否則跑起來會載到別平台那份：
+
+1. app 那筆的 `platform` 寫 **`mobile`**（涵蓋 android + ios），web 那筆寫 `web`（涵蓋 web + mweb）——**不要**寫 `android` / `ios` / `mweb`
+2. 執行時**一定要帶 `--platform android`（或 `ios`）**
+
+框架的挑選邏輯在 `QATest/src/lib/case/case_manager.py:120` `get_case(caseId, platform)`：`{"web":"web","mweb":"web","android":"mobile","ios":"mobile"}`。任一條件沒滿足 → 落回第一個 match（通常是 web 那份）→ 去起 browser → **噴出 `ChromeDriver only supports Chrome version <N>` 這種完全誤導的錯誤**。踩過這個坑，診斷方式見 `qa-test-runner` SKILL.md「失敗分析 → D」。
 
 > 🚫 **只准在 kkday-QA-automation repo 內找 case / 實作。** 不准去 `kkday-qa-skills`、`kkday-qa-ai` 或**任何其他 repo**（含其 backup / cache / db_data）翻 case——那裡沒有 case 真身，只有過期快照，找了只會繞路。case spec 一律來自 TCMS，實作一律在 kkday-QA-automation。
 
@@ -507,7 +519,10 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 ## 發 PR
 
 用戶要求發 PR 時，必須：
-- **先 merge master**（`git fetch origin master && git merge origin/master`），再跑 pre-commit、再開 PR。順序不可顛倒——pre-commit 要驗的是合完的結果。
+- 🔴 **先 `git pull` 更新自己這條 branch**（`git pull --ff-only origin <當前 branch>`，遠端還沒有這條 branch 就跳過），**再** merge master。這是兩件事，不能只做後者：
+  `git fetch origin master && git merge origin/master` 只把 master 合進來，**完全不會更新你這條 branch 的遠端進度**。別人（或你在別台機器 / 別個 worktree）推過同一條 branch 時，你手上就是舊的，直接 push 會被拒或覆蓋掉別人的 commit。
+  - 有多個 checkout / worktree 指向同一個 repo 時尤其容易中——**push 前一定要再確認一次 branch 是最新的**。
+- **接著 merge master**（`git fetch origin master && git merge origin/master`），再跑 pre-commit、再開 PR。順序不可顛倒——pre-commit 要驗的是合完的結果。
   - 合完**檢查兩邊都動到的檔案**：`comm -12 <(git diff --name-only origin/master...HEAD|sort) <(git diff --name-only HEAD...origin/master|sort)`。
   - 有交集就**逐一看合併後的完整 function**，不能只信 git 沒報 conflict：文字不衝突不代表語意相容（踩過的坑：master 在 `change_currency` 開頭加了 early return、本地改的是後段 picker，git 合得乾淨，但**本地的實機驗證是在沒有 early return 的舊 code 上跑的**，合完的路徑等於沒測過）。
   - 交集檔案落在測試主要路徑上時，在 PR 的 Testing 段**寫明實測是合併前跑的**，別讓 reviewer 以為合併後也驗過。
