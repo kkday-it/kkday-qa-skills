@@ -519,6 +519,11 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 ## 發 PR
 
 用戶要求發 PR 時，必須：
+- 🔴 **先還原「為了跑測試而加的本地暫時調整」**，再 `git status --short` / `git diff --name-only` 逐項確認
+  改動清單裡沒有跟本次 case 無關的檔案。典型的是 `QATest/src/lib/fixtures/mobile.py` 的 iOS
+  `wdaLaunchTimeout`／`wdaConnectionTimeout`（避開 WDA 冷建 60 秒逾時用的，詳見 `qa-test-runner`
+  SKILL.md「WDA 一直瞬斷」段）——那種**共用 framework fixture 的本地調參絕對不能夾帶進 case 的 PR**，
+  要改就另開獨立 PR 討論。用 worktree 的話每個 worktree 各自還原。
 - 🔴 **先 `git pull` 更新自己這條 branch**（`git pull --ff-only origin <當前 branch>`，遠端還沒有這條 branch 就跳過），**再** merge master。這是兩件事，不能只做後者：
   `git fetch origin master && git merge origin/master` 只把 master 合進來，**完全不會更新你這條 branch 的遠端進度**。別人（或你在別台機器 / 別個 worktree）推過同一條 branch 時，你手上就是舊的，直接 push 會被拒或覆蓋掉別人的 commit。
   - 有多個 checkout / worktree 指向同一個 repo 時尤其容易中——**push 前一定要再確認一次 branch 是最新的**。
