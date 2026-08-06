@@ -185,6 +185,54 @@ source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest ru
 
 處理：回報用戶，說明哪個步驟的流程發生了什麼變化，讓用戶決定如何調整。
 
+#### D. 載到「別平台那份 case」——症狀會偽裝成 driver／環境問題
+
+特徵（**先看這個，再去修 driver**）：
+- App case 卻噴出 browser 相關錯誤，最典型是 `session not created: This version of ChromeDriver only supports Chrome version <N>`
+- 反之，web case 卻去起 Appium / 找不到裝置
+
+🔴 **這幾乎都不是 driver 版本問題**。先回頭看 run log 開頭那行：
+
+```
+[plugin.py][before_case]|case.platform: web        ← 跟你要跑的平台不符 = 載錯 case
+```
+
+真因：**同一個 case_id 會跨 web / app 兩份 yaml 各存一份**（例：`ui/WebRegression/WebPersonalInfo.yaml` 與 `ui/AppRegression/AppPersonalInfo.yaml` 都有 `KQT-T57230`）。這是**既有慣例、不是撞號**，repo 內這種先例有 50 筆以上，不要為了避開而改 case id 或換 yaml 落點。
+
+框架本來就會挑（`QATest/src/lib/case/case_manager.py:120` `get_case(caseId, platform)`）：
+
+```python
+group = {"web": "web", "mweb": "web", "android": "mobile", "ios": "mobile"}.get(str(platform))
+```
+
+所以要挑對只需兩個條件同時成立：
+
+1. app yaml 那筆的 `platform` 寫 **`mobile`**（不是 `android`／`ios`）
+2. 執行時**有帶 `--platform android`（或 `ios`）**
+
+漏了任一個 → `platform=None` 或 group 對不上 → 落回第一個 match（通常是 web 那份）→ 去起 browser → 噴 ChromeDriver 版本錯誤。**改 chromedriver 不會解決，改對這兩點才會。**
+
+🔴 **但上面兩點都對了還是噴，就往下查第三個原因：venv 的 editable install 指到「別的 checkout」。**
+
+本機常有多個 kkday-QA-automation clone（`~/Downloads/qa_test/{app,test,web}/...`）。某個 checkout 的 venv 可能被 `pip install -e .` 註冊到**另一個 checkout** 的 source，於是 `venv/bin/python -m qatest` 讀的 code 和 case data 全來自別份 —— **你在這份改的 yaml 根本沒被載入**，只剩另一份裡的 web 版 case，症狀跟「載錯平台」一模一樣。
+
+先確認 editable install 實際指向哪裡：
+
+```bash
+cat venv/lib/python3.*/site-packages/__editable__.qatest-*.pth
+# 印出的路徑若不是「你正在改的這個 checkout」的 QATest/src，就是它
+```
+
+也可以直接看 run log 的 `crootdir`，是不是你以為的那份。
+
+繞過（不改 venv、非破壞性）：
+
+```bash
+PYTHONPATH=<你這份>/QATest/src caffeinate -i venv/bin/python -m qatest run --caseid ... --platform android
+```
+
+根因修法是在該 checkout 重跑 `pip install -e .`，但那會動到共用環境 —— **要改先問人**，不要在跑 case 的過程中順手改掉別人的 venv。
+
 #### C. 多語系（i18n）缺 key — **一次盤完才重跑**
 
 特徵：
@@ -210,12 +258,27 @@ source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest ru
 
 補值規範：
 - **必須有 ground truth** — 真機截圖（`<debug_folder>/<feature>/<case>_<timestamp>.png`）或元素樹，**不可自行翻譯**
-- 🔴 **取值順序：先看該平台有沒有 Lokalise 已 commit 的靜態檔，沒有才動真機**（省時間）：
+- 🔴 **取值順序（依序往下試，前一階拿得到就禁止進下一階）**：
+
+  **① repo 內的靜態檔 —— 有就必須用這個，不准跳過**
   - **iOS 有** —— Lokalise 在 CI/build time 下載後 commit 進 repo（`.github/workflows/update-lokalise-strings.yml` + `Scripts/lokalise_download.sh`），直接 `gh api` 讀 `kkday-it/kkday-ios-member` 的 `<locale>.lproj/Localizable.strings`，一次撈整包。
-  - **Android 沒有** —— Lokalise 走**執行期 OTA 下發**（`LokaliseContextWrapper.wrap()`），`app/src/main/res/values-*/` 只有 `strings_nationality_restriction.xml`，**沒有一般 UI 字串**。只能真機挖：裝置切語系 → seed 已知值進 yaml → **讓框架真的跑一次**，在失敗頁一次 dump 收割整頁 key，別手動點完整條 flow。
-  - **不准跨平台照抄**：iOS 的值只能當 Android 的候選。實測 Android 法文 Lokalise 匯入不完整（設定頁「其他」header 在 Français 下仍是中文），照抄會寫進畫面上根本沒有的字。
+  - **Android repo 內沒有** —— Lokalise 走**執行期 OTA 下發**（`LokaliseContextWrapper.wrap()`），`app/src/main/res/values-*/` 只有 `strings_nationality_restriction.xml`，**沒有一般 UI 字串** → Android 走 ②。
+
+  **② 真機挖** —— 裝置切語系 → seed 已知值進 yaml → **讓框架真的跑一次**，在失敗頁一次 dump 收割整頁 key，別手動點完整條 flow。
+
+  **③ Lokalise API —— 最後 fallback，且只准 GET**
+  - 🔴 **只有 ① 和 ② 都拿不到才准打。repo 內有靜態檔就一律不准打 API**，也不要「為了比對／保險」順手打一次。
+  - 🔴 **只准 GET，不准 POST / PUT / PATCH / DELETE，一個都不行。** 這個 project 是**正式 App 的翻譯來源、OTA 直接下發到線上**，一次誤寫就是線上全語系事故。禁止的不只是改翻譯 —— 建 key、改 key、加註解、上傳檔案、開 branch、改 project 設定**全部禁止**。curl 一律明確帶 `-X GET`（或不帶 `-d`／`--data`／`-F`／`-T`），看到自己在組 `-X POST` 就是走錯路，停下來。
+  - 🔴 **token 只能經環境變數帶入，指令裡只准出現變數名。** 用 `-H "X-Api-Token: $LOKALISE_TOKEN"`，**絕不可**把 token 值展開成字面寫進指令 —— 指令本身會留在 bash log / session transcript / tool-call 紀錄裡，那才是真正的洩漏點，不是報告。同樣不可寫進任何檔案、不可 commit、不可 echo 進報告。
+  - ⚠️ repo 裡（`kkday-ios-member` 的 `Scripts/lokalise_download.sh`）那顆是**給 CI build 用的共用 token，scope 未經確認、很可能含寫入權**，而且與 iOS build pipeline 共用 rate limit。拿它來做唯讀查詢是**權宜 fallback**，正解是另外申請一顆 read-only token 放進環境變數。要用它之前先跟人確認。
+  - 端點：project「KKday App」，`project_id` = `8873177964aac05edc48d5.79499995`（約 14000 keys / 15 語系，base `en`）
+    `GET https://api.lokalise.com/api2/projects/<pid>/keys?include_translations=1&limit=500&page=N`
+  - 🔴 `filter_keys` 參數要**完整 key 名**才有用，給片語（如 `NOTIFICATION`）會回 0 筆 → 要找「某段中文對應哪個 key」只能**分頁撈全部再本地 grep 翻譯內容**（約 28 頁，這也是它慢又吃 rate limit、該排最後的原因之一）
+  - 撈到的值仍是**候選不是真理**：Lokalise 是最新版，裝置上的 build 可能還沒 OTA 到。實測過 `notification_setting_subtitle` 在 Lokalise 是「關閉行銷通知不影響訂單…」，build 實際顯示「該行銷訊息的關閉不影響訂單…」，**對不上就以畫面為準**
+
+  **不准跨平台照抄**：iOS 的值只能當 Android 的候選。實測 Android 法文 Lokalise 匯入不完整（設定頁「其他」header 在 Français 下仍是中文），照抄會寫進畫面上根本沒有的字。
 - 反查 app 的 `<locale>.lproj/Localizable.strings` 只能當候選：同一個中文值常對到多個 strings key，挑錯會整段等到逾時（例：`email_login_button` 對成 `Continuer avec l'e-mail`，實際介面是 `Utilisez E-mail pour continuer`）
-- 補完在 yaml 註解註明「值來自真機截圖」，避免下次又被 lproj 反查覆蓋回去
+- 🔴 **i18n yaml 內只准 `key: value`，不准任何註解或說明**（團隊硬性規定）。所以「這個值哪來的」不要寫進 yaml，寫在 PR description / 回報裡。
 
 ### 5. 修復後驗證
 

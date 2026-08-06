@@ -133,7 +133,18 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 - **硬上限**：同一輪內完整 E2E（`qatest run`）**最多重跑 3 次**；還沒對就停下回報「selector 卡在哪、已試哪些候選」，不要無上限地全跑試錯。
 
 **檔案隔離：**
-- **批次並行時**各 automator 應在自己的 **git worktree** 內寫檔（由 workflow 用 `isolation: worktree` 提供），避免多 case 同時改同一 repo 互相覆蓋。**你只管在給定的工作目錄實作，不自己開 worktree、不自己做 git 操作。**
+- 各 automator 在自己的 **git worktree** 內寫檔（由 workflow 的 `isolation: worktree`，或由主對話手動 `git worktree add` 後在 prompt 指定路徑）。**你只管在給定的工作目錄實作，不自己開 worktree、不自己做 git 操作。**
+- 🔴 **開工前先確認「給我的工作目錄有沒有被別人佔用」**，這是你的責任，不能假設呼叫端一定安排好了：
+  - prompt 沒指定工作目錄，或指定的就是主 checkout，而**同時還有別的 agent／別的 run 會碰到同一個 repo** → **停下回報，請主對話給你獨立 worktree**，不要硬幹。
+  - 判斷依據不是「有沒有並行跑多張 case」，而是**「這個 repo 的檔案在我工作期間會不會被第三方讀或寫」**。以下都算，且都踩過：
+    - **同一支共用 test_step 被兩個平台的工作同時碰**（Android 已完成、iOS 要加 `match platform` 分支——改的是同一個檔）。
+    - **某個 checkout 正在跑實機 E2E**：`qatest run` 每張 case 是**獨立 process**，跑到第 2 張才改檔，第 2–4 張讀到的是新版 code，整批結果不可信卻看不出來。
+    - 同一個 repo 有多個 clone / worktree，而 venv 的 editable install 指向其中一個。
+- ⚠️ **worktree 只隔離「repo 內的檔案」**，以下**不隔離**、並行仍會互相踩，要自己錯開：
+  - `/tmp` 底下的暫存（TCMS spec、storage-state、harvest jsonl）→ 檔名一律帶 case id / pid。
+  - **實體裝置與 Appium 埠**（Android 預設埠 vs iOS 另指定，如 4735）→ 兩個 run 同埠會直接互斷 session。
+  - venv 本身與其 `.pth`（動它就是動全域，**要改先問人**）。
+- worktree 開好後，**跑測試務必 `PYTHONPATH=<你的 worktree>/QATest/src`**，否則 venv 的 editable install 會把你導回原本註冊的那份 checkout，你在 worktree 改的東西一行都不會生效——症狀是 `0 passed (total 0 cases)` 或莫名其妙的 ChromeDriver 版本錯誤。跑完先確認 log 的 `crootdir` 是你這份。
 
 **沿用既有紅線：** locator 不准猜定稿、抓不到元素樹就停下回報、**禁用 prod `www.kkday.com`**、host 依環境組出 `www{suffix}.kkday.com`。
 
