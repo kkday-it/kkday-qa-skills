@@ -68,12 +68,44 @@ def test_send_case_fidelity_no_purge_uses_indir():
     assert "--purge" not in scf, "send_case_fidelity 不可帶 --purge（生命週期交給 gate）"
 
 
-def test_idempotent():
+def test_pretooluse_guard_has_write_matcher():
     cfg = sh.sync({}, REPO)
-    first = _stop_cmds(cfg)
+    grps = [g for g in cfg["hooks"]["PreToolUse"]
+            if any("agent_only_impl_guard.py" in h["command"] for h in g["hooks"])]
+    assert len(grps) == 1, "guard 應正好一個 group"
+    # 沒 matcher 的話每個 tool call 都會起一次 python，白付延遲
+    assert grps[0].get("matcher") == "Edit|Write|NotebookEdit"
+
+
+def test_no_matcher_key_on_stop_groups():
+    # Stop 不吃 matcher；多塞一個 key 會讓 settings.json 長出無意義欄位
+    for grp in sh.sync({}, REPO)["hooks"]["Stop"]:
+        assert "matcher" not in grp
+
+
+def test_does_not_touch_foreign_pretooluse_hook():
+    # 實際情況：rtk 的 PreToolUse hook（matcher Bash）跟我們的並存
+    foreign = "rtk hook claude"
+    cfg = {"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": foreign}]}
+    ]}}
+    sh.sync(cfg, REPO)
+    grps = cfg["hooks"]["PreToolUse"]
+    bash_grp = next(g for g in grps if g.get("matcher") == "Bash")
+    assert [h["command"] for h in bash_grp["hooks"]] == [foreign], "外部 group 內容不可被動到"
+    # 我們的 hook 必須自成一組，不可併進外部那組（會竄改別人的 matcher 語意）
+    ours = next(g for g in grps
+                if any("agent_only_impl_guard.py" in h["command"] for h in g["hooks"]))
+    assert ours is not bash_grp
+    assert len(ours["hooks"]) == 1
+
+
+def test_idempotent():
+    import copy
+    cfg = sh.sync({}, REPO)
+    first = copy.deepcopy(cfg["hooks"])  # 全 event 都比，不只 Stop
     sh.sync(cfg, REPO)  # 再跑一次
-    second = _stop_cmds(cfg)
-    assert first == second, "重跑不應產生重複或變動"
+    assert cfg["hooks"] == first, "重跑不應產生重複或變動"
 
 
 if __name__ == "__main__":

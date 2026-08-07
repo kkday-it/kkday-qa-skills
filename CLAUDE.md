@@ -52,11 +52,29 @@ prompts/            啟動 prompt 範本
 ### Agent 角色的選擇
 | 任務類型 | 用哪個 agent |
 |---|---|
+| **TCMS case 自動化實作**（`KQT-T…`） | `qa-case-planner` → `qa-case-automator` → `qa-case-fidelity-reviewer` |
 | 拆任務、寫 plan、分配工作 | `qa-planner` |
 | 撈資料、調查、整合背景 | `qa-investigator` |
 | 寫 code、改文件、跑測試 | `qa-implementer` |
 | 確認交付物符合 acceptance | `qa-reviewer` |
 | 獨立挑剔、扮演 critic | `qa-evaluator` |
+
+**第一列優先於「寫 code → `qa-implementer`」。** 只要任務是把某個 `KQT-T…` 實作成自動化測試，
+一律走這三隻，**不要主對話自己 inline 寫**，也不要交給 `qa-implementer`：
+
+```
+Agent(subagent_type='qa-case-planner',           prompt='case=KQT-T… platform=web|mweb|ios|android')
+  → 與人確認計畫 →
+Agent(subagent_type='qa-case-automator',         prompt='case=KQT-T…')
+Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=KQT-T…')
+```
+
+為什麼不能 inline：`qa-case-planner` 的規劃只在動手**之前**有意義（決定前置怎麼建真實資源、
+關鍵斷言驗什麼），錯過就補不回來；而 fidelity / locator 兩個 Stop gate 是由 `qa-case-automator`
+寫 claimed 檔才會 arm，沒 agent ⇒ gate 直接放行，**沒驗過卻長得跟驗過一模一樣**。
+
+`scripts/agent_only_impl_guard.py`（PreToolUse hook）會在主對話直接寫實作路徑時**反問**該不該
+走 automator——它是提醒，不是替代品：正確做法仍是一開始就 spawn agent，而不是等它跳出來。
 
 詳見 `agents/` 目錄下各角色定義。
 

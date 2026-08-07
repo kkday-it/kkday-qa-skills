@@ -36,13 +36,29 @@ def _settings_path() -> str:
 
 
 def desired_hooks(repo: str) -> dict:
-    """event -> list of command 字串（本 repo 目前該有的 hook）。"""
+    """event -> list of entry（本 repo 目前該有的 hook）。
+
+    entry 可以是 command 字串（不限定 tool，適用 SessionStart / Stop 這類無 matcher 的
+    event），或 `{"matcher": "...", "command": "..."}`（PreToolUse / PostToolUse 需要）。
+    """
     return {
         "SessionStart": [
             f'bash "{repo}/scripts/session_autopull.sh"',
         ],
         "UserPromptSubmit": [
             f'bash "{repo}/scripts/session_autopull.sh" 1800',
+            # 路由層：「KQT-T1234 實作」→ 注入 planner → automator → reviewer 的具體指示。
+            # 是 best-effort（沒有 hook 能強迫模型呼叫 Agent），漏掉的由下面 PreToolUse 接住。
+            f'python3 "{repo}/scripts/case_impl_router.py"',
+        ],
+        # 攔截層：真的要寫實作檔時反問人——這是 case 實作（該走 qa-case-automator）還是
+        # 小修（typo / merge conflict / lint）？matcher 一定要有，否則每個 tool call 都會
+        # 起一次 python，白付延遲。
+        "PreToolUse": [
+            {
+                "matcher": "Edit|Write|NotebookEdit",
+                "command": f'python3 "{repo}/scripts/agent_only_impl_guard.py"',
+            },
         ],
         # 順序有意義：send_case_fidelity 必須在 gate **之前**——先把遙測送出，gate 才在 pass 時
         # 刪掉結果目錄。反過來（gate 先跑並在 pass 刪檔）會讓通過那輪的遙測還沒送就被刪。
@@ -69,10 +85,13 @@ def sync(cfg: dict, repo: str) -> dict:
     再以 desired 的順序整組重加。這樣同時保證：(1) 自動 migrate 改過 flag/路徑的舊 hook，
     (2) 本 repo hook 的**相對順序**永遠等於 desired（順序對 Stop hook 的正確性有意義），
     (3) 冪等（重跑結果相同）。**非本 repo 的 hook 一律不動。**
+
+    重加時依 matcher 分組：**相鄰**且 matcher 相同的 entry 併成同一個 group，matcher 一變
+    就開新 group。用相鄰而非全域分組，是為了不打亂 desired 的順序。
     """
     hooks = cfg.setdefault("hooks", {})
     ours_marker = f"{repo}/scripts/"
-    for event, cmds in desired_hooks(repo).items():
+    for event, entries in desired_hooks(repo).items():
         arr = hooks.setdefault(event, [])
         # 1) 移除本 repo 的所有 hook（稍後以 desired 順序重建）
         for grp in arr:
@@ -81,8 +100,23 @@ def sync(cfg: dict, repo: str) -> dict:
                 if ours_marker not in (h.get("command") or "")
             ]
         arr[:] = [grp for grp in arr if grp.get("hooks")]  # 丟掉被清空的 group
-        # 2) 以 desired 順序整組重加（去重：desired 內本就唯一）
-        arr.append({"hooks": [{"type": "command", "command": c} for c in cmds]})
+        # 2) 以 desired 順序重加。先建在獨立 list 再接到尾端——絕不把我們的 hook
+        #    塞進殘留的外部 group（那會連帶改到別人 hook 的 matcher 語意）。
+        ours: list = []
+        for entry in entries:
+            if isinstance(entry, str):
+                matcher, command = None, entry
+            else:
+                matcher, command = entry.get("matcher"), entry["command"]
+            hook = {"type": "command", "command": command}
+            if ours and ours[-1].get("matcher") == matcher:
+                ours[-1]["hooks"].append(hook)
+            else:
+                # matcher 排在 hooks 前面，跟 settings.json 既有寫法一致（人會讀這個檔）
+                grp = {"matcher": matcher} if matcher is not None else {}
+                grp["hooks"] = [hook]
+                ours.append(grp)
+        arr.extend(ours)
     return cfg
 
 
