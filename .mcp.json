@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "kkday-qa-tools": {
+      "command": "uvx",
+      "args": [
+        "--refresh",
+        "--from",
+        "git+https://github.com/kkday-it/kkday-qa-skills.git#subdirectory=mcp_servers/kkday_qa_tools",
+        "kkday-qa-tools-mcp"
+      ],
+      "env": {
+        "KKDAY_TOOLS_BASE": "http://autotest-service.sit.kkday.com:8081/ai_studio",
+        "KKDAY_TOOLS_USER_ID": "mr8l9126-d483lhd1gto",
+        "KKDAY_TOOLS_USER_NAME": "kkday_qa_mcp",
+        "AUTOMATION_TOKEN": "8b9dfbac-e863-4078-95e9-c2cc03abe84f"
+      }
+    }
+  }
+}
