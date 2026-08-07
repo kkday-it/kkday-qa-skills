@@ -552,13 +552,13 @@ def scm_submit_application(env: str, session_token: str, email: str,
 
 def scm_activate_supplier(env: str, supplier_oid: int, country: str,
                           email: str = "") -> str:
-    """bluemountain BD 審核 + 供應商確認合約 + sofa-potato 合約，啟用供應商到 status 80。回傳 password。
+    """bluemountain BD 審核 + sofa-potato 合約，啟用供應商到 status 80。回傳 password。
 
     Phase A: 確認合作
     Phase B: 等 ASF → BD初審 task
     Phase C: BD初審 5-step wizard（step 2→3 建 settle、step 4→5 設 handler）
-    Phase D: 供應商確認合約（contract/confirm，需 SCM session → 觸發 settle 建立）
-    Status 80: sofa-potato 合約（Java API side effect 直接設 80）
+    Phase D: 供應商確認合約（best-effort；contract/confirm 依賴後端 webhook，常失敗）
+    Status 80: sofa-potato 合約（admin API 建合約 + 核准 → status 80）
     """
     potato = _sofa_potato_base(env)
     bm = _bluemountain_base(env)
@@ -773,56 +773,61 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
         _bm_task_action(bm, be2_h, bd_task, admin_email, "BD_INIT_REVIEW_PASS")
         log.info("BD初審通過 → 進入「等待供應商確認合作」")
 
-    # ── Phase D: 供應商確認合約（需 SCM supplier session）──
+    # ── Phase D: 供應商確認合約（best-effort，失敗不擋後續）──
+    # contract/confirm 是 SCM external API，依賴後端 webhook 建合約紀錄。
+    # 已知 Stage/SIT 環境此 webhook 常不觸發（contract=null），導致 500/9999。
+    # 即使 Phase D 失敗，Status 80 段會用 sofa-potato admin API 建合約並核准。
+    phase_d_ok = False
     scm_base = _scm_api_base(env)
     if email:
-        log.info("Phase D: 重新登入供應商帳號 %s ...", email)
-        scm_token = _scm_relogin(env, email)
-        scm_h = {
-            "s-ci-sessions": scm_token,
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-            "locale": "zh-tw",
-        }
+        log.info("Phase D: 嘗試 contract/confirm（best-effort）...")
+        try:
+            scm_token = _scm_relogin(env, email)
+            scm_h = {
+                "s-ci-sessions": scm_token,
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                "locale": "zh-tw",
+            }
 
-        confirm_url = f"{scm_base}/external/v1/supplier/apply/contract/confirm"
-        max_confirm_retries = 6
-        for attempt in range(max_confirm_retries):
-            try:
-                resp = requests.post(confirm_url, headers=scm_h, timeout=_SCM_TIMEOUT)
-                body = resp.json()
-            except Exception as exc:
-                if attempt < max_confirm_retries - 1:
-                    log.warning("contract/confirm 連線失敗（%s），15s 後 retry", exc)
-                    time.sleep(15)
+            confirm_url = f"{scm_base}/external/v1/supplier/apply/contract/confirm"
+            max_confirm_retries = 3
+            for attempt in range(max_confirm_retries):
+                try:
+                    resp = requests.post(confirm_url, headers=scm_h, timeout=_SCM_TIMEOUT)
+                    body = resp.json()
+                except Exception as exc:
+                    log.warning("contract/confirm 連線失敗（%s），10s 後 retry", exc)
+                    time.sleep(10)
                     continue
-                raise
-            status = body.get("metadata", {}).get("status", "")
-            if status == "0000":
-                log.info("Phase D: contract/confirm 成功")
+                status = body.get("metadata", {}).get("status", "")
+                if status == "0000":
+                    log.info("Phase D: contract/confirm 成功")
+                    phase_d_ok = True
+                    break
+                if status == "9999" and attempt < max_confirm_retries - 1:
+                    log.warning("contract/confirm 9999（attempt %d），10s 後 retry",
+                                attempt + 1)
+                    time.sleep(10)
+                    continue
+                log.warning("contract/confirm 最終失敗（status=%s），跳過 Phase D", status)
                 break
-            if status == "9999" and attempt < max_confirm_retries - 1:
-                log.warning("contract/confirm 暫態 9999（attempt %d），15s 後 retry", attempt + 1)
-                time.sleep(15)
-                continue
-            _scm_assert_success(body, "contract/confirm")
+        except Exception as exc:
+            log.warning("Phase D 失敗（%s），跳過繼續", exc)
 
-        # D2: 等 settle 建立（contract/confirm 會觸發 settle 非同步建立）
-        for _wait in range(30):
-            time.sleep(5)
-            settle_body = _scm_request("GET",
-                                       f"{potato}/v1/suppliers/{supplier_oid}/settle-list",
-                                       headers=be2_h)
-            settles = settle_body.get("data", [])
-            if settles:
-                log.info("settle-list 已建立（%d 筆），等了 %ds",
-                         len(settles), (_wait + 1) * 5)
-                break
+        if phase_d_ok:
+            # 等 settle 建立（contract/confirm 成功時才需要等）
+            for _wait in range(12):
+                time.sleep(5)
+                settle_body = _scm_request(
+                    "GET", f"{potato}/v1/suppliers/{supplier_oid}/settle-list",
+                    headers=be2_h)
+                if settle_body.get("data"):
+                    log.info("settle-list 已建立，等了 %ds", (_wait + 1) * 5)
+                    break
         else:
-            log.warning("⚠️ 等待 150s 後 settle-list 仍為空")
-    else:
-        log.warning("⚠️ 未提供 email，無法執行 Phase D（contract/confirm），settle 可能為空")
+            log.info("Phase D 未成功，由 Status 80 段用 admin API 建合約")
 
     # ── Status 80: sofa-potato 合約（Java API side effect → status 80）──
     body = _scm_request("POST", f"{potato}/v1/files/supplier.attachment",
