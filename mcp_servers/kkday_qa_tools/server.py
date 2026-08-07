@@ -532,9 +532,10 @@ def describe_tool(name: str) -> dict:
         },
         "get_scm_otp": {
             "purpose": "取得 SCM 登入 OTP 驗證碼（6 位數字）",
-            "note": "需要 Gmail token（預設讀 kkday-QA-automation repo 的 token.json，或設 GMAIL_TOKEN_PATH）",
+            "note": "Gmail 憑證自動從 secret service 取得，不需額外設定",
             "params": {
                 "email": "收 OTP 的 email（通常是 create_scm_supplier 回傳的 email）",
+                "env": "環境（sit / stage），預設 sit",
             },
             "example": 'get_scm_otp(email="b2c-qa-team+automation_test_1234567890@kkday.com")',
         },
@@ -1529,7 +1530,6 @@ def copy_product(
 
 # ── SCM 供應商管理（業務邏輯在 scm_supplier.py）──────────────────────
 from scm_supplier import (
-    SCM_DEFAULT_PASSWORD as _SCM_DEFAULT_PASSWORD,
     gmail_get_otp as _gmail_get_otp,
     scm_activate_supplier as _scm_activate_supplier,
     scm_frontend_login_url as _scm_frontend_login_url,
@@ -1560,7 +1560,7 @@ def create_scm_supplier(env: str, country: str = "TW") -> dict:
 
     try:
         # Phase 1: 註冊 + 登入
-        email, session_token = _scm_register_and_login(env)
+        email, password, session_token = _scm_register_and_login(env)
 
         # Phase 2: 提交供應商申請
         supplier_oid = _scm_submit_application(env, session_token, email, country)
@@ -1568,7 +1568,7 @@ def create_scm_supplier(env: str, country: str = "TW") -> dict:
         result = {
             "status": "success",
             "email": email,
-            "password": _SCM_DEFAULT_PASSWORD,
+            "password": password,
             "supplier_oid": supplier_oid,
             "env": env,
             "country": country,
@@ -1616,14 +1616,15 @@ def activate_scm_supplier(env: str, supplier_oid: int, country: str = "TW",
     params = {"env": env, "supplier_oid": supplier_oid, "country": country}
 
     try:
-        _scm_activate_supplier(env, supplier_oid, country, base_url=BASE)
+        password = _scm_activate_supplier(env, supplier_oid, country,
+                                           email=email)
 
         login_url = _scm_frontend_login_url(env)
         result = {
             "status": "success",
             "login_url": login_url,
             "email": email,
-            "password": _SCM_DEFAULT_PASSWORD if email else "",
+            "password": password if email else "",
             "supplier_oid": supplier_oid,
             "env": env,
             "country": country,
@@ -1631,7 +1632,7 @@ def activate_scm_supplier(env: str, supplier_oid: int, country: str = "TW",
                 f"供應商帳號啟用完成（v2 狀態，供應商可自行管理商品）。\n\n"
                 f"網址：{login_url}\n"
                 + (f"帳號：{email}\n" if email else "")
-                + (f"密碼：{_SCM_DEFAULT_PASSWORD}\n" if email else "")
+                + (f"密碼：{password}\n" if email else "")
                 + f"供應商 ID：{supplier_oid}\n"
                 f"環境：{env}\n\n"
                 f"請點擊上面的網址，輸入帳號密碼後登入，再跟我拿取 OTP。"
@@ -1649,7 +1650,7 @@ def activate_scm_supplier(env: str, supplier_oid: int, country: str = "TW",
 
 
 @mcp.tool()
-def get_scm_otp(email: str) -> dict:
+def get_scm_otp(email: str, env: str = "sit") -> dict:
     """取得指定 email 最新的 SCM 登入 OTP 驗證碼（6 位數字）。
 
     搭配 create_scm_supplier 使用：建完帳號後使用者去 SCM 前台登入，
@@ -1659,13 +1660,15 @@ def get_scm_otp(email: str) -> dict:
 
     Args:
         email: 收 OTP 的 email（通常是 b2c-qa-team+automation_test_XXX@kkday.com）
+        env: 環境（sit / stage），用於定位 secret service 取得 Gmail 憑證
     """
+    _check_env(env)
     start = time.monotonic()
     tool_name = "get_scm_otp"
-    params = {"email": email}
+    params = {"email": email, "env": env}
 
     try:
-        otp = _gmail_get_otp(email, max_wait=60, poll_interval=5)
+        otp = _gmail_get_otp(email, env=env, max_wait=60, poll_interval=5)
         result = {"otp": otp, "email": email}
         duration_ms = int((time.monotonic() - start) * 1000)
         _emit_analytics(tool_name, _sanitize_params(params), result, None, duration_ms)
