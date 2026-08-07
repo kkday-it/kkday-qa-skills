@@ -543,6 +543,8 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
   - 有交集就**逐一看合併後的完整 function**，不能只信 git 沒報 conflict：文字不衝突不代表語意相容（踩過的坑：master 在 `change_currency` 開頭加了 early return、本地改的是後段 picker，git 合得乾淨，但**本地的實機驗證是在沒有 early return 的舊 code 上跑的**，合完的路徑等於沒測過）。
   - 交集檔案落在測試主要路徑上時，在 PR 的 Testing 段**寫明實測是合併前跑的**，別讓 reviewer 以為合併後也驗過。
 - 跑 `pre-commit run --all-files`
+- 🔴 **PR body 語言：只有五個 `## ` 標題用英文，內文一律繁體中文**（段落、bullet、Checklist 項目文字都是）。
+  下面範本只固定了英文標題、沒寫內文語言，容易被帶著整篇寫成英文——PR body 算團隊文件，適用「對團隊的文件一律繁體中文」。
 - PR body 套 repo `.github/pull_request_template.md` 五段式範本（**不可**用 `## Summary` + `## Test plan` 簡化格式）：
 
   ```
