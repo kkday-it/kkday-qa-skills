@@ -66,8 +66,6 @@ _SCM_TIMEOUT = (10, 120)
 _ASF_POLL_TIMEOUT = 300       # ASF 背景調查 polling 上限（秒）
 _ASF_POLL_INTERVAL = 10       # ASF polling 間隔（秒）
 _ASF_SETTLE_WAIT = 20         # ASF 完成後等 MQ consumer 穩定（秒）
-_APPROVE_MAX_RETRIES = 20     # approve 最大重試次數
-_APPROVE_RETRY_INTERVAL = 15  # approve 重試間隔（秒）
 
 _SCM_COUNTRY_CONTRACT_MAP = {
     "TW": 3, "JP": 5, "KR": 4, "SG": 6, "MY": 6,
@@ -179,7 +177,7 @@ def _bm_task_action(base_url: str, headers: dict, task_oid: int,
         "authKey": "BCS", "serviceName": "BCS",
         "data": {
             "taskOid": task_oid, "currentUuid": admin_email,
-            "actionCode": action_code, "comment": None, "extraInfo": None,
+            "actionCode": action_code, "comment": "tests", "extraInfo": None,
         },
     }, f"task-action({action_code})")
 
@@ -204,6 +202,84 @@ def _bm_contract_create(base_url: str, headers: dict, task_oid: int) -> dict:
             "contractLang": "zh-TW",
         },
     }, "contract-create")
+
+
+def _complete_adobe_sign(sign_url: str) -> None:
+    """用 Playwright headless 操作 Adobe Sign 完成電子簽署。
+
+    參考 QA Automation 的 _do_adobe_sign_on_page + _complete_adobe_sign_via_playwright。
+    """
+    from playwright.sync_api import sync_playwright
+
+    log.info("[Adobe Sign] 載入簽署頁面: %s", sign_url[:80])
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        page = ctx.new_page()
+        try:
+            page.goto(sign_url, wait_until="networkidle", timeout=60000)
+            time.sleep(3)
+
+            # Continue 按鈕（有時出現）
+            continue_btn = page.locator("button:has-text('Continue')")
+            if continue_btn.is_visible():
+                log.info("[Adobe Sign] 點擊 Continue")
+                continue_btn.click()
+                time.sleep(5)
+                page.wait_for_load_state("networkidle", timeout=30000)
+
+            # 第一個 Click to Sign
+            sign_btn = page.locator(
+                "[role='button'][aria-label='Click to Sign (required)']")
+            if not sign_btn.is_visible():
+                raise ValueError("找不到 'Click to Sign' 按鈕")
+            log.info("[Adobe Sign] 點擊 Click to Sign")
+            sign_btn.click()
+            time.sleep(3)
+
+            # 輸入簽名
+            sig_input = page.locator("input[data-test-id='type-sign-canvas']")
+            if not sig_input.is_visible():
+                raise ValueError("簽名輸入欄未出現")
+            sig_input.fill("QA Automation")
+            time.sleep(1)
+
+            # Apply
+            log.info("[Adobe Sign] Apply 簽名")
+            page.locator("button:has-text('Apply')").click()
+            time.sleep(4)
+
+            # 第二個 Click to Sign（如果有）
+            sign_btn2 = page.locator(
+                "[role='button'][aria-label='Click to Sign (required)']")
+            if sign_btn2.count() > 0 and sign_btn2.first.is_visible():
+                log.info("[Adobe Sign] 處理第二個簽名欄")
+                sign_btn2.first.click()
+                time.sleep(2)
+                apply2 = page.locator("button:has-text('Apply')")
+                if apply2.is_visible():
+                    apply2.click()
+                    time.sleep(4)
+
+            # Submit
+            time.sleep(3)
+            log.info("[Adobe Sign] Submit")
+            page.evaluate(
+                "document.querySelector('#footer-submit-button').click()")
+            time.sleep(15)
+
+            try:
+                page.wait_for_load_state("networkidle", timeout=30000)
+            except Exception:
+                pass
+
+            body_text = page.locator("body").text_content() or ""
+            if "signed successfully" not in body_text.lower():
+                log.warning("[Adobe Sign] 簽署結果不確定: %s", body_text[:200])
+            else:
+                log.info("[Adobe Sign] 簽署成功")
+        finally:
+            browser.close()
 
 
 def scm_frontend_login_url(env: str) -> str:
@@ -513,7 +589,7 @@ def scm_submit_application(env: str, session_token: str, email: str,
             "kkdayMainContractNo": _SCM_COUNTRY_CONTRACT_MAP.get(country, 3),
             "beneficiaryBankCountryCode": country,
             "collectCurrency": "TWD",
-            "bankAccountType": "01",
+            "bankAccountType": None,
             "bankName": "台灣銀行",
             "bankCode": "004",
             "branchName": "城中分行",
@@ -552,13 +628,14 @@ def scm_submit_application(env: str, session_token: str, email: str,
 
 def scm_activate_supplier(env: str, supplier_oid: int, country: str,
                           email: str = "") -> str:
-    """bluemountain BD 審核 + sofa-potato 合約，啟用供應商到 status 80。回傳 password。
+    """bluemountain 完整流程啟用供應商到 status 80。回傳 password。
 
-    Phase A: 確認合作
-    Phase B: 等 ASF → BD初審 task
-    Phase C: BD初審 5-step wizard（step 2→3 建 settle、step 4→5 設 handler）
-    Phase D: 供應商確認合約（best-effort；contract/confirm 依賴後端 webhook，常失敗）
-    Status 80: sofa-potato 合約（admin API 建合約 + 核准 → status 80）
+    Phase A: 確認合作（CONFIRM_COOPERATION_ACCEPT）
+    Phase B: 等 ASF → BD初審 task 出現
+    Phase C: BD初審 5-step wizard + contract-create + BD_INIT_REVIEW_PASS
+    Phase D: 供應商確認合約（contract/confirm，含系統處理等待）
+    Phase E: Adobe Sign 電子簽署（Playwright headless）
+    Phase F: 切換供應商（PUT current-management）+ 驗證 status=80
     """
     potato = _sofa_potato_base(env)
     bm = _bluemountain_base(env)
@@ -725,7 +802,7 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
                 "paymentPreference": {
                     "collectInfoDesc": f"QA Supplier {supplier_oid}",
                     "collectMethod": "MANUAL_REMIT",
-                    "settleDateType": "02",
+                    "settleDateType": "03",
                     "settlePeriodMethod": "01",
                     "collectDateJson": "N_N_1",
                     "autoStmtGen": True,
@@ -773,126 +850,115 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
         _bm_task_action(bm, be2_h, bd_task, admin_email, "BD_INIT_REVIEW_PASS")
         log.info("BD初審通過 → 進入「等待供應商確認合作」")
 
-    # ── Phase D: 供應商確認合約（best-effort，失敗不擋後續）──
-    # contract/confirm 是 SCM external API，依賴後端 webhook 建合約紀錄。
-    # 已知 Stage/SIT 環境此 webhook 常不觸發（contract=null），導致 500/9999。
-    # 即使 Phase D 失敗，Status 80 段會用 sofa-potato admin API 建合約並核准。
-    phase_d_ok = False
+    # ── Phase D: 供應商確認合約 ──
+    # BD_INIT_REVIEW_PASS 後，系統需要 60-90 秒建立合約紀錄。
+    # 供應商用 SCM external API 呼叫 contract/confirm 觸發 Adobe Sign。
     scm_base = _scm_api_base(env)
-    if email:
-        log.info("Phase D: 嘗試 contract/confirm（best-effort）...")
-        try:
-            scm_token = _scm_relogin(env, email)
-            scm_h = {
-                "s-ci-sessions": scm_token,
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-                "locale": "zh-tw",
-            }
+    if not email:
+        raise RuntimeError("Phase D 需要 email，但未提供")
 
-            confirm_url = f"{scm_base}/external/v1/supplier/apply/contract/confirm"
-            max_confirm_retries = 3
-            for attempt in range(max_confirm_retries):
-                try:
-                    resp = requests.post(confirm_url, headers=scm_h, timeout=_SCM_TIMEOUT)
-                    body = resp.json()
-                except Exception as exc:
-                    log.warning("contract/confirm 連線失敗（%s），10s 後 retry", exc)
-                    time.sleep(10)
-                    continue
-                status = body.get("metadata", {}).get("status", "")
-                if status == "0000":
-                    log.info("Phase D: contract/confirm 成功")
-                    phase_d_ok = True
-                    break
-                if status == "9999" and attempt < max_confirm_retries - 1:
-                    log.warning("contract/confirm 9999（attempt %d），10s 後 retry",
-                                attempt + 1)
-                    time.sleep(10)
-                    continue
-                log.warning("contract/confirm 最終失敗（status=%s），跳過 Phase D", status)
-                break
+    log.info("Phase D: 供應商重新登入 + 確認合約...")
+    scm_token = _scm_relogin(env, email)
+    scm_h = {
+        "s-ci-sessions": scm_token,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "locale": "zh-tw",
+    }
+
+    # D1: 等系統建好合約紀錄，然後 contract/confirm
+    confirm_url = f"{scm_base}/external/v1/supplier/apply/contract/confirm"
+    max_confirm_retries = 8
+    confirm_retry_delay = 15
+    phase_d_ok = False
+    for attempt in range(max_confirm_retries):
+        try:
+            resp = requests.post(confirm_url, headers=scm_h, timeout=_SCM_TIMEOUT)
+            body = resp.json()
         except Exception as exc:
-            log.warning("Phase D 失敗（%s），跳過繼續", exc)
+            log.warning("contract/confirm 連線失敗（%s），%ds 後 retry",
+                        exc, confirm_retry_delay)
+            time.sleep(confirm_retry_delay)
+            continue
+        status = body.get("metadata", {}).get("status", "")
+        if status == "0000":
+            log.info("Phase D: contract/confirm 成功（attempt %d）", attempt + 1)
+            phase_d_ok = True
+            break
+        if status == "9999" and attempt < max_confirm_retries - 1:
+            log.info("contract/confirm 9999（attempt %d/%d），%ds 後 retry",
+                     attempt + 1, max_confirm_retries, confirm_retry_delay)
+            time.sleep(confirm_retry_delay)
+            continue
+        raise RuntimeError(
+            f"contract/confirm 最終失敗: status={status} "
+            f"body={_json.dumps(body, ensure_ascii=False)[:300]}")
 
-        if phase_d_ok:
-            # 等 settle 建立（contract/confirm 成功時才需要等）
-            for _wait in range(12):
-                time.sleep(5)
-                settle_body = _scm_request(
-                    "GET", f"{potato}/v1/suppliers/{supplier_oid}/settle-list",
-                    headers=be2_h)
-                if settle_body.get("data"):
-                    log.info("settle-list 已建立，等了 %ds", (_wait + 1) * 5)
-                    break
-        else:
-            log.info("Phase D 未成功，由 Status 80 段用 admin API 建合約")
+    if not phase_d_ok:
+        raise RuntimeError(
+            f"contract/confirm 重試 {max_confirm_retries} 次仍失敗（9999）")
 
-    # ── Status 80: sofa-potato 合約（Java API side effect → status 80）──
-    body = _scm_request("POST", f"{potato}/v1/files/supplier.attachment",
-                        headers=be2_h,
-                        json_body={"fileName": "qa_test_contract.pdf",
-                                   "contentType": "application/pdf",
-                                   "encodeString": _TINY_PDF_BASE64})
-    _scm_assert_success(body, "上傳合約 PDF")
-    file_oid = body["data"]["fileOid"]
-    access_key = body["data"].get("accessKey", "")
-
-    today = date.today()
-    body = _scm_request("POST",
-                        f"{potato}/v1/suppliers/{supplier_oid}/contracts",
-                        headers=be2_h,
-                        json_body={
-                            "type": "KKDAY",
-                            "startDate": today.isoformat(),
-                            "endDate": (today + timedelta(days=365)).isoformat(),
-                            "autoRenew": True,
-                            "bdNote": "QA automation test contract",
-                            "bpmProcess": False,
-                            "topic": None, "reason": None,
-                            "reviewContractFile": {
-                                "fileOid": int(file_oid),
-                                "fileName": "qa_test_contract.pdf",
-                                "ownerParam1": access_key,
-                            },
-                        })
-    _scm_assert_success(body, "建合約")
-    contract_oid = body["data"]["supplierContractOid"]
-
-    body = _scm_request(
-        "POST",
-        f"{potato}/v1/suppliers/{supplier_oid}/contracts/{contract_oid}/print/done",
-        headers=be2_h,
-        json_body={"supplierContractFile": {
-            "fileOid": int(file_oid),
-            "fileName": "qa_test_signed_contract.pdf",
-            "ownerParam1": access_key,
-        }})
-    _scm_assert_success(body, "合約簽完")
-
-    try:
-        status_body = _scm_request("GET",
-                                   f"{potato}/v1/suppliers/{supplier_oid}/",
-                                   headers=be2_h)
-        current_status = status_body.get("data", {}).get("status")
-        if current_status and int(current_status) >= 80:
-            return
-    except Exception:
-        pass
-
-    for attempt in range(_APPROVE_MAX_RETRIES):
+    # ── Phase E: Adobe Sign 電子簽署 ──
+    # 等 signContractUrl 出現（contract/confirm 成功後 Adobe Sign 需要時間生成）
+    log.info("Phase E: 等待 Adobe Sign URL...")
+    status_url = f"{scm_base}/external/v1/supplier/apply/status"
+    sign_url = None
+    max_sign_wait = 180
+    sign_poll_interval = 10
+    for elapsed in range(0, max_sign_wait, sign_poll_interval):
         try:
-            body = _scm_request(
-                "POST",
-                f"{potato}/v1/suppliers/{supplier_oid}/registration-application/approve",
-                headers=be2_h,
-                json_body={"supplierContractOid": int(contract_oid),
-                           "supplierSettleOid": None})
-            _scm_assert_success(body, "核准")
-            return password
-        except RuntimeError as e:
-            if "SUPREG0011" in str(e) and attempt < _APPROVE_MAX_RETRIES - 1:
-                time.sleep(_APPROVE_RETRY_INTERVAL)
-                continue
-            raise
+            resp = requests.get(status_url, headers=scm_h, timeout=_SCM_TIMEOUT)
+            status_body = resp.json()
+            data = status_body.get("data", {})
+            contract = data.get("contract") or {}
+            sign_url = contract.get("signContractUrl")
+            if sign_url:
+                log.info("Phase E: signContractUrl 已生成（等了 %ds）", elapsed)
+                break
+            log.info("signContractUrl 尚未生成，等 %ds...（已等 %ds）",
+                     sign_poll_interval, elapsed)
+        except Exception as exc:
+            log.warning("apply/status 查詢失敗（%s），繼續等", exc)
+        time.sleep(sign_poll_interval)
+
+    if not sign_url:
+        raise RuntimeError(
+            f"等待 {max_sign_wait}s 後 signContractUrl 仍為 null")
+
+    # E2: 用 Playwright headless 完成 Adobe Sign
+    log.info("Phase E: Playwright 完成 Adobe Sign...")
+    _complete_adobe_sign(sign_url)
+
+    # ── Phase F: 切換供應商 → 驗證 status=80 ──
+    # F1: PUT current-management/{oid}
+    log.info("Phase F: 切換供應商...")
+    switch_url = (f"{scm_base}/external/v1/user/suppliers"
+                  f"/current-management/{supplier_oid}")
+    body = _scm_request("PUT", switch_url, headers=scm_h, json_body={})
+    status = body.get("metadata", {}).get("status", "")
+    log.info("switch supplier: status=%s", status)
+
+    # F2: 驗證 status=80
+    log.info("Phase F: 驗證 status=80...")
+    max_verify_wait = 90
+    verify_poll = 10
+    final_status = ""
+    for elapsed in range(0, max_verify_wait + 1, verify_poll):
+        try:
+            resp = requests.get(status_url, headers=scm_h, timeout=_SCM_TIMEOUT)
+            data = resp.json().get("data", {})
+            final_status = str(data.get("status", ""))
+            app_status = data.get("applicationStatus", "")
+            log.info("verify: status=%s, applicationStatus=%s（已等 %ds）",
+                     final_status, app_status, elapsed)
+            if final_status == "80":
+                log.info("供應商已啟用（status=80）！")
+                return password
+        except Exception as exc:
+            log.warning("apply/status 查詢失敗（%s）", exc)
+        if elapsed < max_verify_wait:
+            time.sleep(verify_poll)
+
+    raise RuntimeError(
+        f"等待 {max_verify_wait}s 後 status 仍為 {final_status}，未達 80")
