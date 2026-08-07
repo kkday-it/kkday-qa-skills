@@ -204,11 +204,28 @@ def _bm_contract_create(base_url: str, headers: dict, task_oid: int) -> dict:
     }, "contract-create")
 
 
+def _ensure_playwright_browsers() -> None:
+    """確保 Playwright chromium 瀏覽器已安裝。首次使用時自動下載。"""
+    import subprocess, pathlib
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            pw.chromium.executable_path  # 如果瀏覽器不存在會拋例外
+    except Exception:
+        log.info("[Playwright] 瀏覽器尚未安裝，自動下載 chromium...")
+        subprocess.run(
+            ["python3", "-m", "playwright", "install", "chromium"],
+            check=True, capture_output=True, text=True,
+        )
+        log.info("[Playwright] chromium 安裝完成")
+
+
 def _complete_adobe_sign(sign_url: str) -> None:
     """用 Playwright headless 操作 Adobe Sign 完成電子簽署。
 
     參考 QA Automation 的 _do_adobe_sign_on_page + _complete_adobe_sign_via_playwright。
     """
+    _ensure_playwright_browsers()
     from playwright.sync_api import sync_playwright
 
     log.info("[Adobe Sign] 載入簽署頁面: %s", sign_url[:80])
