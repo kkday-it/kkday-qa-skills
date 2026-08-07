@@ -568,7 +568,7 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
     be2_h = {"Authorization": f"Bearer {be2_token}",
              "Content-Type": "application/json", "Accept": "application/json"}
 
-    # ── Phase A: 確認合作 ──
+    # ── 偵測目前進度（冪等：retry 時跳到正確的 phase）──
     event = None
     for _ in range(6):
         events = _bm_event_list(bm, be2_h)
@@ -581,169 +581,197 @@ def scm_activate_supplier(env: str, supplier_oid: int, country: str,
         raise RuntimeError(
             f"bluemountain event-list 找不到 supplier {supplier_oid}")
 
-    coop_task = _find_task_oid(event, "確認合作")
-    _bm_task_claim(bm, be2_h, coop_task, admin_email)
-    _bm_task_action(bm, be2_h, coop_task, admin_email,
-                    "CONFIRM_COOPERATION_ACCEPT")
+    current_task_name = event.get("currentTask", {}).get("taskName", "")
+    log.info("supplier %d 目前 task=%s", supplier_oid, current_task_name)
 
-    # ── Phase B: 等 ASF → BD初審 task 出現 ──
+    # 跳到對應 phase
+    skip_to_phase_d = False
     bd_task = None
-    deadline = time.time() + _ASF_POLL_TIMEOUT
-    while time.time() < deadline:
-        time.sleep(_ASF_POLL_INTERVAL)
-        events = _bm_event_list(bm, be2_h)
-        try:
-            ev = _find_event_for_supplier(events, supplier_oid)
-            bd_task = _find_task_oid(ev, "BD初審")
-            break
-        except RuntimeError:
-            continue
-    if bd_task is None:
-        raise TimeoutError(
-            f"等待 BD初審 task 超時（{_ASF_POLL_TIMEOUT}s）")
 
-    # ── Phase C: BD初審 wizard ──
-    _bm_task_claim(bm, be2_h, bd_task, admin_email)
+    if current_task_name == "等待供應商確認合作":
+        # Phase A~C 已完成，直接跳 Phase D
+        log.info("偵測到 Phase A~C 已完成（task=等待供應商確認合作），跳到 Phase D")
+        skip_to_phase_d = True
 
-    # C1: PATCH v2/detail — 設簽約主體
-    contract_no = _SCM_COUNTRY_CONTRACT_MAP.get(country, 3)
-    body = _scm_request("PATCH",
-                        f"{potato}/v2/suppliers/{supplier_oid}/detail",
-                        headers=be2_h,
-                        json_body={"kkdayMainContractNo": contract_no})
-    _scm_assert_success(body, "PATCH kkdayMainContractNo")
+    elif current_task_name == "BD初審":
+        # Phase A 已完成，從 Phase C 繼續
+        log.info("偵測到 Phase A 已完成（task=BD初審），從 Phase C 繼續")
+        bd_task = event.get("currentTask", {}).get("taskOid")
 
-    # C1.5: GET bank（apply 時已帶 bank 資料，這裡取回 bankOid）
-    bank_body = _scm_request("GET",
-                             f"{potato}/v1/suppliers/{supplier_oid}/banks",
-                             headers=be2_h)
-    banks = bank_body.get("data", [])
-    bank_oid = None
-    bank_data: dict = {}
-    if banks:
-        bank_data = banks[0]
-        bank_oid = bank_data.get("supplierBankOid")
+    elif current_task_name == "確認合作":
+        # Phase A: 正常流程
+        coop_task = _find_task_oid(event, "確認合作")
+        _bm_task_claim(bm, be2_h, coop_task, admin_email)
+        _bm_task_action(bm, be2_h, coop_task, admin_email,
+                        "CONFIRM_COOPERATION_ACCEPT")
     else:
-        log.warning("apply 後 banks 為空，直接建立 bank（fallback）")
-        fb_body = _scm_request(
-            "POST", f"{potato}/v1/suppliers/{supplier_oid}/banks",
-            headers=be2_h,
-            json_body={
-                "kkdayMainContractNo": str(contract_no),
+        log.warning("未預期的 task 狀態: %s，嘗試繼續", current_task_name)
+
+    if not skip_to_phase_d and bd_task is None:
+        # ── Phase B: 等 ASF → BD初審 task 出現 ──
+        deadline = time.time() + _ASF_POLL_TIMEOUT
+        while time.time() < deadline:
+            time.sleep(_ASF_POLL_INTERVAL)
+            events = _bm_event_list(bm, be2_h)
+            try:
+                ev = _find_event_for_supplier(events, supplier_oid)
+                task_name = ev.get("currentTask", {}).get("taskName", "")
+                if task_name == "等待供應商確認合作":
+                    log.info("ASF + BD初審已自動完成 → 跳到 Phase D")
+                    skip_to_phase_d = True
+                    break
+                bd_task = _find_task_oid(ev, "BD初審")
+                break
+            except RuntimeError:
+                continue
+        if not skip_to_phase_d and bd_task is None:
+            raise TimeoutError(
+                f"等待 BD初審 task 超時（{_ASF_POLL_TIMEOUT}s）")
+
+    if not skip_to_phase_d:
+        # ── Phase C: BD初審 wizard ──
+        _bm_task_claim(bm, be2_h, bd_task, admin_email)
+
+        # C1: PATCH v2/detail — 設簽約主體
+        contract_no = _SCM_COUNTRY_CONTRACT_MAP.get(country, 3)
+        body = _scm_request("PATCH",
+                            f"{potato}/v2/suppliers/{supplier_oid}/detail",
+                            headers=be2_h,
+                            json_body={"kkdayMainContractNo": contract_no})
+        _scm_assert_success(body, "PATCH kkdayMainContractNo")
+
+        # C1.5: GET bank（apply 時已帶 bank 資料，這裡取回 bankOid）
+        bank_body = _scm_request("GET",
+                                 f"{potato}/v1/suppliers/{supplier_oid}/banks",
+                                 headers=be2_h)
+        banks = bank_body.get("data", [])
+        bank_oid = None
+        bank_data: dict = {}
+        if banks:
+            bank_data = banks[0]
+            bank_oid = bank_data.get("supplierBankOid")
+        else:
+            log.warning("apply 後 banks 為空，直接建立 bank（fallback）")
+            fb_body = _scm_request(
+                "POST", f"{potato}/v1/suppliers/{supplier_oid}/banks",
+                headers=be2_h,
+                json_body={
+                    "kkdayMainContractNo": str(contract_no),
+                    "bankName": "台灣銀行", "bankCode": "004",
+                    "branchName": "城中分行", "branchCode": "0041",
+                    "accountNo": "12345678901234",
+                    "accountName": "automation_test",
+                    "beneficiaryIdentity": "A123456789",
+                    "beneficiaryEmail": email or "qa@kkday.com",
+                    "beneficiaryAddress": "信義路五段 7 號",
+                    "remittanceBurden": "01",
+                    "supplierBankDesc": "automation test",
+                    "collectCurrency": "TWD",
+                    "beneficiaryBankCountryCode": "TW",
+                })
+            _scm_assert_success(fb_body, "fallback POST bank")
+            bank_oid = fb_body.get("data", {}).get("supplierBankOid")
+            bank_data = {
+                "supplierBankOid": bank_oid,
+                "bankCountryCode": "TW", "collectCurrency": "TWD",
                 "bankName": "台灣銀行", "bankCode": "004",
                 "branchName": "城中分行", "branchCode": "0041",
-                "accountNo": "12345678901234",
-                "accountName": "automation_test",
-                "beneficiaryIdentity": "A123456789",
-                "beneficiaryEmail": email or "qa@kkday.com",
-                "beneficiaryAddress": "信義路五段 7 號",
-                "remittanceBurden": "01",
-                "supplierBankDesc": "automation test",
-                "collectCurrency": "TWD",
-                "beneficiaryBankCountryCode": "TW",
-            })
-        _scm_assert_success(fb_body, "fallback POST bank")
-        bank_oid = fb_body.get("data", {}).get("supplierBankOid")
-        bank_data = {
-            "supplierBankOid": bank_oid,
-            "bankCountryCode": "TW", "collectCurrency": "TWD",
-            "bankName": "台灣銀行", "bankCode": "004",
-            "branchName": "城中分行", "branchCode": "0041",
-            "accountNo": "12345678901234", "accountName": "automation_test",
+                "accountNo": "12345678901234", "accountName": "automation_test",
+            }
+            log.info("fallback bank 建立成功，bankOid=%s", bank_oid)
+
+        # C3: step 1→2
+        contract_party = _CONTRACT_PARTY.get(contract_no, _CONTRACT_PARTY[3])
+        _bm_task_draft(bm, be2_h, bd_task, admin_email, {
+            "currentStep": 1, "targetStep": 2,
+            "extraInfo": {
+                "productTypes": ["CAT_14"],
+                "contractParty": contract_party,
+                "cerebrumResult": {
+                    "overallScore": 0, "riskLevel": "HIGH",
+                    "riskLabel": "🔴 HIGH",
+                    "aiRecommendation": "MANAGER_OVERRIDE_REQUIRED",
+                    "aiRecommendationLabel": "⚠️ 必要文件缺漏，需主管簽核放行",
+                    "applicationId": None, "supplierId": None,
+                    "destination": country, "productCategory": "套裝旅遊",
+                    "reviewedAt": time.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+                    "missingRequiredDocs": [],
+                },
+                "riskPassReason": None,
+            },
+        }, "step 1→2")
+
+        # C5: step 2→3（⭐ 帶 bankOid → 建立 supplier_settle）
+        bank_payload = {
+            "supplierBankOid": int(bank_oid) if bank_oid else None,
+            "beneficiaryBankCountryCode": bank_data.get("bankCountryCode", "TW"),
+            "collectCurrency": bank_data.get("collectCurrency", "TWD"),
+            "bankName": bank_data.get("bankName", "台灣銀行"),
+            "bankCode": bank_data.get("bankCode", "004"),
+            "branchName": bank_data.get("branchName", "城中分行"),
+            "branchCode": bank_data.get("branchCode", "0041"),
+            "accountNo": bank_data.get("accountNo", ""),
+            "accountName": bank_data.get("accountName", ""),
+            "swiftCode": bank_data.get("swiftCode"),
+            "ibanCode": bank_data.get("ibanCode"),
+            "cnaps": bank_data.get("cnaps"),
+            "bsbNumber": bank_data.get("bsbNumber"),
+            "sknCode": bank_data.get("sknCode"),
         }
-        log.info("fallback bank 建立成功，bankOid=%s", bank_oid)
-
-    # C3: step 1→2
-    contract_party = _CONTRACT_PARTY.get(contract_no, _CONTRACT_PARTY[3])
-    _bm_task_draft(bm, be2_h, bd_task, admin_email, {
-        "currentStep": 1, "targetStep": 2,
-        "extraInfo": {
-            "productTypes": ["CAT_14"],
-            "contractParty": contract_party,
-            "cerebrumResult": {
-                "overallScore": 0, "riskLevel": "HIGH",
-                "riskLabel": "🔴 HIGH",
-                "aiRecommendation": "MANAGER_OVERRIDE_REQUIRED",
-                "aiRecommendationLabel": "⚠️ 必要文件缺漏，需主管簽核放行",
-                "applicationId": None, "supplierId": None,
-                "destination": country, "productCategory": "套裝旅遊",
-                "reviewedAt": time.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
-                "missingRequiredDocs": [],
+        _bm_task_draft(bm, be2_h, bd_task, admin_email, {
+            "currentStep": 2, "targetStep": 3,
+            "extraInfo": {
+                "isDefaultPaymentPreference": True,
+                "paymentPreference": {
+                    "collectInfoDesc": f"QA Supplier {supplier_oid}",
+                    "collectMethod": "MANUAL_REMIT",
+                    "settleDateType": "02",
+                    "settlePeriodMethod": "01",
+                    "collectDateJson": "N_N_1",
+                    "autoStmtGen": True,
+                    "isKkDelegateInvoice": False,
+                    "isUploadFile": False,
+                    "bank": bank_payload,
+                },
+                "bankOcrPassReason": "TESTS",
+                "ocrResult": {"items": []},
             },
-            "riskPassReason": None,
-        },
-    }, "step 1→2")
+        }, "step 2→3（settle）")
 
-    # C5: step 2→3（⭐ 帶 bankOid → 建立 supplier_settle）
-    bank_payload = {
-        "supplierBankOid": int(bank_oid) if bank_oid else None,
-        "beneficiaryBankCountryCode": bank_data.get("bankCountryCode", "TW"),
-        "collectCurrency": bank_data.get("collectCurrency", "TWD"),
-        "bankName": bank_data.get("bankName", "台灣銀行"),
-        "bankCode": bank_data.get("bankCode", "004"),
-        "branchName": bank_data.get("branchName", "城中分行"),
-        "branchCode": bank_data.get("branchCode", "0041"),
-        "accountNo": bank_data.get("accountNo", ""),
-        "accountName": bank_data.get("accountName", ""),
-        "swiftCode": bank_data.get("swiftCode"),
-        "ibanCode": bank_data.get("ibanCode"),
-        "cnaps": bank_data.get("cnaps"),
-        "bsbNumber": bank_data.get("bsbNumber"),
-        "sknCode": bank_data.get("sknCode"),
-    }
-    _bm_task_draft(bm, be2_h, bd_task, admin_email, {
-        "currentStep": 2, "targetStep": 3,
-        "extraInfo": {
-            "isDefaultPaymentPreference": True,
-            "paymentPreference": {
-                "collectInfoDesc": f"QA Supplier {supplier_oid}",
-                "collectMethod": "MANUAL_REMIT",
-                "settleDateType": "02",
-                "settlePeriodMethod": "01",
-                "collectDateJson": "N_N_1",
-                "autoStmtGen": True,
-                "isKkDelegateInvoice": False,
-                "isUploadFile": False,
-                "bank": bank_payload,
+        # C6: step 3→4
+        tomorrow = date.today() + timedelta(days=1)
+        _bm_task_draft(bm, be2_h, bd_task, admin_email, {
+            "currentStep": 3, "targetStep": 4,
+            "extraInfo": {
+                "isStandardContract": True,
+                "contractPeriod": {
+                    "contractStart": tomorrow.isoformat(),
+                    "contractEnd": (tomorrow + timedelta(days=365)).isoformat(),
+                    "contractAutoRenew": True,
+                },
             },
-            "bankOcrPassReason": "TESTS",
-            "ocrResult": {"items": []},
-        },
-    }, "step 2→3（settle）")
+        }, "step 3→4")
 
-    # C6: step 3→4
-    tomorrow = date.today() + timedelta(days=1)
-    _bm_task_draft(bm, be2_h, bd_task, admin_email, {
-        "currentStep": 3, "targetStep": 4,
-        "extraInfo": {
-            "isStandardContract": True,
-            "contractPeriod": {
-                "contractStart": tomorrow.isoformat(),
-                "contractEnd": (tomorrow + timedelta(days=365)).isoformat(),
-                "contractAutoRenew": True,
+        # C7: step 4→5（⭐ handler）
+        _bm_task_draft(bm, be2_h, bd_task, admin_email, {
+            "currentStep": 4, "targetStep": 5,
+            "extraInfo": {
+                "contractDetail": {
+                    "purchaseWay": "DIRECT",
+                    "msgHandler": "SUPPLIER",
+                    "orderHandler": "SUPPLIER",
+                    "productMaintainer": "SUPPLIER",
+                    "isRezioActivity": False,
+                },
             },
-        },
-    }, "step 3→4")
+        }, "step 4→5（handler）")
 
-    # C7: step 4→5（⭐ handler）
-    _bm_task_draft(bm, be2_h, bd_task, admin_email, {
-        "currentStep": 4, "targetStep": 5,
-        "extraInfo": {
-            "contractDetail": {
-                "purchaseWay": "DIRECT",
-                "msgHandler": "SUPPLIER",
-                "orderHandler": "SUPPLIER",
-                "productMaintainer": "SUPPLIER",
-                "isRezioActivity": False,
-            },
-        },
-    }, "step 4→5（handler）")
+        # C8: contract-create
+        _bm_contract_create(bm, be2_h, bd_task)
 
-    # C8: contract-create
-    _bm_contract_create(bm, be2_h, bd_task)
-
-    # C9: BD_INIT_REVIEW_PASS
-    _bm_task_action(bm, be2_h, bd_task, admin_email, "BD_INIT_REVIEW_PASS")
+        # C9: BD_INIT_REVIEW_PASS
+        _bm_task_action(bm, be2_h, bd_task, admin_email, "BD_INIT_REVIEW_PASS")
+        log.info("BD初審通過 → 進入「等待供應商確認合作」")
 
     # ── Phase D: 供應商確認合約（需 SCM supplier session）──
     scm_base = _scm_api_base(env)
