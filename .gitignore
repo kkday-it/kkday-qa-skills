@@ -28,3 +28,4 @@ __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
+generate_b2c_token.py
