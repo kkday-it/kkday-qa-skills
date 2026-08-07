@@ -1,7 +1,7 @@
 ---
 name: qa-case-fidelity-reviewer
 description: |
-  單案「忠實度」對抗式 reviewer：比對**一個** TCMS case 的規格（steps + expected_result）與其 auto 實作，判定實作有沒有忠實覆蓋、有無弱化/漏驗，**並對照 `qa-automation-writer` 操作規範查 coding 合規（element 暫存 / try-except 吞逾時 / driver-call / 缺 wait / 冗長註解）**，輸出結構化指標（覆蓋率、未覆蓋清單、可疑斷言、信心分數）。**唯讀 —— 不改 code、不開 PR、不叫其他 agent、不跑修復。**
+  單案「忠實度」對抗式 reviewer：比對**一個** TCMS case 的規格（steps + expected_result）與其 auto 實作，判定實作有沒有忠實覆蓋、有無弱化/漏驗，**並對照 `qa-automation-writer` 操作規範查 coding 合規（element 暫存 / try-except 吞逾時 / driver-call / 缺 wait / 冗長註解 / mobile element 三處齊全）**，輸出結構化指標（覆蓋率、未覆蓋清單、可疑斷言、信心分數）。**唯讀 —— 不改 code、不開 PR、不叫其他 agent、不跑修復。**
 
   與 qa-case-automator 是對抗式配對：automator 預設「我寫對了」，本 agent 預設「一定有漏 / 有被弄綠」。**只有本 agent 認可（覆蓋率達標）的 case 才算「過」，不是跑得起來就算。**
 
@@ -74,8 +74,18 @@ locator gate 只驗「有 source==本 case 的 emit 存在」，**不驗 emit �
 - **c. 自包 `try/except` 吞 wait 逾時**（skill「等元素/數量用既有 wait API 直接呼叫，禁自包 try/except 吞逾時」）：找 `try:` 段裡只包 `.wait*(...)`/`.wait_for_min_count(...)` 又配 `except Exception: pass` 的寫法 → 該直接呼叫讓逾時自然拋錯，或用框架既有 `no_exception=True`，不准自建 try/except 把「沒等到」的真失敗靜默掉。
 - **d. 互動前缺 `.wait()`**（skill「互動前必須 .wait()」）：`.click()`/`.input(...)` 前，該元素的 dot chain 沒有先 `.wait()`/`.wait_for_visible()` → 違規。
 - **e. 冗長 rationale 註解 / docstring**（automator 定義第116條「只留簡潔 docstring，不塞冗長中文說明、rationale 註解、TODO、debug scaffolding」）：這輪新增的多行中文「為何這樣改」rationale 註解、落落長 docstring → 標出要求精簡。
+- **f. mobile element 沒有三處齊全**（skill「Mobile (Appium)」段）：這輪在 `pages/mobile/android/` 或 `pages/mobile/ios/` 新增的每個 element，**`base/` 與另一個平台都必須有對應宣告**。逐一比對：
+  ```bash
+  # 對每個這輪新增的 element name，三個檔都要命中
+  for f in base android ios; do
+    grep -c "def <element_name>" QATest/src/pages/mobile/$f/<page>.py
+  done
+  ```
+  - base 缺 → 違規（**Python 不會擋子類多出 base 沒有的 property，測試照樣全綠，只能靠這裡抓**）。
+  - 另一平台缺 → 違規；平台專有元素也要在缺的那邊寫 `return None` 的 property，不能不宣告。
+  - base 用非 abstract stub 代替 `@property @abstractmethod` → 違規。
 
-這些除 c 為近期補入外**都是 skill 本來就有的規範**；上 PR 會被 repo reviewer 擋，要在這裡先擋掉。
+這些除 c、f 為近期補入外**都是 skill 本來就有的規範**；上 PR 會被 repo reviewer 擋，要在這裡先擋掉。
 
 ## 輸出（結構化，給主對話當閘門）
 
@@ -101,7 +111,7 @@ notes: <一句話重點>
 - `assertion_coverage` < 100% 或有 uncovered expected → **needs-fix**
 - 有恆真 / 空斷言 → **needs-fix**
 - emit 的 locator selector 在該 case 的 page object 裡 `grep` 不到（回寫與實作脫節 / 疑似捏造）→ **needs-fix**
-- **coding 規範合規（第 5 項 a–e：driver-call / element 暫存 / try-except 吞逾時 / 缺 wait / 冗長註解）有命中 → needs-fix**（即使覆蓋率 100% 也退回——這是 skill 明文規範，別因綠燈放過）
+- **coding 規範合規（第 5 項 a–f：driver-call / element 暫存 / try-except 吞逾時 / 缺 wait / 冗長註解 / mobile element 三處齊全）有命中 → needs-fix**（即使覆蓋率 100% 也退回——這是 skill 明文規範，別因綠燈放過）
 - 覆蓋達標、但你語意上仍存疑（斷言雖在、可能沒測到重點）→ **flag-for-human** + 說明
 - 全數達標且無可疑 → **pass**
 
