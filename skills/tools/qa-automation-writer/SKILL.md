@@ -376,7 +376,18 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 
 ### Mobile (Appium)
 
-- 必須有 abstract base（`mobile/base/`）+ 具體實作（`android/`、`ios/`），改一邊要確認另一邊
+- 🔴 **element 一律三處齊全：`mobile/base/` 宣告 + `android/` 實作 + `ios/` 實作。**
+  在 `android/` 或 `ios/` 新增任何 element，**同一輪就要補 base 宣告與另一平台的實作**，不能只改動到的那一邊。
+  「另一邊」指的是 base 與另一個平台**兩者都要**，不是只有另一個平台。
+  - **base**：`@property` + `@abstractmethod` + `raise NotImplementedError`。
+  - **有該元素的平台**：回真正的 `Element`。
+  - **沒有該元素的平台**：**寫一個 `return None` 的 `@property`**，加一行註解說明該平台改用什麼方式
+    （例：Android 用 `press_device_btn(single_back)` 返回，沒有返回鈕元素）。
+    ❌ 不准「base 放非 abstract stub、缺的那邊乾脆不宣告」—— 那樣缺漏不會被擋，誤用時噴
+    `NotImplementedError` 而不是可判斷的 `None`。
+  - 範例：`base/booking_payment_page.py:23` abstract → `ios:45` 真 Element → `android:64` `return None`。
+  - 為什麼要明文寫：**Python 不會擋子類多出 base 沒有的 property**，漏寫 base 宣告時測試照樣全綠，
+    唯一的防線就是這條規範（base 用 `@abstractmethod` 才能在建 `Pages` 當下 `TypeError` 擋下缺漏）。
 - 定義新元件前先確認 base 是否已有相同元件，避免重複定義
 - 元件文字建議用 `t('key', locale=AppConfig.language)` 取多語言，避免寫死中文
 - 🔴 **把 i18n 值內插進 XPath 時一律用 `xpath_literal()`（`lib/helpers/string_helper.py`），不准直接寫 `@text='{t(...)}'`。**
