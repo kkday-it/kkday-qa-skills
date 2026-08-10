@@ -133,9 +133,30 @@ source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest ru
 注意：
 - 順序：先 `source venv` → 再 `cd QATest/src` → 最後執行
 - 指令是 `qatest run`（不含 `test`，用 `--caseid` 雙橫線）
-- **qatest 一律前景跑，不准 background**：禁止 `run_in_background=true`，禁止 `| tail`、`&` 等任何會讓 Bash 自動 background 的 pipe/redirect，scheduler 不可靠會 queue 不啟動。直接讓 timeout 處理（單一 case 給 600000ms / 10 分鐘，批量 case 估時間給足）
+- 🔴 **跑測試一律用 `run_in_background=true`，不准前景硬跑。**
+  Bash tool 前景 call 的 `timeout` **硬上限就是 600000ms（10 分鐘）**，填 900000 會被夾到 10 分鐘，
+  時間一到直接 SIGTERM（tool 回 `Exit code 143`）連 appium 一起砍。而一輪 app run 常要 13~20 分鐘
+  ——**前景跑本來就跑不完**，硬跑等於固定浪費 10 分鐘還留一地殘骸。
+- ⚠️ **這裡的 background 專指 harness 層**：Claude Code 會追蹤 PID、結束時回報、output 落在
+  `tasks/<id>.output` 可隨時 Read，不會遺失。**下面兩種仍然禁止**，別混為一談：
+  - qatest 自帶的 background scheduler（不可靠，會 queue 不啟動）
+  - shell 層的 `&`、`| tail` 等會讓指令脫離追蹤的 pipe/redirect
 - **Web/MWeb 不受設備限制**，可以同時跑多個（web + mweb 平行、多個 case 同時跑都可以）
 - **App（iOS/Android）同一台設備同時只能跑一個**，不同設備可以平行
+- 🔴 **iOS + Android 要「都跑」＝ 兩個各自獨立的 background Bash call（一個 platform 一個 call）。**
+  框架支援雙平台同時跑（`start_appium` 的 port 是 Android 用 base、iOS 用 base+100 分開配，
+  不會互撞）。**不要把兩條塞進同一個 call**（`cmd1 & cmd2 & wait` 之類）——那是一個 shell、
+  一份 timeout，一被砍就兩邊一起死。也不要用 `sleep N` 錯開，問題不在時間差。
+  送出後**務必逐一確認兩邊都真的起來了**：曾發生只有一條真的執行、另一條靜默沒跑 —— 不報錯、
+  不產 output dir、也沒有 appium screen session，看起來就像「那個平台自己不跑」，極易誤判成
+  框架或裝置問題。驗法：
+  ```bash
+  ls -lt ~/Documents/QATest_Output | head -5
+  grep -m1 -o "'platform': <Platform\.[A-Z]*" ~/Documents/QATest_Output/<dir>/*.log
+  screen -ls   # 有跑起來才會有 appium_server_<port>；Android 用 10000 段、iOS 用 10100 段
+  ```
+- ⚠️ **run 被 SIGTERM 砍掉後會留下 detached 的 appium screen session**，會累積佔 port。
+  重跑前先清：`for s in $(screen -ls | awk '/appium_server_/{print $1}'); do screen -S "$s" -X quit; done`
 - **iOS/Android 一律不允許模擬器（simulator/emulator），必須使用實體機**：
   - iOS：禁止 `xcrun simctl boot`、禁止任何 simulator UDID；取實體機 UDID 用 `idevice_id -l` 或 `xcrun devicectl list devices`
   - Android：禁止 `emulator -avd`、禁止 AVD UDID；取實體機 UDID 用 `adb devices`
