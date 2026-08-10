@@ -29,8 +29,8 @@
 | **訂單** | `get_member_orders`, `member_orders_history`, `complete_order` |
 | **商品** | `product_categories`, `product_types`, `fetch_packages`, `product_create_history` |
 | **兌換** | `redeem_history` |
-| **QA 平台 · 商品**（→:8080） | `create_product`（建測試商品，20 型別）、`copy_product_preview` + `copy_product`（跨環境複製，兩段式：preview 發 confirm_token → execute 帶 token） |
-| **QA 平台 · 訂單/兌換**（→:8080） | `create_order`（建測試訂單）、`redeem_voucher`（用 voucher 兌換） |
+| **QA 平台 · 商品**（→:8080） | `create_product`（建測試商品，20 型別）、`copy_product_preview` + `copy_product`（跨環境複製，兩段式：preview 發 confirm_token → execute 帶 token）、`copy_product_verify`（唯讀：逐票種比對已複製商品與來源的成本售價/票種狀態） |
+| **QA 平台 · 訂單/兌換**（→:8080） | `create_order_preview`（列可下單套餐×item、發 confirm_token）→ `create_order_options`（選用：查 bundle 組合與場次）→ `create_order`（帶 token 下單；(pkg,item) 配對經 token 驗證，杜絕缺 itemOid 第一單必敗）、`redeem_voucher`（用 voucher 兌換） |
 | **QA 平台 · 月曆**（→:8080） | `extend_item_calendar`（延長單一套餐）、`batch_extend_item_calendar`（批次延長整個商品，不支援 OCBT 子母單） |
 
 **刻意不提供**：GMBE / PG 帳密相關 6 個 endpoint（`gmbe-credentials`、`pg-credentials`）— 涉敏感帳密，一律走 ai-studio UI，backend tool 需要的帳密會由 backend 自己讀。

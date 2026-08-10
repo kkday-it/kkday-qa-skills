@@ -1354,36 +1354,200 @@ def platform_redeem_voucher(
     )
 
 
+# ── create_order 兩段式（preview → confirm_token → 下單）──────────────────
+# 為什麼：cart_new 需要 (pkg_oid, item_oid) 成對；過去 MCP 沒有 item_oid 參數、
+# 也沒有查詢入口，model 只能不帶（→ 後端拿空 item、sku 全空、第一次下單必敗）
+# 或用猜的。做法照 copy_product 的閘：先 preview 拿真實選單，token 綁著合法的
+# (pkg, item) 配對，下單時 MCP 端先驗、不對就擋在本地，不浪費一次後端呼叫。
+
+
+@mcp.tool()
+def create_order_preview(env: str, product_oid: str) -> dict:
+    """建立測試訂單的【第一步】：列出可下單的套餐 × item 配對，回 confirm_token。
+
+    使用者說「幫我下單 / 建訂單 / create order」時，先呼叫這支拿選單，跟使用者
+    確認要哪個套餐後再呼叫 create_order。不要跳過——直接下單會因缺 item_oid 失敗。
+
+    Args:
+        env: 環境 sit / stage / sitNNN
+        product_oid: 商品 OID
+    """
+    result = _platform_call(
+        "get_pkgs", env,
+        {"productOid": str(product_oid)},
+        async_=True,
+        mcp_name="create_order_preview",
+    )
+    # get_pkgs 成功回 list[{pkg_oid, pkg_name, item_oid, min_quantity, max_quantity}]，
+    # 失敗回 {message, detail}（商品不存在 / 未上架 / 無可下單套餐）。
+    if not isinstance(result, list):
+        return result if isinstance(result, dict) else {"status": "error", "detail": str(result)[:500]}
+
+    pairs = {}
+    for entry in result:
+        pkg = str(entry.get("pkg_oid"))
+        pairs.setdefault(pkg, []).append(str(entry.get("item_oid")))
+    token = uuid.uuid4().hex
+    with _platform_preview_lock:
+        _platform_purge_previews_locked()
+        _platform_preview_cache[token] = {
+            "kind": "create_order",
+            "env": env,
+            "prod_oid": str(product_oid),
+            "pairs": pairs,
+            "ts": time.monotonic(),
+        }
+    return {
+        "status": "success",
+        "confirm_token": token,
+        "packages": result,
+        "_next_step": (
+            "把套餐清單給使用者選（一個 pkg_oid 可能有多個 item_oid，都要選）。"
+            "若要看場次或組合方案，先呼叫 create_order_options(env, product_oid, package_oid, item_oid)；"
+            "確認後呼叫 create_order(...) 帶入本 confirm_token。"
+        ),
+    }
+
+
+@mcp.tool()
+def create_order_options(
+    env: str,
+    product_oid: str,
+    package_oid: str,
+    item_oid: Optional[str] = None,
+    include_events: bool = False,
+) -> dict:
+    """建立測試訂單的【第二步・選用】：查某套餐的組合方案（bundle）與可下單場次。
+
+    純查詢、不需要 token。bundle 商品會回 combos（每個 combo 是一組可直接下單的
+    母＋子套餐選擇）；include_events=True 且帶 item_oid 時回可下單場次。
+
+    Args:
+        env: 環境 sit / stage / sitNNN
+        product_oid: 商品 OID
+        package_oid: 套餐 OID（preview 回傳清單中的 pkg_oid）
+        item_oid: item OID（查場次時必填；preview 回傳清單中的 item_oid）
+        include_events: 是否一併查可下單場次（大量場次商品會比較久）
+    """
+    combos = _platform_call(
+        "get_bundles_for_package", env,
+        {"productOid": str(product_oid), "packageOid": str(package_oid)},
+        async_=True,
+        mcp_name="create_order_options",
+    )
+    out: dict = {
+        "status": "success",
+        "is_bundle_anchor": bool(isinstance(combos, list) and combos),
+        "bundle_combos": combos if isinstance(combos, list) else [],
+        "_note": (
+            "bundle_combos 非空代表此套餐是組合商品的母層：下單時帶 bundle_package_oid 與"
+            " sub_package_oids 會把整組（母＋子）當一張訂單建立；空代表單品下單即可。"
+        ),
+    }
+    if include_events:
+        if not item_oid:
+            out["events_error"] = "查場次需要 item_oid（create_order_preview 的回傳裡有）"
+        else:
+            events = _platform_call(
+                "get_events", env,
+                {"productOid": str(product_oid), "packageOid": str(package_oid), "itemOid": str(item_oid)},
+                async_=True,
+                mcp_name="create_order_options",
+            )
+            out["events"] = events if isinstance(events, list) else []
+    return out
+
+
 @mcp.tool()
 def create_order(
     env: str,
     product_oid: str,
     package_oid: str,
+    confirm_token: str,
+    item_oid: Optional[str] = None,
     qty: int = 1,
     order_count: int = 1,
     go_date_shift: int = 1,
+    lst_go_dt: Optional[str] = None,
+    event_time: Optional[str] = None,
+    bundle_package_oid: Optional[str] = None,
+    sub_package_oids: Optional[list] = None,
 ) -> dict:
-    """建立測試訂單（QA 平台）。
+    """建立測試訂單（QA 平台）的【最後一步】。
+
+    ⚠️ 必須先呼叫 create_order_preview 取得 confirm_token，否則拒絕——這是為了保證
+    (package_oid, item_oid) 是真實存在且可下單的配對，而不是猜的（猜錯第一單必敗）。
 
     Args:
-        env: sit / stage
-        product_oid: 商品 OID
-        package_oid: 套餐 OID
+        env: sit / stage / sitNNN（須與 preview 相同）
+        product_oid: 商品 OID（須與 preview 相同）
+        package_oid: 套餐 OID（preview 清單內）
+        confirm_token: create_order_preview 回傳的 token（不可自行編造）
+        item_oid: item OID（preview 清單內；該套餐只有一個 item 時可省略、自動帶入）
         qty: 每筆訂單數量（預設 1）
-        order_count: 下單筆數（預設 1）
-        go_date_shift: 出發日為幾天後（預設 1）
+        order_count: 下單筆數 1-20（預設 1）
+        go_date_shift: 出發日為幾天後（預設 1；帶 lst_go_dt 時忽略）
+        lst_go_dt: 指定出發日 YYYY-MM-DD（選填）
+        event_time: 指定場次 HH:MM（選填；來自 create_order_options 的 events）
+        bundle_package_oid: 組合方案 oid（下 bundle 單時帶；來自 create_order_options）
+        sub_package_oids: 組合方案的子套餐 oid 清單（與 bundle_package_oid 一起帶）
     """
-    return _platform_call(
-        "create_order", env,
-        {
-            "productOid": str(product_oid),
-            "packageOid": str(package_oid),
-            "qty": qty,
-            "order_count": order_count,
-            "go_date_shift": go_date_shift,
-        },
-        async_=True,
-    )
+    with _platform_preview_lock:
+        _platform_purge_previews_locked()
+        entry = _platform_preview_cache.get(confirm_token)
+        if not entry or entry.get("kind") != "create_order":
+            return {
+                "status": "rejected",
+                "detail": (
+                    "confirm_token 無效或已過期（15 分鐘 TTL、單次有效）。請重新呼叫 "
+                    "create_order_preview(env, product_oid) 取得新 token。"
+                ),
+            }
+        if entry["env"] != env or entry["prod_oid"] != str(product_oid):
+            return {
+                "status": "rejected",
+                "detail": "confirm_token 與 env/product_oid 不符，請對同一組商品重新 create_order_preview。",
+            }
+        pairs = entry.get("pairs") or {}
+        pkg_items = pairs.get(str(package_oid))
+        if pkg_items is None:
+            return {
+                "status": "rejected",
+                "detail": f"package_oid={package_oid} 不在可下單清單中，可選：{sorted(pairs)}",
+            }
+        # item_oid：單一 item 自動補（唯一無歧義）；多個絕不代挑，列候選請呼叫端選。
+        if item_oid is None and not bundle_package_oid:
+            if len(pkg_items) == 1:
+                item_oid = pkg_items[0]
+            else:
+                return {
+                    "status": "rejected",
+                    "detail": f"套餐 {package_oid} 有多個 item，請指定 item_oid，可選：{pkg_items}",
+                }
+        if item_oid is not None and item_oid not in pkg_items:
+            return {
+                "status": "rejected",
+                "detail": f"item_oid={item_oid} 不屬於套餐 {package_oid}，可選：{pkg_items}",
+            }
+        _platform_preview_cache.pop(confirm_token, None)
+
+    tool_kwargs = {
+        "productOid": str(product_oid),
+        "packageOid": str(package_oid),
+        "qty": qty,
+        "order_count": order_count,
+        "go_date_shift": go_date_shift,
+    }
+    if item_oid is not None:
+        tool_kwargs["itemOid"] = str(item_oid)
+    if lst_go_dt:
+        tool_kwargs["lstGoDt"] = str(lst_go_dt)
+    if event_time:
+        tool_kwargs["eventTime"] = str(event_time)
+    if bundle_package_oid:
+        tool_kwargs["bundlePackageOid"] = str(bundle_package_oid)
+        tool_kwargs["subPackageOids"] = [str(x) for x in (sub_package_oids or [])]
+    return _platform_call("create_order", env, tool_kwargs, async_=True)
 
 
 @mcp.tool()
@@ -1525,6 +1689,39 @@ def copy_product(
         },
         async_=True,
         mcp_name="copy_product",
+    )
+
+
+@mcp.tool()
+def copy_product_verify(
+    target_env: str,
+    source_env: str,
+    source_prod_oid: str,
+    target_prod_oid: str,
+    pkg_map: Optional[dict] = None,
+) -> dict:
+    """比對「已複製的商品」與其來源：逐票種核對成本售價與票種啟用狀態（唯讀）。
+
+    copy_product 複製完會自動比對一次（差異在 warnings）；這支用於事後再確認、
+    或驗證更早之前複製的商品。回 verify_status=identical/different 與人話 diffs。
+
+    Args:
+        target_env: 目標商品所在環境 — sit / stage / sitNNN
+        source_env: 來源商品所在環境 — sit / stage / sitNNN
+        source_prod_oid: 來源商品 OID
+        target_prod_oid: 目標（複製出來的）商品 OID
+        pkg_map: 選填，{來源 pkg_oid: 目標 pkg_oid}；不帶則依套餐名稱自動配對
+    """
+    tool_kwargs = {
+        "source_environment": source_env,
+        "source_prod_oid": str(source_prod_oid),
+        "target_prod_oid": str(target_prod_oid),
+    }
+    if pkg_map:
+        tool_kwargs["pkg_map"] = pkg_map
+    return _platform_call(
+        "copy_product_verify", target_env, tool_kwargs, async_=True,
+        mcp_name="copy_product_verify",
     )
 
 
