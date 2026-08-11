@@ -50,9 +50,32 @@ prompts/            啟動 prompt 範本
 - 不確定時：列出候選 skill，讓使用者選
 
 ### Agent 角色的選擇
+
+#### 🔴 收到 `KQT-T…` 時的第一步：先查 repo 有沒有這個 case
+
+**在 spawn 任何 agent 之前先跑這行**，結果決定走 create 還是 fix —— 兩條路不一樣，選錯會做白工：
+
+```bash
+grep -rl "<ID>:" <clone>/QATestData/cases/yaml    # 有命中 = 既有 case
+```
+
+| grep 結果 | 走哪條 | 為什麼 |
+|---|---|---|
+| **沒命中**（新 case） | create 路線：`qa-case-planner` → `qa-case-automator` → `qa-case-fidelity-reviewer` | 前置怎麼建、關鍵斷言驗什麼還沒決定，planner 要先攤開給人確認 |
+| **有命中**（既有 case） | **fix 路線：先重現 → `qa-case-automator`（帶失敗訊息）→ `qa-case-fidelity-reviewer`，跳過 planner** | 規劃早就做過也寫進 code 了。重跑 planner 只會產出一份跟現況打架的計畫，automator 還可能照計畫重造一份既有實作 |
+
+fix 路線的重現步驟不可省：**先照 `qa-test-runner` 跑一次拿實際 log**，再把失敗訊息一起交給
+automator。沒有 log 就 spawn automator，它只能用猜的，改動範圍會失控。
+
+fix 路線**唯一該回頭找 planner 的情況**：失敗根因不是壞掉，而是 case 規格本身變了、或要新增一個
+還沒覆蓋的平台 —— 那等於重新設計，回 create 路線。
+
+**fix 路線仍然要用 `qa-case-automator` 改檔**，不可主對話 inline 改：實作檔被
+`agent_only_impl_guard.py` 綁定只有 automator 能寫，且兩個 Stop gate 靠它寫 claimed 檔才會 arm。
+
 | 任務類型 | 用哪個 agent |
 |---|---|
-| **TCMS case 自動化實作**（`KQT-T…`） | `qa-case-planner` → `qa-case-automator` → `qa-case-fidelity-reviewer` |
+| **TCMS case 自動化實作**（`KQT-T…`） | 先跑上面那道 grep gate，再依 create / fix 分流 |
 | 拆任務、寫 plan、分配工作 | `qa-planner` |
 | 撈資料、調查、整合背景 | `qa-investigator` |
 | 寫 code、改文件、跑測試 | `qa-implementer` |
@@ -60,12 +83,18 @@ prompts/            啟動 prompt 範本
 | 獨立挑剔、扮演 critic | `qa-evaluator` |
 
 **第一列優先於「寫 code → `qa-implementer`」。** 只要任務是把某個 `KQT-T…` 實作成自動化測試，
-一律走這三隻，**不要主對話自己 inline 寫**，也不要交給 `qa-implementer`：
+一律走這條鏈，**不要主對話自己 inline 寫**，也不要交給 `qa-implementer`：
 
 ```
+# create（grep 沒命中）
 Agent(subagent_type='qa-case-planner',           prompt='case=KQT-T… platform=web|mweb|ios|android')
   → 與人確認計畫 →
 Agent(subagent_type='qa-case-automator',         prompt='case=KQT-T…')
+Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=KQT-T…')
+
+# fix（grep 有命中）
+先用 qa-test-runner 跑一次重現，拿到失敗訊息 →
+Agent(subagent_type='qa-case-automator',         prompt='case=KQT-T… 既有實作，失敗訊息=<log 摘要>，最小改')
 Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=KQT-T…')
 ```
 
