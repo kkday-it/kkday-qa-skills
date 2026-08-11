@@ -3,8 +3,9 @@
 ## 測試執行指令
 
 ```bash
-cd /Users/eden.lai/Downloads/qa_test/test/kkday-QA-automation
-source venv/bin/activate && cd QATest/src && python -m qatest run --caseid <CASE_ID> --platform <PLATFORM>
+# <REPO> = 你本機 kkday-QA-automation clone 的絕對路徑
+source <REPO>/venv/bin/activate && cd <REPO>/QATest/src \
+  && python -m qatest run --caseid <CASE_ID> --platform <PLATFORM>
 ```
 
 - PLATFORM: `android`, `ios`, `web`
