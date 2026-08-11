@@ -38,12 +38,12 @@ description: |
 
 1. **偵測** — 從常見位置找：
    ```bash
-   for d in "$HOME/Downloads/qa_test/test/kkday-QA-automation" \
-            "$HOME/kkday-QA-automation" \
-            "$PWD/kkday-QA-automation" \
-            "$PWD"; do
+   # 從 cwd 往上找，再掃常見的家目錄位置（各人 clone 位置不同，別寫死路徑）
+   d="$PWD"; while [ "$d" != "/" ]; do
      [ -f "$d/QATest/src/qatest/__init__.py" ] && echo "FOUND: $d" && break
+     d="$(dirname "$d")"
    done
+   ls -d "$HOME"/**/kkday-QA-automation "$HOME"/kkday-QA-automation 2>/dev/null
    ```
    若使用者目前 cwd 就是 framework root，直接用 `$PWD`。也可以從當前 cwd 自動往上找（含 `QATest/src` 與 `venv`）的版本（見 Step 2）。
 
@@ -81,15 +81,25 @@ description: |
 **web/mweb/ios/android 跑單一 case,一律先用 wrapper,不要自己拼指令**：
 
 ```bash
-~/.claude/skills/qa-test-runner/scripts/run_case.sh <caseid> <platform>
+QA_REPO=/abs/path/to/kkday-QA-automation \
+  ~/.claude/skills/qa-test-runner/scripts/run_case.sh <caseid> <platform> [device]
 # 例：run_case.sh KQT-T37931 web
+# 例：QA_REPO=<app clone 絕對路徑> run_case.sh KQT-T37193 android <adb serial 或 ip:5555>
 ```
 
-它把每次都會漏的四件事綁死在腳本內,結構上不可能漏：
+它把每次都會漏的六件事綁死在腳本內,結構上不可能漏：
 1. `export HEADLESS=1`（web/mweb 不彈實體瀏覽器）
 2. **正確的 venv**（見下方陷阱）
 3. web/mweb 自動加 `--use_driver playwright`
 4. 前景跑（qatest background scheduler 不可靠）
+5. **不猜 clone**：`QA_REPO` 明示 > cwd 所在 clone；都沒有就**失敗並列出候選**，不再依序猜
+6. **跑前 grep yaml 確認 case 真的在這個 clone**；android 額外先清 appium server apk
+
+> 🔴 **`QA_REPO` 一定要明示（多 clone 環境）**：很多人本機同時有數個 kkday-QA-automation clone
+> （例如 web / app / 測試各一份），**各在不同 branch**。抓錯 clone 的下場不是報錯，是
+> **`0 failed, 0 passed (total 0 cases)` —— 長得跟通過一模一樣，其實根本沒跑**。
+> 看到 `total 0 cases` 一律當「沒跑到」，先看 log 開頭的 `crootdir:` 指向哪個 clone。
+> （wrapper 現在會先 grep yaml 擋掉這種情形，但手拼指令時沒人擋你。）
 
 > **為什麼要 wrapper 而不是「記得照 skill 做」**：HEADLESS、venv 這些規範就算白紙黑字寫在本 skill,靠 agent 執行時記得讀還是會漏（實測會）。綁進單一入口 = 把「漏」變成結構上不可能,而不是靠自律。
 
@@ -161,6 +171,48 @@ source "$REPO/venv/bin/activate" && cd "$REPO/QATest/src" && python -m qatest ru
   - iOS：禁止 `xcrun simctl boot`、禁止任何 simulator UDID；取實體機 UDID 用 `idevice_id -l` 或 `xcrun devicectl list devices`
   - Android：禁止 `emulator -avd`、禁止 AVD UDID；取實體機 UDID 用 `adb devices`
   - 若實體機沒接上，直接告訴用戶接設備，不要 fallback 到 simulator/emulator
+
+#### 🔴 Android 跑前必做：移除殘留的 appium server apk
+
+手機上留著**上一輪／別的 appium 版本裝的 server apk**，版本與 driver 不符時，
+UiAutomator2 的 instrumentation process 會直接崩，症狀是跑到一半噴：
+
+```
+'POST /element' cannot be proxied to UiAutomator2 server because the
+instrumentation process is not running (probably crashed)
+... socket hang up
+```
+
+**它長得像 case 壞了或 locator 找不到（前面常伴隨一串 NoSuchElementError），其實是環境。**
+每輪跑 android 前先移除這三個 package，讓 appium 自己重裝對應版本：
+
+```bash
+for pkg in io.appium.uiautomator2.server.test io.appium.uiautomator2.server io.appium.settings; do
+  adb -s <serial> uninstall "$pkg"
+done
+```
+
+`run_case.sh` 走 android 時已自動做這件事（`SKIP_APPIUM_CLEAN=1` 可跳過，除非確知不需要別設）。
+**手拼指令時要自己補。** 同一支手機同時有 USB serial 與 wifi `<ip>:5555` 時，`adb devices`
+會算成兩個 device —— 必須明示 serial，別讓它猜。
+
+#### 🔴 丟背景之後：先驗證「真的起來了」才可以說在跑
+
+同一類「以為在跑其實沒起來」踩過三次（每次都白等一輪），三個成因與防法：
+
+| 成因 | 症狀 | 防法 |
+|---|---|---|
+| 抓錯 clone | `0 failed, 0 passed (total 0 cases)` 假綠 | `QA_REPO` 明示；看 log 開頭 `crootdir:` |
+| `... \| tee log &` | log 0 bytes、程序不存在、**完全無聲** | 用 `nohup ... > /tmp/x.log 2>&1 &`，不要 pipe |
+| 相對路徑 + cwd 漂掉 | `(eval):source:1: no such file or directory: venv/bin/activate`、`pid=0` | **一律絕對路徑** |
+
+Bash tool 的 session cwd 會被前一次呼叫的 `cd` 帶走，`source venv/bin/activate` 這種相對寫法
+會在下一次呼叫靜默失敗。**送出後必須驗這兩件事，缺一就是沒跑**：
+
+```bash
+ps aux | grep -c "[q]atest run"        # 要 >= 1
+ls -l /tmp/<log>                       # 要非 0 bytes
+```
 
 觀察輸出，注意 PASS/FAIL 結果。
 
@@ -235,7 +287,7 @@ group = {"web": "web", "mweb": "web", "android": "mobile", "ios": "mobile"}.get(
 
 🔴 **但上面兩點都對了還是噴，就往下查第三個原因：venv 的 editable install 指到「別的 checkout」。**
 
-本機常有多個 kkday-QA-automation clone（`~/Downloads/qa_test/{app,test,web}/...`）。某個 checkout 的 venv 可能被 `pip install -e .` 註冊到**另一個 checkout** 的 source，於是 `venv/bin/python -m qatest` 讀的 code 和 case data 全來自別份 —— **你在這份改的 yaml 根本沒被載入**，只剩另一份裡的 web 版 case，症狀跟「載錯平台」一模一樣。
+很多人本機同時有數個 kkday-QA-automation clone（web / app / 測試各一份，各在不同 branch）。某個 checkout 的 venv 可能被 `pip install -e .` 註冊到**另一個 checkout** 的 source，於是 `venv/bin/python -m qatest` 讀的 code 和 case data 全來自別份 —— **你在這份改的 yaml 根本沒被載入**，只剩另一份裡的 web 版 case，症狀跟「載錯平台」一模一樣。
 
 先確認 editable install 實際指向哪裡：
 
