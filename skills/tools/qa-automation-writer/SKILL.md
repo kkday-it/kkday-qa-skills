@@ -163,6 +163,32 @@ grep -rn "KQT-T35108" QATestData/cases/yaml/
 讀 case steps，規劃需要哪些 page object element / test step / case data，依下方各項規範草擬。此階段**允許先依經驗寫初版 locator**。
 **必須一次把整個 case 規劃/草擬完成**，不要邊寫一個 element 就驗一個——驗證是下一階段「批次」做。
 
+#### 🔴 App case 的 pre-condition 一律要鎖語系（即使這張 case 跟語系無關）
+
+新增 android / ios case 時，pre-condition **第一件事**就是鎖語系，位置放在 `logout_account` 之前：
+
+```yaml
+      pre-condition:
+            - change_language:
+                    language: zh_tw
+            - logout_account
+            - go_to_switch_account_page
+            - login_with_email_account
+```
+
+為什麼這是硬性規定，而不是「有需要再加」：
+
+- `change_language` **只切不還原**，`AppConfig.language` 全 repo 只有一處寫入且 case 之間**沒有 reset** —— 它是**單向 latch**。class 上的 `language: str = "zh_tw"` 只是 process 啟動時的初始值，批次裡只要前面任何一張鎖了別的語系，**後面沒鎖的全部繼承它**。
+- 沒鎖的 case **單張跑一定會綠**（繼承初始 `zh_tw`），所以你交付時不會發現問題；**進批次才炸**，而且炸的樣子是 `TimeoutException`／`NoSuchElement`，**跟 locator 過期一模一樣**，接手的人會往完全錯的方向修。
+- 你新加的 i18n key **多半只補了 `zh_tw`**（這是常態），其他 locale 一缺，`i18N.get()` 就回傳 key 本身，locator 變成去畫面上找英文 key 字面字串。
+- repo 慣例：AppRegression 已有八成的 case 這樣寫。
+
+例外：**case 本身就是在驗某個語系／幣別**（如「在 Français 下下單」）—— 那就鎖那個語系，但**必須確認該 locale 在 `QATestData/data/i18n/<platform>/<locale>.yaml` 裡、這張 case 會走到的 key 都有值**（盤點法見下面 i18n 段）。這種 case 同時也是**別人的污染源**，鎖好自己就不會害到後面。
+
+> 語系順序另有一個坑：**先切語系再切幣別**。app 選 `Français` 會連帶把地區切到法國、幣別跟著變 EUR，反序會讓先設好的幣別被語系切換蓋掉。
+>
+> 已經寫好卻沒鎖、事後在批次炸掉的診斷與修法，見 `qa-test-runner` SKILL.md「失敗分析 → E. 語系污染」（含**修完不能在 zh_tw 下重跑驗證**的陷阱）。
+
 ### 階段 2 — 元素驗證（強制、批次）
 
 **分層原則（為什麼這階段這樣設計）：** 具體 locator 是**易變資料**（前端改個 class 就失效），

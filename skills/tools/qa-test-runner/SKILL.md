@@ -235,6 +235,10 @@ ls -l /tmp/<log>                       # 要非 0 bytes
 - `NoSuchElementException` / `ElementNotFound` / `TimeoutException` 等找不到元素的錯誤
 - 元素的 XPath 或 locator 過時
 
+🔴 **動手改 locator 前先排除兩個「會偽裝成 locator 過期」的成因**，否則你會把對的東西改壞：
+- **批次全掛、單張跑會綠** → 語系污染，見下面 [E](#e-語系污染--批次全掛單張跑會綠症狀偽裝成-locator-過期)
+- **locator 在找一個英文 key 名** → i18n 缺 key，見下面 C
+
 修復步驟：
 1. 找到失敗步驟中使用的 page object element
 2. 取得當前畫面結構：
@@ -306,7 +310,61 @@ PYTHONPATH=<你這份>/QATest/src caffeinate -i venv/bin/python -m qatest run --
 
 根因修法是在該 checkout 重跑 `pip install -e .`，但那會動到共用環境 —— **要改先問人**，不要在跑 case 的過程中順手改掉別人的 venv。
 
+#### E. 語系污染 —— 「批次全掛、單張跑會綠」，症狀偽裝成 locator 過期
+
+🔴 **看到「同一批 case 全掛在同一個 step，但單張重跑就過」，先查這個，不要去改 locator。**
+它不是 flaky、不是 locator 過期，是**前一張 case 留下的語系**。改 locator 只會把對的東西改壞。
+
+判別（30 秒內可完成，別急著開 Appium 看畫面）：
+
+```bash
+# 1) 失敗那張的 pre-condition 有沒有鎖語系？沒有 change_language 就高度可疑
+sed -n '/^<CASE_ID>:/,/^[A-Za-z]/p' QATestData/cases/yaml/ui/AppRegression/<檔>.yaml | grep -A1 change_language
+
+# 2) log 裡的 locale 是什麼？出現非預期語系就是中了
+grep -m5 "Translation not found" <debug_folder>/*.log
+
+# 3) 這批誰是污染源（找同批鎖了非 zh_tw 語系的 case）
+grep -rn -A1 "change_language" QATestData/cases/yaml/ui/AppRegression/ | grep -B1 -v "zh_tw"
+```
+
+機制（三個既有條件疊起來才會炸，缺一不可）：
+
+1. **`change_language` 只切不還原** —— `test_steps/kkday/app/settings/settings.py` 的 `change_language` 沒有任何 restore；`AppConfig.language`（`app/common.py` 的 `AppConfig(ThreadLocalConfig)`）**全 repo 只有一處寫入**，且 case 之間**沒有 reset**。class 上的 `language: str = "zh_tw"` 只是 **process 啟動時的初始值**，第一張切過語系之後就再也回不去 —— 是**單向 latch**，不是每張都會重設的預設值。
+   > ⚠️ 這裡最容易想錯：「沒切的預設不就是 zh_tw 嗎？」—— 對，但那只在**還沒有人切過**的時候成立。批次裡只要前面任何一張鎖了別的語系，後面沒鎖的全部繼承它。
+2. **缺 key 不拋錯，回傳 key 本身** —— 見下面 C。於是 locator 拿著英文 key 去畫面上找字面字串，逾時收場，**外觀跟 locator 過期一模一樣**。
+3. **該語系的 i18n key 沒補齊** —— 多數 key 只有 `zh_tw` 有值（新功能上 case 時常只補 zh_tw）。
+
+修法：**在那張 case 的 pre-condition 補鎖語系**，不是去補該 locale 的翻譯。
+
+```yaml
+      pre-condition:
+            - change_language:
+                    language: zh_tw
+            - logout_account
+```
+
+為什麼不補翻譯（四個理由，發 PR 時直接寫進 description，reviewer 一定會問）：
+
+- 鎖語系**與執行順序無關**，一次修好且不會再被別的 case 影響；補某個 locale 只治這一次的排列，換個順序照樣掛。
+- **repo 既有慣例**：AppRegression 有八成的 case 已經在 pre-condition 鎖語系。
+- **`zh_tw` 是唯一翻譯完整的 locale**，其他 locale 動輒缺數十顆 key。
+- **多數 locale 拿不到合法 ground truth**（Android 走 Lokalise 執行期 OTA、repo 內沒有靜態檔；也禁止從 iOS 照抄）——硬補等於自行翻譯。詳見下面 C 的取值順序。
+
+🔴 **驗證陷阱：修完在 zh_tw 狀態下重跑，等於什麼都沒驗到。**
+`change_language` 發現當前已是目標語系會**短路 return**（log 印「app 當前語系已是 zh_tw，跳過切語系流程」）。而這些 case 本來單張跑就是綠的 —— 所以那個綠不能當成「鎖語系有效」的證據。要真的驗到，**必須先把 App 切成污染語系再跑**，並確認 log：
+
+| 判準 | 要求 |
+|---|---|
+| `跳過切語系流程` | **0 次**（出現就代表起點已是目標語系，本次驗證無效） |
+| `click_radio_button` | 有出現（代表真的進 picker 選過） |
+| `Translation not found` | 0 次 |
+
+（手動切語系時：Compose 畫面上 `uiautomator dump` 可能直接回 `Killed`，改用 `adb exec-out screencap` 截圖判讀 + `input tap`。切完不必擔心被洗掉 —— 框架不帶 apk 路徑、`.env` 沒設 `NO_RESET`／`FULL_RESET`，Appium 不會 `pm clear`。）
+
 #### C. 多語系（i18n）缺 key — **一次盤完才重跑**
+
+> 先確認不是上面 E 那種「語系污染」：如果這個 locale 根本不該出現在這張 case 上，正解是鎖語系，不是把缺的 key 補出來。
 
 特徵：
 - locator 變成去找「字面上的 key 名」，例如 `//XCUIElementTypeStaticText[contains(@name, 'credit_card_title')]`
