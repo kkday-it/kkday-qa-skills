@@ -226,7 +226,7 @@ ls -l /tmp/<log>                       # 要非 0 bytes
 
 1. **讀取終端輸出的錯誤訊息** — 找出失敗的步驟和異常類型
 2. **定位失敗的 test step 函式** — 從 YAML 案例的 steps 找到對應的 Python 函式
-3. **Mobile 一律加讀 Appium server log，不要只看 `qatest.log`** — 「某個分支完全沒動作」「元素明明在畫面上卻 `located failed`」時，真正的錯誤只寫在 Appium server log 裡。最常見是 **uiautomator2 對合法 XPath 回 500**（`ArrayList$ListItr cannot be cast to ...NodeType`，通常是 `following::`／`preceding::` 接 `ancestor::` 的反向軸串接）：元素永遠 resolve 不到 → `is_present` 恆為 False → 分支靜默 no-op；`qatest.log` 只會看到一直 swipe，容易誤判成「文字沒抓到」而一路改錯方向。修法與「在真機 session 上實打候選 locator」的做法見 `qa-automation-writer` SKILL.md「階段 2 — App / Android」。
+3. **Mobile 一律加讀 Appium server log，不要只看 `qatest.log`** — 「某個分支完全沒動作」「元素明明在畫面上卻 `located failed`」時，真正的錯誤只寫在 Appium server log 裡。最常見是 **uiautomator2 對合法 XPath 回 500**（`ArrayList$ListItr cannot be cast to ...NodeType`，肇因是用了 `following::`／`preceding::` —— **單獨用就會炸，不是只有接 `ancestor::` 才會**，別因為「我沒串 `ancestor::`」就排除這個可能）：元素永遠 resolve 不到 → `is_present` 恆為 False → 分支靜默 no-op；`qatest.log` 只會看到一直 swipe，容易誤判成「文字沒抓到」而一路改錯方向。修法與「在真機 session 上實打候選 locator」的做法見 `qa-automation-writer` SKILL.md「階段 2 — App / Android」。
 4. **分類失敗原因**：
 
 #### A. 元件路徑更改（自動修復）

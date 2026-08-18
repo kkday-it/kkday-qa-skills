@@ -298,8 +298,21 @@ bootstrap 完成後驗可用性（`verify_locator.py` 能跑 / `adb devices` / `
   # 改成只用 descendant 述詞就 n=1：
   //android.view.View[@clickable='true'][.//android.widget.TextView[contains(@text, '請填寫資料')]]
   ```
-  → **避免 `following::` / `preceding::` 接 `ancestor::` 的反向軸串接**（尤其再帶位置述詞 `[1]`）；
-  改用 `[.//...]` / `[descendant::...]` 述詞直接選中目標容器。
+  → 🔴 **uiautomator2 上一律不要用 `following::` / `preceding::` —— 單獨用也會炸，不是只有接
+  `ancestor::` 才會。** 這條原本只寫「反向軸串接才有問題」，結果讓人推論出「我沒接 `ancestor::`，
+  那我安全」而再踩一次（2026-08-17，KQT-T18687）：
+  ```
+  # 同樣在 dump 上唯一命中，實機同樣回 500 —— 這條裡沒有任何 ancestor::：
+  //android.widget.TextView[@text='為你推薦']/following:: android.view.View[1]
+  # 改成 following-sibling:: 就打得中（bounds=[42,1460][1038,1759], clickable=true）：
+  //android.widget.TextView[@text='為你推薦']/following-sibling::android.view.View[@clickable='true'][1]
+  ```
+  改法看目標在哪一層：**同層 → `following-sibling::`；跨層 → `[.//...]` / `[descendant::...]`
+  述詞直接選中目標容器**。這兩種都沒踩過 500。
+
+  ⚠️ **這是 uiautomator2（Android）限定，不要拿去「修」iOS。** XCUITest 對 `following::` 沒問題，
+  `pages/mobile/ios/search_results_page.py` 就有一條 `following:: XCUIElementTypeCell[1]` 長期是綠的，
+  照這條規則去改它只會把好的弄壞。
 
   **實打的做法**（畫面就停在目標頁時，別浪費一輪 13~20 分的 E2E 去試）：自起一個 Appium server，用
   `noReset:true` + `autoLaunch:false` attach 當前畫面，一次把整段互動（點入口 → sheet 內每個元素 →
