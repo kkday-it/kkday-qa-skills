@@ -1,0 +1,124 @@
+---
+name: report-url-dispatch
+description: 使用者貼 ai_studio test-suite report 的 URL（`autotest-service.sit.kkday.com:8081/ai_studio/test-suites/report?...uuid=...`，帶或不帶 `caseid`）時觸發。把 URL 解析成 case + platform + 失敗 log，先分診判斷是不是 flaky，重現確認後才派工給 qa-case-automator 修。這只是多一種入口——手打 `KQT-T7562 android` 仍然照舊走 `qa-test-runner`，兩種並存。
+---
+
+# Report URL → 派工
+
+## 這個 skill 解決什麼
+
+以前要修一個跑掛的 case，使用者得自己從 report 頁面讀出 case id、自己知道那個 suite 是哪個平台，
+再手打 `KQT-T7562 Android` 給 agent。現在直接貼 URL 就好——platform 從 suite detail 自動推、
+失敗 log 從 report 自動撈。
+
+**但不會拿到 URL 就直接改 code。** 失敗有可能是 flaky（或環境／語系問題），盲目修會把對的東西改壞。
+流程一定是：解析 → 分診 → 重現確認 → 才修。
+
+## 觸發樣態
+
+🔴 **這個 skill 不排擠既有輸入方式**。使用者打 `KQT-T7562 android`（case id + platform）時
+**照舊走 `qa-test-runner`**，不要因為這個 skill 存在就要求對方改貼 URL。兩種入口並存，
+差別只在 URL 這條能自動補出 platform 跟失敗 log。
+
+| 使用者貼的 | mode | 處理 |
+|---|---|---|
+| URL 帶 `&caseid=KQT-T7562` | `single` | 只處理那一個 case |
+| URL 只有 `uuid`（可能帶 `reportFail=1`） | `batch-fail` | 處理該 report **所有 Fail** 的 case，**循序**一個一個做 |
+| 裸 uuid `a4f60e7d-…` | 同上 | script 也吃 |
+
+## 步驟
+
+### 1. 解析 URL（唯一入口，不要自己拼 API）
+
+```bash
+python3 ~/.claude/skills/report-url-dispatch/scripts/resolve_report.py "<貼進來的 URL>"
+# 要餵給程式時加 --json；要完整 log 加 --full
+```
+
+輸出含：suite title、**platform**、device、environment、run status，以及每個目標 case 的
+`fail_function`、步驟鏈、`terminal_output`、runner 上的 `log_file_path`。
+
+解析鏈路（platform 是 report 本身沒有的，必須繞 suite detail 才拿得到）：
+
+```
+URL --uuid--> /api/test-suite/cached-report/<run_uuid>  → cases / terminal_output / fail_function
+         └--> data.test_suite_uuid
+              └--> /api/test-suite/cached-suite-detail/<suite_uuid> → platform / device / environment
+```
+
+🔴 **report 還在跑時（`still_running: true`）fail 清單會繼續長**。script 會標警告。
+batch 模式遇到這種，先把當下這批做完，做完再重跑一次 script 看有沒有新增，別假設第一次撈到的就是全部。
+
+### 2. 分診——先判斷，不要動 code
+
+拿 `terminal_output` 對照 `qa-test-runner` SKILL.md「失敗分析」的 A~E 分類先下一個假設：
+
+| 類 | 特徵 | 是不是該改 code |
+|---|---|---|
+| A 元件路徑更改 | `NoSuchElementException` / `TimeoutException` / locator 過期 | 可能，但先排除 C、E |
+| B 流程更改 | 元素在、互動結果不符預期、步驟少了或多了 | **不自動修**，回報使用者決定 |
+| C i18n 缺 key | locator 在找一個英文 key 名 | 補 yaml，不是改 locator |
+| D 載到別平台那份 case | app case 噴 ChromeDriver 錯誤（或反之） | 不是 driver 問題，看 `case.platform` |
+| E 語系污染 | **批次全掛、單張跑會綠** | **不改 locator**，改了就是把對的東西改壞 |
+
+另外標記 **flaky 嫌疑**（這是不派工的主要理由）：
+- 錯誤是 timeout／等待類，而非「元素完全不存在」
+- 同 suite 其他同類 case 都過
+- 斷言訊息像時序問題（拿到空值 / 舊值，而不是拿到錯的值）
+- 這個 case 前幾天在同 suite 是 Pass 的
+
+### 3. 重現——跑一次確認真的壞
+
+照 `qa-test-runner` 用 script 給的 platform 跑該 case（**不是** report 上跑測機那台，是本機）：
+
+```bash
+~/.claude/skills/qa-test-runner/scripts/run_case.sh <caseid> <platform>
+```
+
+App（android/ios）記得 qa-test-runner 那邊的前置：清殘留 appium、`export ANDROID_HOME`、
+iOS 包 `caffeinate`。丟背景跑要驗證真的起來（`total 0 cases` 是沒跑，不是綠）。
+
+| 重現結果 | 動作 |
+|---|---|
+| **失敗，且失敗點跟 report 一致** | 確認真壞 → 進第 4 步派工 |
+| **失敗，但失敗在別的地方** | report 那個 log 已經過時，用**本機這次**的 log 當派工依據 |
+| **Pass** | 判定 **flaky / 環境**，🔴 **不派 automator、不改 code**，回報使用者：case、report 上的錯、本機重現過了。要不要再跑一次確認由使用者決定 |
+
+### 4. 派工給 qa-case-automator
+
+這些 case 一定是**既有 case**（跑得出 report 就代表已實作），所以照 CLAUDE.md 走 **fix 路線**：
+**跳過 `qa-case-planner`**，直接 automator。重跑 planner 只會產出跟現況打架的計畫。
+
+```
+Agent(subagent_type='qa-case-automator',
+      prompt='case=<KQT-T…> platform=<platform> 既有實作，最小改。
+              report 失敗訊息=<terminal_output 摘要>
+              本機重現失敗訊息=<第 3 步的 log 尾段>
+              分診假設=<A/B/C/D/E 哪一類>')
+Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=<KQT-T…>')
+```
+
+**不可在主對話 inline 改實作檔**：實作路徑被 `agent_only_impl_guard.py` 綁定只有 automator 能寫，
+且兩個 Stop gate 靠它寫 claimed 檔才會 arm。
+
+唯一該回頭找 planner 的情況：根因不是壞掉，而是 case 規格本身變了、或要新增沒覆蓋的平台。
+
+### 5. batch-fail 模式：循序，不要並行
+
+同一個 report 的 fail case **同平台、同一台裝置**，並行會搶 appium / 裝置，全部一起爛。
+一次一個：分診 → 重現 → 修 → 下一個。
+
+每做完一個回報一行進度（case、判定、有沒有改 code），全部做完再給總表：
+
+| case | 分診 | 重現 | 處置 |
+|---|---|---|---|
+| KQT-T7562 | A locator | 重現 | 已修，automator + fidelity 過 |
+| KQT-T7556 | flaky 嫌疑 | Pass | 未改 code，待人判斷 |
+
+## 注意
+
+- report 的 `log_file_path` 指的是**跑測機器（qateam1）**上的路徑，本機不存在、服務也沒開檔案下載 API。
+  能用的只有 `terminal_output`（已含失敗函式、行號、斷言訊息），多數時候夠分診。
+- report API **不提供任何截圖**——case 欄位裡沒有 screenshot，前端也沒有 image/artifact endpoint。
+  要畫面只能自己重現時抓。
+- API 無需認證，內網直接 GET。

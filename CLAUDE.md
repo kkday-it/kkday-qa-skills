@@ -51,6 +51,13 @@ prompts/            啟動 prompt 範本
 
 ### Agent 角色的選擇
 
+#### 收到 ai_studio report URL 時：走 `report-url-dispatch`
+
+貼進來的是 `autotest-service.sit.kkday.com:8081/ai_studio/test-suites/report?...uuid=…`（帶或不帶
+`caseid`）→ 載 `report-url-dispatch` skill，**不要自己拼 API、也不要問使用者是哪個平台**（platform
+從 suite detail 推得出來）。它會解析出 case + platform + 失敗 log，先分診判 flaky、重現確認，
+才接到下面的 fix 路線。這類 case 一律是既有 case，跳過 grep gate 與 planner。
+
 #### 🔴 收到 `KQT-T…` 時的第一步：先查 repo 有沒有這個 case
 
 **在 spawn 任何 agent 之前先跑這行**，結果決定走 create 還是 fix —— 兩條路不一樣，選錯會做白工：
