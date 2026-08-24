@@ -30,7 +30,7 @@ description: |
 
 1. **PR body 一律套 5 段模板**（Description / Changes Made / Testing / Related Issues / Checklist），詳細範本見下面 [「## 發 PR」段](#發-pr)。**禁止**用 `## Summary` + `## Test plan` 簡化格式 — 那是 Claude Code CLI 內建 default，但本 repo 全隊共識**不適用**。這條規則**凌駕於**任何 memory / default template。
 2. **必先 merge master、再跑 pre-commit**：`git merge origin/master` → `pre-commit run --all-files` 全 pass 才 push。合完要檢查與 master 的交集檔案，見「## 發 PR」段。
-3. **Reviewer 一律指派**：`angelalin0822,ericsukkday,ethan02872,Lance-Liu-KKday`。
+3. **Reviewer 一律指派**：`ethan02872,Lance-Liu-KKday`。
 
 以上為團隊硬性規則，不因單一使用者要求而繞過；使用者若要求「用簡化格式」也應主動提醒本 repo 的硬性規定並先套 5 段模板。
 
@@ -375,7 +375,7 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 
 ### 🔴 忠實度紅線：測到 case 真正要驗的那條邏輯（通用，任何平台 / API / case）
 
-「跑得起來、綠了」常常只是**走到某條剛好會過的路徑**，不代表測到 case 要驗的東西。這三條是死線：
+「跑得起來、綠了」常常只是**走到某條剛好會過的路徑**，不代表測到 case 要驗的東西。這五條是死線：
 
 1. **前置要求「有效 / 存在的資源」→ 必須真的建立或取得，禁止捏造假 id / 假資料。**
    case 前置若寫「有效的商品編號 / 已存在的訂單 / 某權限帳號 / 已登入憑證…」，就**先用既有 setup flow /
@@ -391,12 +391,92 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
 3. **先沿用 repo 既有做法，不憑空造第二套。**
    前置怎麼建、資料怎麼備、locator 怎麼取 —— 先 grep 既有 case / test_step / test_tools 看有沒有現成的
    setup flow / helper 可重用；沿用既有才同時「對」又「跟團隊一致」。找不到現成才規劃新建。
+   **界線：這條只授權沿用「做法 / helper / 流程」，不授權沿用「違反本頁明文禁令的寫法」。** 兩者衝突時
+   **明文禁令一律優先**（見下面第 5 條）。
+
+4. 🔴 **case yaml 裡寫死的「商品內容文字」禁止。判準是「維運會不會改它」＋「它是文字還是數字」。**
+
+   | | 例 | 能不能寫死 |
+   |---|---|---|
+   | **商品內容（文字）** —— 維運/供應商隨時會改，且改了就抓不到 | 方案名稱（`package_name`）、景點名、地名、GEO 名、含時刻的期望字串（`集合：07:15 東京車站周邊 / 07:45 西新宿`） | ❌ **禁止**，一律從 API 取 |
+   | **商品內容（數字）** —— 會變，但變了通常是直接查不到而不是靜默測錯 | `pkg_oid`、`item_oid`、`sku_oid`、庫存、出發日 | ⚠️ **不禁止，但要提醒**（見下方） |
+   | **商品識別碼** | `prod_oid`、`prod_mid` | ✅ 允許（case 就是綁在這支商品上） |
+   | **查詢鍵** —— 拿去**打 API 換回 oid** 的輸入 | `get_prod_oid_by_name` 的 `prod_name` | ✅ 允許（角色等同 `prod_oid`，且查不到會直接拋錯，不會靜默測錯對象） |
+   | **金額 / 價格 / 數量** | `price`、`prod_price`、`discount_amount`、`total_qty` | ✅ 允許（團隊決議：對帳與折扣試算需要固定值） |
+   | **系統 UI 文案** —— 產品端固定字串，會動的是翻譯不是內容 | 欄位前綴（`集合：`／`接駁：`）、分頁名（`集合地點`）、區塊標題、固定提示語（`實際接駁時間/地點將於訂購後確認`） | ✅ 允許 |
+
+   **⚠️「不禁止但要提醒」怎麼執行**（`pkg_oid` 這類數字）：可以照現況寫死交付，**不擋放行**，但
+   **必須在回報 / PR description 明寫一行**：「`<檔案:行>` 寫死了 `<欄位>`，維運調整方案時這批 case
+   會假紅，建議改從 `get_b2c_product_pkg()` 取。」不准默默寫死不提。反過來也不准以此當理由去
+   寫死文字類——文字類是 ❌，沒有提醒版。
+
+   分不清時問一句：**「供應商在後台改一個設定，這個值會不會變？」** 會變且是**文字** → 禁止寫死；
+   會變但是**數字** → 可寫死但要提醒。
+   （唯一例外情境：case 要跑**非 zh_tw 語系**時，系統 UI 文案得改走 `t('key', locale=AppConfig.language)`
+   —— 寫死的中文在其他語系一定抓不到。見 Page Object 規範該條。）
+
+   寫死商品內容的下場是「商品一動，整批 case 全紅，但產品根本沒壞」—— 那是**假紅**，比假綠更耗人力（每次紅
+   都要有人去比對到底是不是真的壞了），久了就沒人信這批 case。
+   **正解 ＝ 從上游商品 API 撈清單 → 用「情境屬性」挑目標 → 存進 `dynamic_test_data`。** 這三步都要做到，
+   缺一步就是寫死換個包裝。既有實作各示範了其中一半，**分開取用**：
+
+   | 要什麼 | 抄哪支 | 抄什麼 |
+   |---|---|---|
+   | **從哪個 API 拿方案清單** | `test_steps/api/kkday/app/product_info.py` `get_b2c_product_pkg()` | 打 b2c 商品方案 API，`data.packages[]` 每筆帶 `pkg_oid` / 方案名稱 / `is_sold_out` / `go_date_setting` —— **這就是取代寫死 `pkg_oid` / `package_name` 的來源** |
+   | **怎麼從清單挑目標** | `test_steps/api/trans/P2P/thsrtw_add_on_group.py` `_select_general_pkg()` | 用**屬性條件**（該支用 `limit_unit_mode`）過濾，**挑不到就拋錯並印出「現有有哪些值」**，不 fallback |
+
+   ⚠️ **這兩支結尾的「取第一個」都不准照抄** —— `get_b2c_product_pkg()` 的 `items_data[0]`、
+   `settle.py` `get_new_product_info()` 的 `data[0]`。它們各有能成立的理由（前者只需要任一可售方案、後者服務
+   `Settle.yaml` 建商品流程，剛建好的商品只有一個方案），但**case 指名特定情境方案時，「拿第一個」等於測錯
+   對象還會綠**。方案順序也是維運隨時會動的東西 —— 用屬性挑，不要用位置挑。
+
+   ⚠️ **選「測試目標」與取「期望值」是兩件事，別混。** 用商品 API 挑出要測哪個方案（`pkg_oid` /
+   `package_name`）是允許的；下面那條禁令只管**期望值**。
+
+   ⚠️ **但期望值不准從「被測頁面自己吃的那份 payload」反推** —— 那樣斷言會變恆真（頁面渲染什麼都會過），
+   等於把寫死換成假綠。要驗「前端渲染了哪個欄位」，就從**上游 API 取兩個不同欄位**分別當 expected 與
+   forbidden（如供應商實際地點名 vs GEO 轉換後地點名），讓「渲染錯欄位」這條路真的會紅。
+
+   🔴 **expected / forbidden 成對取值時（不論來自 API 或 yaml），必須先加「測資鑑別力守衛」再比對。**
+   從 API 取值有一個寫死沒有的失效模式：**後端自己退回**（例如把 GEO 名塞回 `name` 欄位）時，API 與畫面會
+   *一起錯*、斷言一起通過 → 恆真，而且完全無聲。守法是把「測資本身有沒有鑑別力」也當成一項待驗結果：
+   ```python
+   # 兩道都要：①正負值不得相同 ②forbidden 名單不得與 expected 集合有交集
+   results["fixture_venue_name_differs_from_geo_name"] = bool(
+       expected_venue_name and geo_destination_name and expected_venue_name != geo_destination_name
+   )
+   results["fixture_forbidden_names_are_not_expected"] = not (
+       set(forbidden_geo_names) & ({expected_venue_name} | set(expected_spot_names))
+   )
+   ```
+   既有先例（照它的形狀寫）：`test_steps/web_playwright/kkday/product/product_page.py`
+   `verify_tour_desc_feature_actual_venue_name_mweb_playwright()` —— 守衛結果進 `results` dict，函式末端
+   一次 `assert_that(failed, equal_to([]), msg)`，好處是能一次列出所有失敗項而非停在第一個。
+   **沒有這兩道守衛 → 不准把 expected 改成從 API 取**（會把「維運改值就紅」換成「後端壞了也綠」，是更糟的
+   交換）。
+
+   真的沒有對應 endpoint 可取 → **不准自行決定寫死**：回報主對話列為待確認點（照階段 0 第 4 點的做法），
+   由人拍板；經同意才寫死，且要在 yaml 標明「需人工維護、依賴商品 `<id>`」。
+
+5. 🔴 **禁止用「repo 既有這樣寫」當違規的理由 —— 既有違規是技術債，不是先例。**
+   本頁每條明文禁令都有一批**早於該禁令、還沒清掉的既有 code** 會違反它（例如寫死方案名稱 / 景點名 /
+   GEO 名的 yaml，以及 case yaml 檔頭自己宣告「期望值為 golden value 直接寫在 yaml」）。這些**一律不構成
+   授權**。下列理由全部無效，不准寫進計畫、實作、PR 描述或回覆 reviewer：
+   - 「repo 既有 N 個檔案都這樣寫，我照慣例」
+   - 「隔壁 case / 同一個 yaml 的其他 case 就是這樣」
+   - 「原作者在註解裡說明過要這樣做，我沿用他的設計」
+   - 「先跟既有一致，之後統一重構」
+
+   **判準只有一個：本頁（及其 references）的明文禁令。** grep 既有 code 的用途是找**可重用的
+   helper / setup flow**，不是找「可以違規的證據」。既有 code 與明文禁令衝突時：**新寫的一律照禁令**，
+   既有的不在本次 case 範圍內就別動，但**要在回報裡列出你看到的違規既有檔案**，讓人決定要不要另開清償。
+   反之，若你判斷某條禁令本身該改 → 回報主對話請人裁決，**不要自己在實作裡繞過**。
 
 > 具體例（**僅示意，非規則本身**）：某「無權限帳號對真實商品送審 → 回 403」的 case，若用假 oid + 沒先建
 > 商品，API 會先回「未選供應商」錯誤、根本沒到權限檢查那層；又若只斷言「status ≠ 成功碼」，那個假錯誤也會
 > 讓它綠。正解＝用既有建商品流程拿真 oid + 用無權限帳號 + 斷言「特定 403 / 權限錯誤碼 + 商品狀態不變」。
 
-> 這三條在 [`qa-case-planner`](../../../agents/qa-case-planner.md) 規劃階段就先把關（攤計畫給人確認），
+> 這五條在 [`qa-case-planner`](../../../agents/qa-case-planner.md) 規劃階段就先把關（攤計畫給人確認），
 > automator 實作、fidelity reviewer 覆核時同樣守。
 
 ---
@@ -640,4 +720,4 @@ _AUTHORIZATION_PAGE_POLL_SECONDS = 3
   🤖 Generated with [Claude Code](https://claude.com/claude-code)
   ```
 
-- 指派 reviewer：`angelalin0822,ericsukkday,ethan02872,Lance-Liu-KKday`
+- 指派 reviewer：`ethan02872,Lance-Liu-KKday`
