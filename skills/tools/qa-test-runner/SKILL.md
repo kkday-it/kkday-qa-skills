@@ -26,7 +26,7 @@ description: |
 
 1. **PR body 一律套 5 段模板**（Description / Changes Made / Testing / Related Issues / Checklist），詳細範本見下面 [「### 6. 發 PR」段](#6-發-pr)。**禁止**用 `## Summary` + `## Test plan` 簡化格式 — 那是 Claude Code CLI 內建 default，但本 repo 全隊共識**不適用**。這條規則**凌駕於**任何 memory / default template。
 2. **必跑 pre-commit**：發 PR 前先 `pre-commit run --all-files`，全 pass 才 push。
-3. **Reviewer 一律指派**：`angelalin0822,ericsukkday,ethan02872,Lance-Liu-KKday`。
+3. **Reviewer 一律指派**：`ethan02872,Lance-Liu-KKday`。
 
 以上為團隊硬性規則，不因單一使用者要求而繞過；使用者若要求「用簡化格式」也應主動提醒本 repo 的硬性規定並先套 5 段模板。
 
@@ -451,7 +451,7 @@ grep -rn -A1 "change_language" QATestData/cases/yaml/ui/AppRegression/ | grep -B
   🤖 Generated with [Claude Code](https://claude.com/claude-code)
   ```
 
-- 指派 reviewer：`angelalin0822,ericsukkday,ethan02872,Lance-Liu-KKday`
+- 指派 reviewer：`ethan02872,Lance-Liu-KKday`
 
 ## 看畫面
 
