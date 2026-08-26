@@ -8,8 +8,9 @@
 #   6) android 跑前先移除殘留的 appium server apk（版本不符會讓 UiAutomator2 instrumentation 崩）
 #   7) app 跑前先砍掉「同一個 platform」殘留的 appium server（跨平台的不動，見下方 SKIP_APPIUM_KILL）
 #
-# 用法：run_case.sh <caseid> <platform> [device]
+# 用法：run_case.sh <caseid|caseid,caseid,...> <platform> [device]
 #   e.g. run_case.sh KQT-T37931 web
+#        run_case.sh KQT-T7490,KQT-T7494,KQT-T7495 android <serial>   # 批量：一次 run 跑完
 #        run_case.sh KQT-T37193 android <adb serial 或 ip:5555>
 #        run_case.sh KQT-T37193 ios <iphone udid>
 # platform: web | mweb | ios | android
@@ -35,9 +36,16 @@
 # 綁進單一入口，讓「漏」在結構上不可能發生，而不是靠自律。
 set -euo pipefail
 
-CASEID="${1:?用法: run_case.sh <caseid> <platform> [device]，例 run_case.sh KQT-T37931 web}"
+CASEID_ARG="${1:?用法: run_case.sh <caseid|caseid,caseid,...> <platform> [device]，例 run_case.sh KQT-T37931 web}"
 PLATFORM="${2:?需指定 platform: web|mweb|ios|android}"
 DEVICE="${3:-}"
+
+# 批量：第一個參數可以是逗號或空白分隔的多個 case，一次 run 跑完。
+# 為什麼要支援：批量以前只能手拼 `python -m qatest run --caseid a b c`，繞過本 script ⇒
+# 同時繞過 appium 清理、venv、選 clone、假綠防線這四道，正是踩過坑的地方。
+IFS=', ' read -r -a CASEIDS <<< "$CASEID_ARG"
+[ "${#CASEIDS[@]}" -eq 0 ] && { echo "ERROR: 沒解析出任何 caseid" >&2; exit 1; }
+CASEID="${CASEIDS[*]}"
 
 is_clone() { [ -d "$1/QATest/src" ] && [ -f "$1/venv/bin/activate" ]; }
 
@@ -81,8 +89,27 @@ kill_stale_appium() {
     killed=$((killed + 1))
   done
 
+  # 🔴 這行的變數一律用 ${} 界定：macOS 內建 bash 3.2 不認 UTF-8，`$hi）` 會把全角括號的位元組
+  # 吃進變數名，於是 set -u 判定 hi 未定義並中止整個 script —— 症狀是「清掉殘留 appium 之後
+  # 就 line 85: hi: unbound variable，case 根本沒跑」。只在真的有清到殘留時才觸發，極易誤判。
   if [ "$killed" -gt 0 ]; then
-    echo "[run_case] 已清除 $killed 個 $plat 殘留 appium（port $lo-$hi）；另一平台不受影響"
+    echo "[run_case] 已清除 ${killed} 個 ${plat} 殘留 appium（port ${lo}-${hi}）；另一平台不受影響"
+  fi
+
+  # ── 另一個洞：agent 手動開的「探索用」appium 不在平台 port 段內 ──────────
+  # skill 教人用 3080 截 iOS 畫面、subagent 也常隨手挑 4999 之類的 port 開一台來 dump 元素樹。
+  # 這些跟平台 port 段完全無關，上面那圈按 port 段砍**砍不到**，於是留在背景跟正式 run 搶同一支
+  # 手機 —— 兩台 appium 各自裝自己的 UiAutomator2 instrumentation、互相把對方的踢掉，症狀是
+  # 跑到一半隨機噴 InvalidSessionIdException / NoSuchDriverError，看起來像 flaky，其實是殘留。
+  # app run 對單一裝置本來就是獨占的，開跑當下還活著的探索 server 一律是殘留，直接收掉。
+  if [ "${KEEP_ADHOC_APPIUM:-0}" != "1" ]; then
+    for pid in $(pgrep -f 'appium' 2>/dev/null || true); do
+      port=$(ps -o command= -p "$pid" 2>/dev/null | sed -n 's/.*appium -p \([0-9]*\).*/\1/p')
+      [ -z "$port" ] && port=4723
+      [ "$port" -ge 10000 ] 2>/dev/null && [ "$port" -le 10199 ] && continue
+      echo "[run_case]   kill 探索用 appium pid=$pid port=$port（非平台 port 段，開跑當下必為殘留）"
+      kill -9 "$pid" 2>/dev/null || true
+    done
     sleep 2
   fi
 }
@@ -115,12 +142,17 @@ fi
 
 # ── 假綠防線：case 不在這個 clone 的 yaml 裡就別跑 ──────────────────────
 # `total 0 cases` 不是通過，是「這個 clone 沒有這條 case」。多 clone / 忘記 checkout 分支時常見。
-if [ -d "$REPO/QATestData/cases/yaml" ] \
-   && ! grep -rqs "^\s*${CASEID}:" "$REPO/QATestData/cases/yaml"; then
-  echo "ERROR: 在 $REPO 的 QATestData/cases/yaml 找不到 '$CASEID:'。" >&2
-  echo "       跑下去只會得到 '0 failed, 0 passed (total 0 cases)' 假綠。" >&2
-  echo "       確認：(a) clone 選對了嗎（QA_REPO=...）(b) 分支 checkout 了嗎（實作可能在別的 branch）" >&2
-  exit 1
+if [ -d "$REPO/QATestData/cases/yaml" ]; then
+  MISSING=()
+  for cid in "${CASEIDS[@]}"; do
+    grep -rqs "^\s*${cid}:" "$REPO/QATestData/cases/yaml" || MISSING+=("$cid")
+  done
+  if [ "${#MISSING[@]}" -gt 0 ]; then
+    echo "ERROR: 在 $REPO 的 QATestData/cases/yaml 找不到：${MISSING[*]}" >&2
+    echo "       跑下去只會得到 '0 failed, 0 passed (total 0 cases)' 假綠。" >&2
+    echo "       確認：(a) clone 選對了嗎（QA_REPO=...）(b) 分支 checkout 了嗎（實作可能在別的 branch）" >&2
+    exit 1
+  fi
 fi
 
 # ── platform 決定 driver / headless ───────────────────────────────────
@@ -175,7 +207,7 @@ esac
 # shellcheck disable=SC1091
 source "$REPO/venv/bin/activate"
 cd "$REPO/QATest/src"
-echo "[run_case] repo=$REPO ($(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)) caseid=$CASEID platform=$PLATFORM HEADLESS=${HEADLESS:-<unset>} extra=${EXTRA[*]:-<none>}"
+echo "[run_case] repo=$REPO ($(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)) caseid=${#CASEIDS[@]} 個: $CASEID platform=$PLATFORM HEADLESS=${HEADLESS:-<unset>} extra=${EXTRA[*]:-<none>}"
 # macOS 內建 bash 3.2 在 set -u 下展開空陣列會噴 unbound variable（ios/android 走這條），
 # 故用 ${arr[@]+...} 形式：陣列為空就整段不展開。
-exec python -m qatest run --caseid "$CASEID" --platform "$PLATFORM" ${EXTRA[@]+"${EXTRA[@]}"}
+exec python -m qatest run --caseid "${CASEIDS[@]}" --platform "$PLATFORM" ${EXTRA[@]+"${EXTRA[@]}"}
