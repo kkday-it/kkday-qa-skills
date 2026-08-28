@@ -10,7 +10,6 @@
 
 Auth:
   Authorization: Bearer <token>
-  X-User-Id:     $TCMS_USER_ID（預設見 DEFAULT_USER_ID，**注意下面的衝突**）
   GET 端點權限寬鬆（連 placeholder token 都通），POST/PUT/DELETE 必須真 token。
 
   Token 解析順序：
@@ -54,15 +53,6 @@ AUTOMATION_TOKEN = os.getenv("AUTOMATION_TOKEN", "8b9dfbac-e863-4078-95e9-c2cc03
 # /tcms/settings#api-tokens），兩個都印，讓人自己點得到。
 TOKEN_PAGE = ("http://autotest-service.sit.kkday.com:8081/tcms/account#api-tokens"
               "（若 404 改試 /tcms/settings#api-tokens）")
-
-# ⚠️ X-User-Id 有兩種說法，尚未實測釐清：
-#   a) "ml09h4qj-l7bsikcns5m" — gherkin-to-tcms/push_cases.py 打 POST /cases/ 用的值。
-#      但 memory `user-eden-admin-user-id` 明講這是 **ai-studio backend** 的 user_id，
-#      用途是戳 /api/admin/*，跟 TCMS 不是同一套身分。
-#   b) "2" — memory `reference-tcms-api-token` 明講 TCMS 用這個（2 = Eden Lai）。
-# OpenAPI 把 x-user-id 標成 optional，所以帶錯很可能不會噴錯，只是**建立者掛到錯的人**。
-# 這裡沿用 (a)：它是唯一在這支 endpoint 上實際跑過的值。要改用 (b) 設 TCMS_USER_ID=2。
-DEFAULT_USER_ID = os.getenv("TCMS_USER_ID_DEFAULT", "ml09h4qj-l7bsikcns5m")
 
 # TestCaseCreate 允許帶的欄位（OpenAPI 3.1，KK TCMS 1.5.0）。
 # title / suite_id 必填，其餘後端各有預設值。external_id 刻意不在此列——
@@ -148,10 +138,11 @@ def load_token(force_refresh: bool = False) -> str:
 
 
 def _headers(token: str) -> dict:
+    # 不送 X-User-Id：後端不看它，認證只認 Bearer token，
+    # history 的 user_id 也一律記成 token 擁有者，指定不了。
     return {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
-        "X-User-Id": os.getenv("TCMS_USER_ID", DEFAULT_USER_ID),
     }
 
 
@@ -188,8 +179,8 @@ def _request(method: str, path: str, auth: "_Auth", body: dict | None = None):
                       file=sys.stderr)
                 continue
             if e.code == 401:
-                sys.exit("❌ 換過新 token 仍 401。可能 secret service 上的 token 本身也過期了，"
-                         f"或 X-User-Id 不對。人工補救：到 {TOKEN_PAGE} 產 token 寫入 {TOKEN_PATH}")
+                sys.exit("❌ 換過新 token 仍 401。可能 secret service 上的 token 本身也過期了。"
+                         f"人工補救：到 {TOKEN_PAGE} 產 token 寫入 {TOKEN_PATH}")
             sys.exit(f"❌ {method} {path} → {e.code}: {text}")
         except Exception as e:  # noqa: BLE001 — 網路層什麼都可能噴，一律終止並印原因
             sys.exit(f"❌ {method} {path} → {e}")
