@@ -38,10 +38,11 @@ http://autotest-service.sit.kkday.com:8081/tcms/api/v1
 | Header | 值 |
 | --- | --- |
 | `Authorization` | `Bearer <token>` |
-| `X-User-Id` | 見下方衝突說明 |
 | `Content-Type` | `application/json` |
 
 GET 端點權限寬鬆（placeholder token 也通）；**POST / PUT / DELETE 必須真 token**，否則 401。
+
+**只有 Bearer token 有作用，不需要帶 `X-User-Id`。**
 
 ### Token 從哪來
 
@@ -61,26 +62,17 @@ curl -s "http://autotest-service.sit.kkday.com:8000/api/v1/data/\
 注意 **`value` 是字串包 JSON**，要 parse 兩層才拿得到 `token`。
 
 **401 時 script 會自動回 secret service 重取一次再重試**（快取過期的常見情況），一輪只換一次，
-不會無限重試。若換過還是 401，代表 secret service 上的 token 本身過期，或 `X-User-Id` 不對 ——
+不會無限重試。若換過還是 401，代表 secret service 上的 token 本身過期 ——
 這時到 `/tcms/account#api-tokens`（若 404 試 `/tcms/settings#api-tokens`）人工產一個寫進
 `~/.cache/tcms_token`。該頁也 401 就走 `/api/v1/users/google-oauth/start` 重登，攔 fetch 拿真
 Authorization header。
 
-### ⚠️ `X-User-Id` 有兩個版本，尚未實測釐清
+### 操作者是誰？記在 history，不是你能指定的
 
-| 值 | 依據 |
-| --- | --- |
-| `ml09h4qj-l7bsikcns5m` | 既有工具打 `POST /cases/` 實際在用的值。但這個 id 其他文件記載是 **ai-studio backend** 的身分（用途是戳 `/api/admin/*`），跟 TCMS 未必同一套 |
-| `2` | 另一份文件明寫「TCMS 用這個，2 = Eden Lai」 |
+`TestCaseResponse` **沒有 `created_by` 欄位**；誰建的、誰改的只能從
+`GET /cases/{case_ref}/history` 的 `Created` / `Updated` 那幾筆看（欄位 `user_id` + `user`）。
 
-OpenAPI 把 `x-user-id` 標成 **optional**，所以帶錯很可能**不噴錯，只是建立者掛到錯的人**。
-script 預設用前者（唯一在這支 endpoint 上實際跑過的），要換：
-
-```bash
-TCMS_USER_ID=2 python3 tcms_create_case.py ...
-```
-
-**有人實測確認後請回來把這段改成定論。**
+而那個 `user_id` **指定不了** —— 一律記成 Bearer token 擁有者，不會因為你帶了什麼 header 而改變。
 
 ## 欄位規格（`POST /cases/` = `TestCaseCreate`，OpenAPI 3.1 / KK TCMS 1.5.0）
 
@@ -179,7 +171,6 @@ spec JSON —— 單支或整批都收：
 | 變數 | 預設 | 用途 |
 | --- | --- | --- |
 | `TCMS_TOKEN` | — | 直接指定 token，跳過快取與 secret service |
-| `TCMS_USER_ID` | `ml09h4qj-l7bsikcns5m` | `X-User-Id`，見上方衝突說明 |
 | `AUTOMATION_TOKEN` | 內建 | 打 secret service 的 Bearer |
 | `SECRET_SERVICE_HOST` | `http://autotest-service.sit.kkday.com` | secret service host |
 | `TCMS_SECRET_ENV` / `_SERVICE` / `_KEY` | `stage` / `tcms_skill_token` / `tcms_skill_token_stage` | 換環境時用 |
