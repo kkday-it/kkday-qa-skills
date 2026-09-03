@@ -63,6 +63,18 @@ locator gate 只驗「有 source==本 case 的 emit 存在」，**不驗 emit �
 - 主要防 **app / from-scratch** 手寫 emit 與 code 脫節；web/mweb 的 emit 是 valve 驗過的，通常一致，但一併查無妨。
 - emit 目錄不存在 / 該 case 無 emit 列：那是 locator gate 的守備範圍（會擋），你這裡專注「有 emit 時內容對不對得上 code」。
 
+### 4.5 共用主幹改動的回歸憑據（改到共用 step / page-object 才查；沒改就跳過）
+判斷本輪 diff 有沒有落在**多個 case 共用**的 test_step 或 page object 上。有的話，「加分支」也算——
+新岔路的閘門條件會在每一條既有路徑上被求值，誤命中就是把別的 case 導進新分支。要查三件事：
+
+- **互斥路徑有沒有盤完**：你自己讀那個共用函式，數出「新分支 + 每個 `elif` / `else`」共幾條，對照 automator 回報裡列了幾條。少列就是漏盤。
+- **每條路徑有沒有實跑證人**：一條路徑至少一張既有 case，且要能說明「這張為什麼會走到那條」。特別注意**閘門會不會被短路**——若某張 case 的前置條件讓新增的 `wait()` 根本不被求值（如 `not sheet_already_open and ...` 的前半為 False），它就**不能**當該閘門的證人，automator 常在這裡誤用。
+- **證據等級**：每張證人要有 debug folder 與 qatest summary 原文；`_pass.log` 這種只有 header 的檔只能證明「整體流程過了」，證不了「新分支被正確跳過」這種步驟級事實——這個落差要在 notes 揭露，別放大成 PASS 的依據。
+
+🔴 **「口頭轉述的探測數字」一律不算證據。** automator 若拿臨時 headless playwright / Appium 探測（例：逐商品測 selector 命中數）來支撐「零影響」，去 grep 腳本、raw output、截圖、shell history；**四者都找不到 = 無法覆核**，列進 `suspicious_assertions` 並在 notes 明講。另外查**正控組**：只有「其他商品都 0 命中」而沒有「已知該命中的商品回 1」，證明不了 selector 有在運作，只證明它可能永遠選不到東西。
+
+程式結構本身的安全論證（閘門 `no_exception=True` 選不到就落回原路徑之類）**可以降低殘餘風險等級，但不能取代回歸證人**——它是加分項，不是替代品。缺證人就照缺揭露，由人決定放不放行。
+
 ### 5. coding 規範合規（對照 `qa-automation-writer` 操作規範；在我方 gate 就抓，別留給 repo PR reviewer）
 
 > **這一項和覆蓋率同等重要，不是附帶。** automator（尤其「修復模式」只改幾行時）常以為小改不用讀 skill，而違反 skill **本來就有的明文規範**或自創非慣例寫法。你是對抗方，**逐條主動抓**——別因為「測試跑得綠」就放過，也別留給 repo AI reviewer 退件（那等於把關失敗）。**先讀一次 `~/.claude/skills/qa-automation-writer/SKILL.md`「操作規範」段**再逐條比對本 case 的 diff。

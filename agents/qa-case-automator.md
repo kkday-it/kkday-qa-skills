@@ -86,6 +86,11 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
   - 步驟有差異處 → 用 `if pages.platform == Platform.MWEB / Android / iOS:` 分支處理那幾步；
   - **絕不加 `limit_test_platform`** —— 它的作用是「限死只跑單一平台、其餘直接 Skip」（見 framework `common.py`），加了反而讓別的 tag 平台跑不了。
   - 🔴 **改共用檔優先「加分支」、別動共用主幹**：要讓某平台行為不同時，用 `if platform==X` 加岔路，**別改大家都會走的共用邏輯/斷言/共用 locator**——那個 step/page-object 可能被**其他 case** 也用到，改主幹會把它們改壞，而只跑當前 case 看不到。**萬一非改共用主幹不可**：在回報裡明講「改了共用符號 X（也被誰用到）」，讓主對話/planner 的 `impacted_cases` 回歸涵蓋到（見 automate-tcms-cases「共用主幹改動攔截」）。只驗當前 case 兩平台不算數。
+  - 🔴 **「加分支」不等於零風險，一樣要跑跨路徑回歸。** 最容易漏的就是這裡：你以為自己只是加了一條別人走不到的岔路，但**新岔路的閘門條件會在每一條既有路徑上被求值**（`if not X and new_locator.wait(...).is_visible:` 這種），閘門誤命中就是把別的 case 導進你的分支。判準不是「我有沒有改到別人的行號」，是「別人的執行流會不會碰到我新增的判斷」——會，就要回歸。做法：
+    - **盤出你動的那個共用函式有幾條互斥路徑**（你的新分支 + 它的每個 `elif` / `else`），一條都不能只用讀 code 帶過；
+    - **每條路徑各挑一張既有 case 實跑**，挑的時候要說明「為什麼這張會走到那條」，且優先挑**閘門一定會被求值**的（例：`sheet_already_open` 為 False 才會算到你的 `wait`，那就別挑 inline sheet 商品當唯一證人）；
+    - 回報列成表：路徑 / 代表 case / qatest summary 原文 / debug folder。**少一條路徑沒證人，就在回報裡明講缺哪條**，不要用「結構上安全」帶過——結構論證是加分項，不是回歸的替代品。
+  - 🔴 **拿來支撐「零影響」的探測，必須留下可覆核的產物，否則不算證據。** 用 headless playwright / Appium 逐商品探 selector 命中數這類臨時驗證，很有說服力，但**只寫在回報裡的數字 = 口頭轉述**，reviewer 事後 grep 不到腳本、輸出、截圖或 history，等於無法覆核，會被打回。要嘛把腳本與 raw output 落到檔案並在回報附**絕對路徑**，要嘛就別把它當成證據來源、改用「實跑一張既有 case」這種本來就會留 log 的方式。**正控組不可省**：只報「其他商品都 0 命中」而沒有一個「已知該命中的商品回 1」，證明不了 selector 有在運作，只證明它可能永遠選不到東西。
   - **「交付某平台」的唯一判準 = 真的用 `--platform X` 跑過、且 qatest 尾巴那行是 `0 failed`。** 不是口頭說 pass、不是「case 能跑」、更不是拿別平台硬套跑綠。
   - 某平台做不了（缺實體機/前置）→ 標 `blocked`＋原因，其餘平台照跑；tag 全部都無法進行才整個 case blocked。**逐平台列出結果,並附每平台那行 qatest summary 原文（見輸出規範）**；tag 平台缺任一「跑出 0 failed」即非完成。
 - **能安全帶預設就帶入並記錄假設**，繼續做：環境 `stage`、語系 `zh-tw`、商品 URL slug→oid、既定測試帳號、label 標的所有 UI 平台…
