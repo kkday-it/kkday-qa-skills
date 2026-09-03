@@ -37,7 +37,7 @@
 set -euo pipefail
 
 CASEID_ARG="${1:?用法: run_case.sh <caseid|caseid,caseid,...> <platform> [device]，例 run_case.sh KQT-T37931 web}"
-PLATFORM="${2:?需指定 platform: web|mweb|ios|android}"
+PLATFORM="${2:?需指定 platform: web|mweb|ios|android|api}"
 DEVICE="${3:-}"
 
 # 批量：第一個參數可以是逗號或空白分隔的多個 case，一次 run 跑完。
@@ -198,8 +198,12 @@ case "$PLATFORM" in
       done
     fi
     ;;
+  api)
+    # 純 API case（yaml 的 platform: api）：不開瀏覽器、不起 appium，
+    # 所以 HEADLESS / --use_driver / --device 一個都不加。
+    ;;
   *)
-    echo "ERROR: platform 需為 web|mweb|ios|android，收到 '$PLATFORM'" >&2
+    echo "ERROR: platform 需為 web|mweb|ios|android|api，收到 '$PLATFORM'" >&2
     exit 1
     ;;
 esac
