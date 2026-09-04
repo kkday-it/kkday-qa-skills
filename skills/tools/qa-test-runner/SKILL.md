@@ -252,7 +252,9 @@ ls -l /tmp/<log>                       # 要非 0 bytes
    - Web ↔ MWeb 共用 test step，改一邊要確認另一邊
    - Android ↔ iOS 共用 test step，改一邊要確認另一邊
    - 兩組之間獨立，互不影響
-7. 重新執行測試驗證修復
+7. 🔴 **在同一輪 session 把下游流程「點點看」**（見下面「點點看」）——
+   **驗收標準不是「元素找得到」，是「按下去之後那一段還走得通」**
+8. 重新執行測試驗證修復
 
 ##### 趁 run 還在跑撈失敗畫面（mobile A 類唯一正解）
 
@@ -279,6 +281,77 @@ ls -l /tmp/<log>                       # 要非 0 bytes
 
 trigger 要給 appium log 裡會**原樣出現**的字串（appium 會把 `findElement` 的 value 印出來），所以直接
 從 page object 複製那段 locator 最保險。給錯 trigger 的症狀是等到逾時，腳本會告訴你去看 run 的 output。
+
+##### 「點點看」：同一輪把下游走完，一次修完再重跑
+
+🔴 **驗收標準不是「這顆找得到」，是「按下去之後那一段還走得通」。** 第三方 App／自家 App 改版
+一次動一整段，只驗一顆的下場是固定的：
+
+```
+改一顆 → 重跑 15 分鐘 → 死在下一顆 → 改一顆 → 重跑 15 分鐘 → ...
+```
+
+每一輪都在重跑前面十幾個沒問題的步驟，一個 case 就這樣吃掉一整天。
+
+🔴 **正確順序是「先點完下游、才動手修」，不是「修完再點」**：
+
+```
+run 死在那一頁（session 還活著、App 還停在失敗畫面）
+  → sniff 撈失敗當下的元素樹＋截圖，定出正確的 locator     ← 此時還沒改任何 code
+  → plan 從框架接下來要跑的那段 code 生 steps
+  → probe 拿新 locator 往下點，一次列出整段破口
+  → 一次全修（交給 qa-case-automator）
+  → 完整跑一次 full 確認                                  ← 只跑一次，而且是確認、不是探索
+```
+
+為什麼修復排在 probe 之後：probe 走的是 raw appium，**不需要先改 code 才能用新 locator 試**；
+而那個 session 只在「這一輪」活著 —— 等你改完 code，窗口早就關了，要再點就得再花 15 分鐘重跑一輪。
+所以順序反過來就等於白花一輪。
+
+用掉那個窗口：
+
+```bash
+# 1) 重現那一輪開跑前，把等待窗口從 60 秒撐到 10 分鐘（只影響沒明示 timeout 的等待）
+PAGEOBJECT_DEFAULT_WAIT_TIMEOUT=600 \
+  QA_REPO=<abs path> ~/.claude/skills/qa-test-runner/scripts/run_case.sh KQT-T7507 ios <udid>
+
+# 2) 🔴 steps 不要人手編 —— 從框架接下來要跑的那段 code 生出來
+#    （人手編是在驗自己想像的流程；生成的才是在驗框架後面的流程）
+~/.claude/skills/qa-test-runner/scripts/plan_probe_steps.py --platform ios \
+  --repo <abs path> --at test_steps/kkday/app/bookings/payment.py:527 --branch paypay \
+  > /tmp/probe.txt
+
+# 3) 掛上（--after 給失敗的那段 locator，等它出現才開始動）
+~/.claude/skills/qa-test-runner/scripts/probe_live_session.py \
+  --after "XCUIElementTypeStaticText[@name='Pay']" \
+  --steps /tmp/probe.txt --confirm-mutates
+```
+
+`plan_probe_steps.py` 從失敗那一行的 function 往下讀 AST，照 code 的順序把每個
+`pages.<page>.<element>.<action>()` 轉成一行 probe 動作，並去 `pages/mobile/<platform>/`
+把 locator 字面值解出來、附上 `file:line` 出處。它會：
+
+- `wait(no_exception=True)` 與 `if ….is_present:` 的條件 → 只生 `find` 並標 `# optional`，不生 `click`
+  （那是刻意的選擇性分支，點下去反而會改變流程）
+- `match/case` 用 `--branch paypay` 篩；`if` 兩邊都列出來並標「靜態看不出當下走哪邊」
+- f-string / `t()` i18n / 要傳參數的 element → 標 `# ⚠️ 動態 locator，需自行填` 並附出處
+- **function 結束就停**。paypay 這種分支點完就 `return` 回 caller，**下游在 caller 跟後面的
+  yaml step 裡** —— 再給一個 `--at` 指過去（可給多個，會依序接起來）
+
+🔴 **輸出是草稿不是真理，送去 probe 前要看過。** 它讀不出執行期才知道的東西（走哪個分支、
+動態 locator 的值），標出來的那些就是要你補的。
+
+任何一步失敗**不中斷**，繼續做完再在結尾列出所有破口 —— 因為目的就是「一次看完」，不是跑通。
+拿到那份清單，`qa-case-automator` 一次改完，重跑那 15 分鐘才只需要花一次。
+
+| | |
+|---|---|
+| 為什麼不「直接重跑就好」 | app 一輪 15~20 分鐘。連續兩顆壞掉就是 40 分鐘換兩行 locator，而那兩行本來可以同一輪拿到 |
+| 為什麼窗口要撐開 | 預設 60 秒只夠點一兩下。`PAGEOBJECT_DEFAULT_WAIT_TIMEOUT` 是 `element.py:31` 讀 env 的，撐大只影響沒帶 `timeout=` 的等待，不改變流程行為 |
+| 為什麼要 `--confirm-mutates` | 這支**會送 click/tap 到實機**。只准掛在**已注定失敗**的那一輪（case 已經死在 locator 上，剩下的 session 時間本來就是浪費）。掛在還可能通過的 run 上會把結果弄成假紅／假綠 |
+
+locator 全掛、連候選都找不到時，用 `tap <x> <y>` 照 `*_names.txt` 給的座標硬點，先確認「這一頁的
+流程本身還對不對」，再回頭決定 locator 怎麼寫。
 
 #### B. 流程更改（回報用戶）
 
@@ -441,6 +514,11 @@ grep -rn -A1 "change_language" QATestData/cases/yaml/ui/AppRegression/ | grep -B
 ### 5. 修復後驗證
 
 元件修復後重新跑一次測試，確認 PASS。若仍失敗，繼續分析下一個失敗點。
+
+🔴 **但「繼續分析下一個失敗點」是最後手段，不是預設節奏。** 一輪 app run 15~20 分鐘，
+「重跑才知道下一顆也壞」代表上一輪的 session 被浪費掉了。mobile A 類的正確節奏是：
+**同一輪內先 sniff 撈畫面 → 再 probe 把下游點過去 → 拿到完整破口清單 → 一次改完 → 才重跑**
+（見上面「趁 run 還在跑撈失敗畫面」與「點點看」）。重跑只該用來確認，不該用來探索。
 
 ### 6. 發 PR
 
