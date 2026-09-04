@@ -8,7 +8,14 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from get_verified_flow import _dedup, _score, _rank_and_cap, _datekey  # noqa: E402
+from get_verified_flow import (  # noqa: E402
+    _datekey,
+    _dedup,
+    _emit_row,
+    _EMIT_KEYS,
+    _rank_and_cap,
+    _score,
+)
 
 
 def test_datekey():
@@ -74,6 +81,32 @@ def test_rank_and_cap_dedups_before_cap():
     assert len(out) == 3
     dup = [e for e in out if e["name"] == "dup"][0]
     assert dup["last_verified"] == "2026-07-16"
+
+
+def test_emit_row_stale_keeps_all_fields():
+    """stale 那筆一定要帶全欄位。
+
+    後端 upsert 是整包 $set，少帶一個欄位就會把共享庫裡既有的 purpose / location /
+    signature / example 清成空字串——那筆 flow 原本是幹嘛的、在哪，線索一起沒了。
+    """
+    entry = {
+        "id": "app-goto-pay", "name": "go_pay", "kind": "test_step",
+        "purpose": "到訂購頁", "location": "common.py:320", "signature": "(x=1)",
+        "example": "- step: go_pay", "platform": "app", "repo": "kkday-QA-automation",
+    }
+    stale = _emit_row(entry, "go_pay", "stale")
+    verified = _emit_row(entry, "go_pay", "verified")
+    # 兩者欄位集合一致，只有 status 不同
+    assert set(stale) == set(verified) == set(_EMIT_KEYS) | {"status"}
+    assert stale["status"] == "stale" and verified["status"] == "verified"
+    for k in ("purpose", "location", "signature", "example"):
+        assert stale[k] == entry[k], f"{k} 被丟掉了"
+
+
+def test_emit_row_name_wins_over_entry():
+    """entry 缺 name 時，用實際驗證過的 name（後端 name 為必填）。"""
+    row = _emit_row({"platform": "web"}, "do_login", "stale")
+    assert row["name"] == "do_login"
 
 
 def _run():
