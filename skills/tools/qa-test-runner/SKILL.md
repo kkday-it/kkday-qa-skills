@@ -196,6 +196,21 @@ done
 **手拼指令時要自己補。** 同一支手機同時有 USB serial 與 wifi `<ip>:5555` 時，`adb devices`
 會算成兩個 device —— 必須明示 serial，別讓它猜。
 
+🔴 **同一段錯誤訊息還有第二個成因：另一個平台的 run 開跑時把你的 driver 子程序砍了。**
+兩平台同時跑時，「清探索用 appium」那圈如果用 `pgrep -f appium` 抓，會誤中 driver 的子程序 ——
+它們命令列帶 appium 字樣但不是 server、吃不到 `-p`，於是被當成不在平台 port 段的殘留砍掉：
+
+| 被誤殺的 | 命令列長相 | 症狀 |
+|---|---|---|
+| Android instrumentation | `adb … am instrument … io.appium.uiautomator2.server.test/…` | `The process has exited with code null, signal SIGKILL` → 上面那段 proxy 錯誤 |
+| iOS WDA | `xcodebuild … ~/.appium/node_modules/appium-webdriveragent/…` | `xcodebuild exited with … signal 'SIGKILL'` → `Connection was refused to port 8173` → 之後每個 find 都 404 |
+
+**判準是時間戳**：拿失敗時刻去對另一個 platform 的 run 開跑時間（`run_case.sh` 會印 `kill 探索用
+appium pid=… port=4723`）。對上同一秒就是自己砍自己，**不是 apk 版本、不是 locator、不是 flaky**，
+重跑就好，別去改 code。2026-09-04 雙向各炸過一次（KQT-T7172 iOS、KQT-T7500 android，都死在
+`change_language`）。`run_case.sh` 已修成只砍真的 appium server 本體並排除 driver 子程序；
+**手拼清理指令時不要用 `pgrep -f appium` 一把抓**。
+
 #### 🔴 丟背景之後：先驗證「真的起來了」才可以說在跑
 
 同一類「以為在跑其實沒起來」踩過三次（每次都白等一輪），三個成因與防法：

@@ -102,9 +102,28 @@ kill_stale_appium() {
   # 手機 —— 兩台 appium 各自裝自己的 UiAutomator2 instrumentation、互相把對方的踢掉，症狀是
   # 跑到一半隨機噴 InvalidSessionIdException / NoSuchDriverError，看起來像 flaky，其實是殘留。
   # app run 對單一裝置本來就是獨占的，開跑當下還活著的探索 server 一律是殘留，直接收掉。
+  # 🔴 但「命令列含 appium 字樣」≠「appium server」。正在跑的另一個平台，其 driver 開的子程序
+  # 命令列裡也帶 appium 字樣，卻不是 server、也吃不到 -p，於是 port 落到預設值 4723、被判成殘留砍掉：
+  #   iOS    xcodebuild ... ~/.appium/node_modules/appium-webdriveragent/WebDriverAgent.xcodeproj
+  #   Android adb ... shell am instrument ... io.appium.uiautomator2.server.test/...
+  # 2026-09-04 兩個方向都實際炸過（雙平台同時跑）：android 開跑砍掉 iOS 的 WDA xcodebuild
+  # （`xcodebuild exited with ... signal 'SIGKILL'` → port 8173 refused → 之後每個 find 都 404，
+  # KQT-T7172 死在 change_language 找不到設定入口）；iOS 開跑砍掉 android 的 instrumentation
+  # （`The process has exited with code null, signal SIGKILL` → `cannot be proxied to UiAutomator2
+  # server because the instrumentation process is not running` → KQT-T7500 死在 change_language）。
+  # 兩者都長得像 locator 過期或 flaky，實際上是自己砍自己。所以這圈只砍**真的是 appium server**
+  # 的程序，且明確排除 driver 子程序。
   if [ "${KEEP_ADHOC_APPIUM:-0}" != "1" ]; then
     for pid in $(pgrep -f 'appium' 2>/dev/null || true); do
-      port=$(ps -o command= -p "$pid" 2>/dev/null | sed -n 's/.*appium -p \([0-9]*\).*/\1/p')
+      cmd=$(ps -o command= -p "$pid" 2>/dev/null)
+      case "$cmd" in
+        *xcodebuild*|*" am instrument "*|*iproxy*|*idevice*) continue ;;
+      esac
+      case "$cmd" in
+        *appium/index.js*|*appium/build/lib/main.js*|*/appium\ *|appium\ *|*/appium|appium) ;;
+        *) continue ;;
+      esac
+      port=$(printf '%s' "$cmd" | sed -n 's/.*appium -p \([0-9]*\).*/\1/p')
       [ -z "$port" ] && port=4723
       [ "$port" -ge 10000 ] 2>/dev/null && [ "$port" -le 10199 ] && continue
       echo "[run_case]   kill 探索用 appium pid=${pid} port=${port} (非平台 port 段，開跑當下必為殘留)"
