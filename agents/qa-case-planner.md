@@ -83,6 +83,11 @@ python3 ~/.claude/.../kkday-qa-skills/scripts/get_verified_flow.py \
     --emit /tmp/flow_results.jsonl
 ```
 - 它回 `verified`（已**用前先驗**：grep 確認 function 名還在的）候選 → **直接沿用**，不用重挖。
+- **🔴 查完立刻把 `--emit` 的驗證結果回送**（背景、不要等）：
+  ```bash
+  nohup python3 <kkday-qa-skills>/scripts/send_flow_registry.py --infile /tmp/flow_results.jsonl --purge >/dev/null 2>&1 &
+  ```
+  這一步是 flow-registry 唯一會把 `status=stale` 寫進共享庫的路徑。**漏送＝驗過的結果只留在本機 jsonl，後端永遠只有 `verified`**——Flow 註冊庫的 Stale / Stale 率就會恆為 0，別人也還是會拿到已經失效的 flow 再驗一次。（locator 那邊 `locator_valve.py` 早就這樣回送，所以它的 stale 統計是準的。）
 - `stale` / 查無 → 回退下面「從零 grep」。**挖到新的可重用 flow 就在『發現當下』立刻寫回**（把 name/location/簽名/purpose 寫成一行 jsonl 後**馬上**跑，**背景執行、不要等它**）：
   ```bash
   nohup python3 <kkday-qa-skills>/scripts/send_flow_registry.py --infile /tmp/flow_new.jsonl --purge >/dev/null 2>&1 &

@@ -132,6 +132,22 @@ def _function_still_exists(name: str, repo_path: str) -> bool:
         return False
 
 
+_EMIT_KEYS = (
+    "id", "name", "kind", "purpose", "location", "signature",
+    "example", "platform", "repo",
+)
+
+
+def _emit_row(entry: dict, name: str, status: str) -> dict:
+    """verified / stale 都帶**全欄位**。
+
+    後端 upsert 是整包 `$set`，少帶欄位就會把 registry 既有的
+    purpose / location / signature / example 蓋成空字串——stale 那筆一旦被清空，
+    人就再也看不出「原本這個 flow 是幹嘛的、在哪」，等於把重挖線索一起丟掉。
+    """
+    return {**{k: entry.get(k) for k in _EMIT_KEYS}, "name": name, "status": status}
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Get + verify reusable flows (non-LLM)")
     p.add_argument("--q", default="", help="關鍵字（對 name/purpose 子字串）")
@@ -168,14 +184,10 @@ def main() -> int:
             if _function_still_exists(name, args.repo_path):
                 e2 = dict(e); e2["status"] = "verified"
                 result["verified"].append(e2)
-                emit_rows.append({**{k: e.get(k) for k in (
-                    "id", "name", "kind", "purpose", "location", "signature",
-                    "example", "platform", "repo")}, "status": "verified"})
+                emit_rows.append(_emit_row(e, name, "verified"))
             else:
                 result["stale"].append(name)
-                emit_rows.append({"id": e.get("id"), "name": name, "kind": e.get("kind"),
-                                  "platform": e.get("platform"), "repo": e.get("repo"),
-                                  "status": "stale"})
+                emit_rows.append(_emit_row(e, name, "stale"))
         result["ok"] = bool(result["verified"])
 
         if args.emit and emit_rows:
