@@ -107,7 +107,7 @@ kill_stale_appium() {
       port=$(ps -o command= -p "$pid" 2>/dev/null | sed -n 's/.*appium -p \([0-9]*\).*/\1/p')
       [ -z "$port" ] && port=4723
       [ "$port" -ge 10000 ] 2>/dev/null && [ "$port" -le 10199 ] && continue
-      echo "[run_case]   kill 探索用 appium pid=$pid port=$port（非平台 port 段，開跑當下必為殘留）"
+      echo "[run_case]   kill 探索用 appium pid=${pid} port=${port} (非平台 port 段，開跑當下必為殘留)"
       kill -9 "$pid" 2>/dev/null || true
     done
     sleep 2

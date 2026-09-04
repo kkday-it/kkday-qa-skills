@@ -78,6 +78,18 @@ batch 模式遇到這種，先把當下這批做完，做完再重跑一次 scri
 App（android/ios）記得 qa-test-runner 那邊的前置：清殘留 appium、`export ANDROID_HOME`、
 iOS 包 `caffeinate`。丟背景跑要驗證真的起來（`total 0 cases` 是沒跑，不是綠）。
 
+🔴 **分診是 A（找不到元素）且 platform 是 app 時，重現這一輪就要順手掛 sniffer** —— 一輪 app run
+要 15~20 分鐘，「先跑一輪確認壞、再跑一輪抓畫面」是拿 20 分鐘換一份本來可以同時拿到的東西：
+
+```bash
+# run 起來之後、還沒跑到失敗點時掛上；trigger 從 page object 複製那段 locator
+~/.claude/skills/qa-test-runner/scripts/sniff_live_element_tree.py "<失敗 locator 的一小段>"
+```
+
+它從正在跑的那個 session 唯讀撈失敗當下的元素樹＋可見節點清單＋截圖（窗口是 `wait()` 的 60 秒
+輪詢），存進 run 目錄。**這也是 report 那邊拿不到的東西** —— API 只給 `terminal_output`，沒有畫面。
+細節與「為什麼不能等跑完再另起一台 appium」見 `qa-test-runner` SKILL.md「趁 run 還在跑撈失敗畫面」。
+
 | 重現結果 | 動作 |
 |---|---|
 | **失敗，且失敗點跟 report 一致** | 確認真壞 → 進第 4 步派工 |
@@ -120,5 +132,6 @@ Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=<KQT-T…>')
 - report 的 `log_file_path` 指的是**跑測機器（qateam1）**上的路徑，本機不存在、服務也沒開檔案下載 API。
   能用的只有 `terminal_output`（已含失敗函式、行號、斷言訊息），多數時候夠分診。
 - report API **不提供任何截圖**——case 欄位裡沒有 screenshot，前端也沒有 image/artifact endpoint。
-  要畫面只能自己重現時抓。
+  要畫面只能自己重現時抓，而且要**在重現那一輪進行中**用 `sniff_live_element_tree.py` 撈（見第 3 步）；
+  跑完才想抓就來不及了 —— appium 已關、App 已離開失敗頁。
 - API 無需認證，內網直接 GET。

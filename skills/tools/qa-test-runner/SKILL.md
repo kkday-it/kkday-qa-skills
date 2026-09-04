@@ -242,7 +242,8 @@ ls -l /tmp/<log>                       # 要非 0 bytes
 修復步驟：
 1. 找到失敗步驟中使用的 page object element
 2. 取得當前畫面結構：
-   - **Mobile**：用 Appium WebDriver 連接設備取 page source（XML）
+   - **Mobile**：🔴 **在重現那一輪的 run 進行中，掛上 `sniff_live_element_tree.py` 撈**（見下面
+     「趁 run 還在跑撈失敗畫面」）。**不要等 run 跑完再另起一台 appium 去 dump。**
    - **Web / MWeb**：用 Playwright 取 DOM（必須用 `https://www.stage.kkday.com`，不可用 `www.kkday.com`）
 3. 比對現有 XPath 和實際頁面結構，找出正確的新 locator
 4. **如果 locator 用 i18n key（如 `t('register_button', locale=AppConfig.language)`）**，檢查 `QATestData/data/i18n/<platform>/<locale>.yaml` 的值是否跟 App 實際文字一致，不一致就更新 yaml；**若是整個 key 沒收在 yaml 裡，走下面 C，不要補一顆就重跑**
@@ -252,6 +253,32 @@ ls -l /tmp/<log>                       # 要非 0 bytes
    - Android ↔ iOS 共用 test step，改一邊要確認另一邊
    - 兩組之間獨立，互不影響
 7. 重新執行測試驗證修復
+
+##### 趁 run 還在跑撈失敗畫面（mobile A 類唯一正解）
+
+```bash
+# run 已經起來、但還沒跑到失敗點時掛上；trigger 給「找不到的那個 locator 的一小段」
+~/.claude/skills/qa-test-runner/scripts/sniff_live_element_tree.py "XCUIElementTypeStaticText[@name='Pay']"
+```
+
+它自己偵測 platform port 段（10000-10199）那台 appium 跟最新的 run 目錄，盯 appium log 等 trigger
+出現，然後從**同一個 session** 唯讀撈三份東西進 run 目錄：`*_source.xml`（完整元素樹）、
+`*_names.txt`（可見節點的 name/label/resource-id 清單，挑新 locator 用，不必翻幾萬行 XML）、
+`*_screen.png`。只發 GET（`/sessions`、`/source`、`/screenshot`），不點不滑，不影響跑測結果。
+
+🔴 **為什麼不能「等 run 跑完再另起一台 appium dump」——三個理由，每個都單獨足以否決：**
+
+| | |
+|---|---|
+| **跑完就沒了** | run 結束 appium 已關、App 也離開那一頁。只剩框架 `_handle_fail_case` 自己截的那張，而它**常常失敗**（appium 先死 → log 只有 `get screen shot error.`），等於什麼都沒有 |
+| **搶不到裝置** | 實體機同時只能一個 appium session。run 還在跑時另起一台 → 拿不到 session；硬搶會把正在跑的 run 弄死，白等一輪 |
+| **留殘留** | 那些 4723 / 3080 的探索用 appium 就是這樣來的，會佔 port 影響下一輪，`run_case.sh` 每次開頭都在清它們 |
+
+窗口哪來的：`element.py` 的 `DEFAULT_WAIT_TIMEOUT = 60`，`wait()` 找不到會**輪詢整整 60 秒**才拋錯。
+那 60 秒 App 就停在失敗畫面上，session 也還活著 —— 這就是唯一能撈到「失敗當下」的時機。
+
+trigger 要給 appium log 裡會**原樣出現**的字串（appium 會把 `findElement` 的 value 印出來），所以直接
+從 page object 複製那段 locator 最保險。給錯 trigger 的症狀是等到逾時，腳本會告訴你去看 run 的 output。
 
 #### B. 流程更改（回報用戶）
 
@@ -454,6 +481,10 @@ grep -rn -A1 "change_language" QATestData/cases/yaml/ui/AppRegression/ | grep -B
 - 指派 reviewer：`ethan02872,Lance-Liu-KKday`
 
 ## 看畫面
+
+🔴 **先確認沒有 run 在跑**（`pgrep -fl appium | grep -E "10[01][0-9][0-9]"` 有東西就是有）。有 run 在
+跑時**不准照這段起 3080** —— 實體機同時只能一個 session，會搶死正在跑的 run。那種情況要畫面請走
+上面「趁 run 還在跑撈失敗畫面」的 `sniff_live_element_tree.py`。下面這段只適用於裝置閒置時。
 
 用戶說「看畫面」時，自動執行以下步驟截取 iOS 設備畫面：
 
