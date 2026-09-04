@@ -90,6 +90,18 @@ iOS 包 `caffeinate`。丟背景跑要驗證真的起來（`total 0 cases` 是�
 輪詢），存進 run 目錄。**這也是 report 那邊拿不到的東西** —— API 只給 `terminal_output`，沒有畫面。
 細節與「為什麼不能等跑完再另起一台 appium」見 `qa-test-runner` SKILL.md「趁 run 還在跑撈失敗畫面」。
 
+🔴 **撈到畫面、看出新 locator 之後，同一輪再把下游「點點看」**，不要只驗那一顆就派工：
+
+```bash
+PAGEOBJECT_DEFAULT_WAIT_TIMEOUT=600   # 重現那一輪開跑前 export，把窗口從 60 秒撐到 10 分鐘
+~/.claude/skills/qa-test-runner/scripts/probe_live_session.py \
+  --after "<失敗 locator 的一小段>" --steps /tmp/probe.txt --confirm-mutates
+```
+
+第三方 App 改版一次動一整段，只修一顆的下場是「重跑 15 分鐘 → 死在下一顆 → 再修一顆」。
+run 死在那一頁時 session 還活著，那是唯一能一次攤出整段破口的時機。見
+`qa-test-runner` SKILL.md「點點看」。
+
 | 重現結果 | 動作 |
 |---|---|
 | **失敗，且失敗點跟 report 一致** | 確認真壞 → 進第 4 步派工 |
@@ -106,7 +118,9 @@ Agent(subagent_type='qa-case-automator',
       prompt='case=<KQT-T…> platform=<platform> 既有實作，最小改。
               report 失敗訊息=<terminal_output 摘要>
               本機重現失敗訊息=<第 3 步的 log 尾段>
-              分診假設=<A/B/C/D/E 哪一類>')
+              分診假設=<A/B/C/D/E 哪一類>
+              元素樹實證=<sniff 出來的節點，例：該節點已從 StaticText 改為 Button>
+              下游探測結果=<probe 的破口清單，或「整段下游走得通」>')
 Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=<KQT-T…>')
 ```
 
@@ -134,4 +148,6 @@ Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=<KQT-T…>')
 - report API **不提供任何截圖**——case 欄位裡沒有 screenshot，前端也沒有 image/artifact endpoint。
   要畫面只能自己重現時抓，而且要**在重現那一輪進行中**用 `sniff_live_element_tree.py` 撈（見第 3 步）；
   跑完才想抓就來不及了 —— appium 已關、App 已離開失敗頁。
+- **一輪重現要同時產出兩份東西**：失敗當下的畫面（sniff）＋下游流程的破口清單（probe）。
+  少了第二份，派工只會修到第一顆，第二顆要再花 15 分鐘才會浮出來。
 - API 無需認證，內網直接 GET。

@@ -186,6 +186,22 @@ def _kkday_www_host(env: str) -> str:
 
 1. **定位現有實作**：從 yaml（case ID）→ 它引用的 test step → page object，把這條鏈找齊。
 2. **先跑一次看它怎麼壞**（照 §4），保留實際錯誤訊息 / 畫面，不要沒跑就先猜。
+   🔴 **app 平台：這一輪就要順手拿兩份東西，不可以只拿錯誤訊息。** 一輪 app run 15~20 分鐘，
+   run 死在失敗頁的那段時間 session 還活著，是唯一能撈畫面、也唯一能往下試的窗口：
+   ```bash
+   PAGEOBJECT_DEFAULT_WAIT_TIMEOUT=600 <你的 run 指令>   # 窗口 60 秒 → 10 分鐘
+   ~/.claude/skills/qa-test-runner/scripts/sniff_live_element_tree.py "<失敗 locator 的一小段>"
+   ~/.claude/skills/qa-test-runner/scripts/plan_probe_steps.py --platform ios \
+     --repo <abs> --at <失敗的 file:line> --branch <match/case 分支> > /tmp/probe.txt
+   ~/.claude/skills/qa-test-runner/scripts/probe_live_session.py \
+     --after "<同上>" --steps /tmp/probe.txt --confirm-mutates
+   ```
+   sniff 唯讀撈失敗當下的元素樹＋截圖；plan 從**框架接下來要跑的那段 code** 生出 steps
+   （不要人手編 —— 人手編是在驗自己想像的流程）；probe 照那份 steps 把下游真的點過去，
+   任何一步壞掉不中斷，結尾列出整段破口。
+   🔴 **拿到破口清單要一次全修**，不可以只修第一顆就送重跑 —— 那等於用 15 分鐘去問「下一顆壞不壞」。
+   分支點完 `return` 回 caller 時，下游在 caller 與後面的 yaml step 裡，再給一個 `--at` 指過去。
+   細節見 `qa-test-runner` SKILL.md「趁 run 還在跑撈失敗畫面」與「點點看」。
 3. **診斷失敗類別**，決定怎麼修：
    - **locator 漂移 / DOM 改版** → 用真實元素樹重驗，最小改 locator。
    - **TCMS case 內容改了**（steps/expected 與現有實作對不上）→ 更新實作對齊**最新** TCMS（記得先重新 fetch）。
