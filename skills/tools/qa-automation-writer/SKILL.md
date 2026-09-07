@@ -572,6 +572,29 @@ locator 驗證修正後，**自動跑一次測試**確認（走 qa-test-runner�
   - ✅ 每次用完整 dot chain：`pages.personal_info_page.nationality_select_native.is_disabled`
   - helper 內同理；只有「從 element 取出的**純值**」（如 `text = pages.x.y.text`、`count = pages.x.y.count`）可暫存，因為那已不是 page/element 物件。
   - repo AI reviewer 會擋 element alias；本規範明文收嚴以免每次被退。（既有 code 尚有未清的 alias 屬 tech-debt，碰到再清，勿在不相干 PR 動它。）
+  - 🔴 **「這個檔案本來就一堆 alias」不是理由。** 那些是 tech-debt 基線，**不授權你新增第 57 個**。
+    反過來還更嚴：**master 原本已經是完整 dot chain 的地方，不准為了少打字改成 alias** ——
+    那是主動引入 anti-pattern，reviewer 會單獨點名。
+  - 🔴 **交付前自己跑這道 grep，不要等 reviewer 退**（只看**自己新增的行**，既有 alias 不在範圍內）：
+    ```bash
+    git diff origin/master...HEAD -- QATest/src/test_steps \
+      | grep -E '^\+[[:space:]]*[a-z_][a-z0-9_]*[[:space:]]*=[[:space:]]*pages\.' \
+      | grep -vE '\.(count|text|inner_text|rect|center|is_[a-z_]+)[[:space:]]*$' \
+      | grep -vE '\.(get_attribute|get_value|inner_text|text_content|evaluate)\(.*\)[[:space:]]*$'
+    ```
+    **命中任何一行 = 必改**，展開成完整 dot chain 再交付。後面兩道 `grep -v` 是**純值白名單**
+    （`.count`／`.text`／`.rect`／`.center`／`.is_*`／`get_attribute(...)` 這些已經 return 出值的），
+    判準是右側「有沒有以取值方法結尾」，不是「你打算怎麼用它」。
+    - **實測憑據**（PR #1688）：對修前 commit 跑 → 命中 6 行，正好是那 6 個 alias；對修後 commit
+      跑 → **0 行**，且 `phone_count` / `app_count` / `option_count` / `option_value` 這 4 個純值行
+      沒有被誤報。第一版規範只寫最外層那道 grep（沒有純值白名單），實跑會把這 4 行一起噴出來 ——
+      **會誤報的自檢等於沒有自檢**，人會學會忽略它。
+    - ⚠️ **回 0 行時先確認 diff 本身不是空的**（`git diff origin/master...HEAD --numstat` 要有東西）。
+      本機若掛了會壓縮輸出的 git proxy／wrapper，`git diff | grep` 可能整段被吃掉，看起來就像「乾淨」。
+    > 實例：PR #1688 就因為這 6 個 alias（`phone_radios`／`app_radios`／`app_type_select`／
+    > `options`／`account_input`／`confirm_button`）被 AI reviewer 判 **CHANGES_REQUESTED、
+    > Code Quality 6.8 < 7.5 不自動 approve**，其中 `confirm_button` 還是把 master 原本合規的
+    > dot chain 改成 alias 的。規範早就寫在這裡，但沒有機械化自檢 → 照樣寫出來了，所以補上這道 grep。
 - **禁止在 test_step 內 inline 建構 `Element(...)` / `Elements(...)`**：所有 locator 一律定義在對應 page object 的 `@property`，test_step 只透過 `pages.<page>.<element>` 取用（取 `.center`、`.text`、`.wait()` 等也一樣，先在 page object 定義好 element）。
   ```python
   # ❌ 錯：locator 寫死在 test_step、繞過 page object
