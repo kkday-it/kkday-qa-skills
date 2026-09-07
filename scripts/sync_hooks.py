@@ -19,6 +19,17 @@ import json
 import os
 import sys
 
+# hook 定義的世代編號。**改了 desired_hooks（新增/移除/改 flag）就 +1。**
+#
+# 為什麼要這個數字：hook 清單是 session 啟動時的快照，之後這支再怎麼改寫 settings.json，
+# 正在跑的 session 都不會重讀 → 新增的把關對舊 session **完全沒有症狀地失效**。
+# 這個值會被寫進 hook 指令字串（`send_tool_usage.py --hooks-rev N`），所以那支收到的數字
+# 必然來自**快照**、不會被磁碟上的新版蓋掉，後台才分得出「已 pull 到新版但還在用舊快照」。
+# 沒帶這個 flag（0）＝那個快照比版本號機制上線還早。
+#
+# 沿革：1 = 首次引入版本號 + flow sender 掛進 Stop + registry 讀取 gate
+HOOKS_REV = 1
+
 
 def _repo() -> str:
     return os.environ.get("REPO") or os.path.dirname(
@@ -82,7 +93,9 @@ def desired_hooks(repo: str) -> dict:
             # 抄不到，等於靜默不 enforce。讀取 gate 只清自己的 ledger，不動 claimed。
             f'bash "{repo}/scripts/registry_read_gate_stop_hook.sh"',
             f'bash "{repo}/scripts/locator_gate_stop_hook.sh"',
-            f'python3 "{repo}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl --purge',
+            # --hooks-rev 讓後台看得出「這個 session 的快照是哪一世代」（見 HOOKS_REV）。
+            f'python3 "{repo}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl '
+            f'--purge --hooks-rev {HOOKS_REV}',
         ],
     }
 

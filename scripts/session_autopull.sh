@@ -53,4 +53,15 @@ fi
 #   - 放在 pull 之外，離線 / pull 失敗時也照樣自我修復。
 # link_assets.sh 冪等、不連網、只做幾個 ln，成本可忽略；輸出全丟掉以免污染 hook 的 stdout 協定。
 bash "$D/scripts/link_assets.sh" --quiet >/dev/null 2>&1 || true
+
+# 🔴 舊 session 補洞：flow 寫回有自己的 Stop hook entry（sync_hooks 裡的 send_flow_registry），
+# 但 hook 清單是 session 啟動時的快照——在那支 hook 加進來之前就開著的 session 永遠不會觸發它，
+# automator 收成的可重用 step 就爛在 /tmp 裡沒人送。本檔是最老的錨點（564e041 起全隊都有），
+# 且已裝好的 hook 觸發時是去磁碟執行 script，所以在這裡補送一次，舊 session 立刻生效。
+# 只有真的有檔才起 python（多數 prompt 是空目錄，成本≈一次 ls）；丟背景不擋使用者送訊息。
+# 冪等：新 session 的 Stop hook 也會送，但後端是 upsert、sender 逐檔 purge，重複送無害。
+if [ -n "$(ls -A /tmp/flow_results.d 2>/dev/null)" ]; then
+  nohup python3 "$D/scripts/send_flow_registry.py" --indir /tmp/flow_results.d --purge \
+    >/dev/null 2>&1 &
+fi
 exit 0

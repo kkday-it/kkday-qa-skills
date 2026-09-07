@@ -6,12 +6,23 @@
 Stop hook 背景送出。即使使用者中途放棄、沒交付，那筆 outcome=invoked 也送得出去。
 
 用法：
-    python3 send_tool_usage.py --infile /tmp/tool_usage.jsonl [--purge]
+    python3 send_tool_usage.py --infile /tmp/tool_usage.jsonl [--purge] [--hooks-rev N]
 
 每行 jsonl 欄位（白名單）：
     run_id, tool, outcome, interactive, case_ids, platforms, case_count, note,
     request_text（使用者原始輸入）, stage（停在哪階段）, blocked_reason
     ⚠️ request_text 可能含 PII → 僅 admin-only dashboard 呈現，見 docs/telemetry.md 揭露
+
+版本兩欄（後台「誰還在跑舊版」用，見 docs/telemetry.md）：
+    skills_version  本 clone 的 git short HEAD ——「**磁碟上**是哪一版」
+    hooks_rev       由 `--hooks-rev` 帶入 ——「**這個 session 正在生效**的 hook 是哪一世代」
+
+🔴 兩欄缺一不可，因為它們可以不一致，而那個不一致正是要找的東西：Claude Code 在啟動時把
+hook 清單讀成快照，之後 `sync_hooks.py` 再改寫 `settings.json` 也不會被重讀。所以「已經
+pull 到最新（skills_version 新）、但還在用開 session 當時那批 hook（hooks_rev 舊）」的人，
+會漏掉新加的把關而**完全沒有症狀**。`--hooks-rev` 的值是 sync_hooks 寫進指令字串的，
+所以這支收到的數字必然來自快照，不會被磁碟上的新版本蓋掉——這是唯一測得到快照世代的方法。
+沒帶 `--hooks-rev` → 0 = 那個快照比「版本號上線」還早。
 """
 import argparse
 import json
@@ -31,15 +42,24 @@ BASE_BACKOFF = 0.5  # 秒；第 n 次失敗後 sleep n*BASE_BACKOFF
 try:
     import sys as _sys
     _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from telemetry_identity import resolve_operator, resolve_client_user
+    from telemetry_identity import (
+        resolve_client_user,
+        resolve_operator,
+        resolve_skills_version,
+    )
     OPERATOR = resolve_operator()
     _CLIENT_USER = resolve_client_user()
+    _SKILLS_VERSION = resolve_skills_version()
 except Exception:
     OPERATOR = os.getenv("KKDAY_TOOLS_USER_NAME", "kkday_qa_mcp")
     try:
         _CLIENT_USER = f"{os.getlogin()}@{socket.gethostname()}"
     except Exception:
         _CLIENT_USER = "unknown"
+    _SKILLS_VERSION = ""
+
+# 由 --hooks-rev 覆寫（見 main()）。模組層預設 0＝沒帶＝快照比版本號上線更早。
+_HOOKS_REV = 0
 
 
 def _post_once(payload: dict, timeout: float = 4.0) -> bool:
@@ -79,6 +99,8 @@ def _normalize(row: dict) -> dict:
     out = {k: row[k] for k in keys if k in row}
     out["operator"] = OPERATOR
     out["client_user"] = _CLIENT_USER
+    out["skills_version"] = _SKILLS_VERSION   # 磁碟版本
+    out["hooks_rev"] = _HOOKS_REV             # 快照世代（見檔頭）
     return out
 
 
@@ -86,7 +108,12 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Send tool-usage telemetry (fail-safe)")
     p.add_argument("--infile", required=True, help="usage jsonl 路徑")
     p.add_argument("--purge", action="store_true", help="全部送完後刪除結果檔")
+    p.add_argument("--hooks-rev", type=int, default=0,
+                   help="hook 定義世代；由 sync_hooks.py 寫進 hook 指令字串，"
+                        "所以收到的值來自「這個 session 的快照」而非磁碟。0＝快照比版本號上線更早")
     args = p.parse_args()
+    global _HOOKS_REV
+    _HOOKS_REV = args.hooks_rev
 
     sent = failed = 0
     try:

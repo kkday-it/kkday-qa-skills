@@ -35,6 +35,45 @@ def test_locator_gate_runs_after_send_locator():
     assert send_i < gate_i, "send_locator 應在 locator gate 之前（先送，gate 才在 pass 清）"
 
 
+def test_read_gate_runs_before_locator_gate():
+    """讀取 gate 必須在寫入 gate 之前：它要在 claimed 被寫入 gate 刪掉之前抄進自己的 ledger，
+    排在後面就永遠抄不到 → 靜默不 enforce。"""
+    cmds = _stop_cmds(sh.sync({}, REPO))
+    read_i = next(i for i, c in enumerate(cmds) if "registry_read_gate_stop_hook.sh" in c)
+    gate_i = next(i for i, c in enumerate(cmds) if "locator_gate_stop_hook.sh" in c)
+    assert read_i < gate_i, "讀取 gate 應排在 locator 寫入 gate 之前"
+
+
+def test_send_flow_registry_installed_with_purge():
+    """flow sender 一定要在 Stop 裡：過去它只靠 planner 自己 nohup 觸發，
+    而 fix 路線跳過 planner ⇒ 最常走的路線從來不回寫。"""
+    cmds = _stop_cmds(sh.sync({}, REPO))
+    sf = next(c for c in cmds if "send_flow_registry.py" in c)
+    assert "--indir /tmp/flow_results.d" in sf
+    # flow 沒有對應的寫入 gate，不會有人拿它當證據 → 帶 --purge 才不會每輪重送
+    assert "--purge" in sf
+
+
+def test_tool_usage_carries_hooks_rev():
+    """--hooks-rev 是唯一測得到「這個 session 的 hook 快照是哪一世代」的方法：
+    它被寫進指令字串，所以舊 session 帶的是舊值，不會被磁碟上的新版蓋掉。"""
+    cmds = _stop_cmds(sh.sync({}, REPO))
+    tu = next(c for c in cmds if "send_tool_usage.py" in c)
+    assert f"--hooks-rev {sh.HOOKS_REV}" in tu, tu
+    assert isinstance(sh.HOOKS_REV, int) and sh.HOOKS_REV >= 1
+
+
+def test_hooks_rev_bump_migrates_old_command():
+    """HOOKS_REV +1 之後，既有安裝裡的舊指令要被換掉（否則後台永遠看到舊世代）。"""
+    old = (f'python3 "{REPO}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl '
+           f'--purge --hooks-rev 0')
+    cfg = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": old}]}]}}
+    sh.sync(cfg, REPO)
+    cmds = _stop_cmds(cfg)
+    assert old not in cmds, "舊 --hooks-rev 指令應被 migrate 掉"
+    assert any(f"--hooks-rev {sh.HOOKS_REV}" in c for c in cmds)
+
+
 def test_migrates_old_infile_locator_hook():
     # 既有安裝：舊的 --infile 版 locator hook
     old = f'python3 "{REPO}/scripts/send_locator_registry.py" --infile /tmp/locator_results.jsonl --purge'
