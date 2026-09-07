@@ -40,6 +40,31 @@ if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   done
 fi
 
+# 🔴 舊 session 補洞：registry 讀取 gate 有自己的 Stop hook entry，但 hook 清單是
+# **session 啟動時的快照** —— 在「新增那支 hook 之前就已經開著」的 session 裡，它永遠不會被
+# 觸發，而且沒有任何症狀（跟通過長得一模一樣）。sync_hooks 改寫 settings.json 也救不了：
+# 那份快照不會被重讀，得等對方重開 session。
+# 但已經在快照裡的 hook（本檔就是，自 eab3919 起全隊都有）觸發時是**去磁碟執行 script**，
+# 所以在這裡順手把讀取 gate 也叫一次，舊 session 立刻補上、不必等重開。
+# 呼叫的是那支 hook 本身（不是直接跑 python），語意/ledger/清理權完全交給它，不複製一份邏輯。
+# 冪等：新 session 會跑兩次——它唯讀、只清自己的 ledger，重跑無副作用。
+# 它擋下時**要直接把它的 JSON 吐出來並結束**：一次 hook 呼叫只能有一份 decision，
+# 再往下跑會印出第二個 JSON 而破壞協定。
+READ_HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/registry_read_gate_stop_hook.sh"
+if [ -f "$READ_HOOK" ]; then
+  RG_OUT="$(bash "$READ_HOOK" 2>/dev/null)"
+  case "$RG_OUT" in
+    *'"decision":"block"'*)
+      printf '%s\n' "$RG_OUT"
+      exit 0
+      ;;
+  esac
+else
+  # fail-CLOSED（同下面 $GATE 的處理）：腳本不見了就擋，否則把關能被刪檔繞過。
+  printf '{"decision":"block","reason":"registry 讀取 gate 腳本找不到（%s），為避免把關被繞過，擋下結束。請在 kkday-qa-skills clone 跑 git pull 確認 scripts/registry_read_gate_stop_hook.sh 存在。"}\n' "$READ_HOOK"
+  exit 0
+fi
+
 # 守門 fail-CLOSED：gate 跑不成（腳本遺失等）也要擋，否則把關能被刪腳本繞過。
 if [ ! -f "$GATE" ]; then
   printf '{"decision":"block","reason":"locator gate 腳本找不到（%s），為避免把關被繞過，擋下結束。請確認 scripts/check_locator_gate.py 存在。"}\n' "$GATE"

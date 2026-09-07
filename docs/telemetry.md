@@ -148,7 +148,34 @@ QA 自動化流程會**選配性地**回傳「工具使用量/採用度」遙測
 - `stage`（停在哪階段：fetch/plan/confirm/automate/gate/report）、`blocked_reason`（blocked/abandoned 的簡短原因）
 - `note`（自由備註）
 - `operator`（`KKDAY_TOOLS_USER_NAME`，稽核用）、`client_user`（`login@hostname`）
+- `skills_version`（本 clone 的 git short HEAD，dirty 時加 `+`）、`hooks_rev`（生效中的 hook 世代）
+  —— 見下方「版本兩欄」
 - ⚠️ **`request_text`（使用者原始輸入，逐字）** —— 見下方例外說明
+
+## 版本兩欄：`skills_version` / `hooks_rev`
+
+用來回答一個看不見的問題：**「誰的把關其實沒生效？」**
+
+Claude Code 只在**開 session 時**把 hook 清單讀成快照，之後 `sync_hooks.py` 再改寫
+`settings.json` 都不會被重讀。所以已經 `git pull` 到最新的人，session 裡生效的仍是開場那批
+hook —— 新加的把關對他**完全沒有症狀地失效**（跟通過長得一模一樣）。
+
+兩欄各自量的是不同東西，缺一就看不出這件事：
+
+| 欄位 | 量什麼 | 來源 |
+|---|---|---|
+| `skills_version` | **磁碟上**是哪一版 | `telemetry_identity.resolve_skills_version()` 對本 clone 跑 `git rev-parse --short HEAD` |
+| `hooks_rev` | **這個 session 正在生效**的 hook 是哪一世代 | `sync_hooks.py` 的 `HOOKS_REV` 被寫進 hook 指令字串（`--hooks-rev N`），所以收到的值必然來自快照，不會被磁碟上的新版蓋掉 |
+
+判讀（ai_studio「依版本」表就是照這個分類）：
+
+- `skills_version` 新 + `hooks_rev` 落後 → **舊快照**，請對方開一個新 session。
+- 兩欄皆空/0 → **未回報**（sender 還沒升，或 git 取不到）。刻意不當成舊版，否則是假指控。
+- 🔴 **沒出現在表上不等於是最新**：session 舊到連 `send_tool_usage.py` 都不在快照裡的話，
+  它什麼都不會送。表只涵蓋「還會送遙測的人」。
+
+兩欄都允許空值（`""` / `0`）：版本解析是 fail-safe 的，取不到就回空——不可因為拿不到版本而
+讓整筆使用紀錄送不出去。
 
 ## ⚠️ PII 例外：`request_text`（逐字原始輸入）
 
