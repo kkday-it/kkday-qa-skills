@@ -231,6 +231,51 @@ ls -l /tmp/<log>                       # 要非 0 bytes
 
 觀察輸出，注意 PASS/FAIL 結果。
 
+#### 🔴 `ps aux | grep "[q]atest run"` 會假陰性——不要用它判「還在不在跑」
+
+上面那道 `ps aux | grep -c "[q]atest run"` 只能用來驗**剛送出的那一刻有沒有起來**。
+拿它判「現在還在不在跑」會**回 0 但其實還在跑**（實測），於是誤判成「跑完了」→ 跑去讀還沒寫完的
+log → 得出錯的結論，或直接重送一輪跟自己搶裝置。
+
+**可靠判準只有一個：run 目錄的檔案還在不在長大。**
+
+```bash
+d=$(ls -dt ~/Documents/QATest_Output/*/ | head -1)
+find "$d" -newermt '-90 seconds' | head    # 有輸出 = 還在跑；連續兩次都空 = 真的停了
+```
+
+harness 層丟背景（`run_in_background`）的 task 更直接：讀 `tasks/<id>.output` 的大小有沒有增加，
+或等 harness 自己回報結束——**不要自己用 ps 去猜**。
+
+#### 撈 log：`qatest.log` 會 rotate，只讀它會少一大段
+
+`~/Documents/QATest_Output/qatest.log` 是 `RotatingFileHandler`（`QATest/src/lib/logger.py:170`，
+`maxBytes=5MB`、`backupCount=5`），滿了就輪替成 `qatest.1.log` … `qatest.5.log`
+（`logger.py` 刻意把 `qatest.log.1` 改名成 `qatest.1.log`，好讓 macOS Finder 認得副檔名）。
+
+**一輪 app run 就可能寫掉好幾 MB**，所以「失敗那段」經常已經不在 `qatest.log` 裡，而在某個 backup。
+只 `tail qatest.log` 的下場是看到別的 run 的尾巴，卻以為自己那輪什麼都沒印。
+
+🔴 **不要只挑一個 backup 讀，也不要假設 `.1` 最新。** 多個 run 併發時每個 process 各自持有
+handler，`RotatingFileHandler` **不是 multi-process safe**，序號順序不保證（實測同一時間
+`qatest.3.log` 只有 341K、其餘五個都剛好 5.0M）。正解是**六個全 cat 起來，再按 pid 過濾**：
+
+```bash
+O=~/Documents/QATest_Output
+cat $O/qatest.5.log $O/qatest.4.log $O/qatest.3.log $O/qatest.2.log $O/qatest.1.log $O/qatest.log \
+  | grep '\[<pid>\]\[8415764096\]' > $O/<run_dir>/pid<pid>_slice.log
+```
+
+- **thread id 全 run 共用**（實測併發的每個 run 都是 `8415764096`），**能區分的只有 pid**。
+  pid 從該輪的 harness task output 或 log 開頭撈。
+- 產出的 `pid<pid>_slice.log` 就丟回該 run 目錄 —— 發 PR 時的 Testing 段直接引它的行號，
+  reviewer 可獨立覆核（本 repo PR 已用這個慣例）。
+
+⚠️ **per-case debug log（`<CASE>_<tid>_fail.log`）不能當唯一來源**：它**常常只有 header、約 315
+bytes**（框架先開檔、真正的內容進了 `qatest.log`）。但也**不是每次都空** —— 實測
+`KQT-T7514_8415764096_fail.log` 有 848KB 完整內容。所以**先 `ls -l` 看大小再決定讀哪個**，
+不要因為上次是空的就跳過它。
+
 ### 3. 列出結果
 
 用戶問結果時，列出**所有** Pass 和 Fail，不能只列 Fail。多個 platform 同時在跑時要問清楚是哪個；只有一個就直接列。
