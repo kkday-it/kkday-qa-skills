@@ -74,6 +74,34 @@ grep -rl "<ID>:" <clone>/QATestData/cases/yaml    # 有命中 = 既有 case
 fix 路線的重現步驟不可省：**先照 `qa-test-runner` 跑一次拿實際 log**，再把失敗訊息一起交給
 automator。沒有 log 就 spawn automator，它只能用猜的，改動範圍會失控。
 
+🔴 **失敗點落在共用 step 時，派工前多做一步：先證明那個 step 真的壞了。**
+「A 與 B 不一致」（帳號對不上、清單為空、查不到資料）**只是現象，不是根因**。從 log 釘出不一致
+之後，還要再問一句：**這條路徑本來是怎麼設計來處理這種情境的？** 答案通常就在同一個檔案的隔壁分支。
+
+```bash
+grep -rho "<step_name>" QATestData/cases/yaml | wc -l   # 這個 step 有多少 case 在用
+grep -rl  "<step_name>" QATestData/cases/yaml           # 綠的那些 vs 掛的那張，前置差在哪
+```
+
+**多數 case 長年是綠的 → 機制沒壞，第一假設必須是「這張的接法不對」。** 機制對 21 張有效，它就不是
+結構性錯誤。少了這一步，派工單會直接叫 automator 去改 20+ 張 case 共用的主幹 —— 而那張 case 改完
+**會變綠**，綠燈讓人以為改對了。修法優先序：① 填既有鉤子 → ② 在單案側補資料 → ③ 改共用主幹（最後
+手段）。判準、必查指令與實例見 `qa-test-runner` SKILL.md「F. 共用 step 的既有機制沒接上」。
+
+🔴 **真的走到 ③（改了共用主幹）→ 主對話要自己盤 `impacted_cases` 並問人要不要一併回歸。**
+「改共用要驗回歸範圍」這條規則原本只寫在 `qa-case-planner` §3.3 —— 而 fix 路線刻意跳過 planner，
+跟上面的 registry 讀取是**同一個結構性缺口**：規則掛在被跳過的角色身上，就等於從來沒執行過。
+automator 回報「改了共用符號 X」時，接收端必須是主對話：
+
+```bash
+grep -rl "<automator 回報改到的共用符號>" QATestData/cases/yaml   # 這就是 impacted_cases
+```
+
+拿到清單後**回報使用者並問要跑多少**（全跑常不現實），最低限度是「每條互斥分支各一張證人 ＋ 同組
+另一平台」。**只重跑當前 case 的兩平台證明不了共用改動沒把別的 case 改壞** —— 當前 case 一定是綠的，
+被改壞的那幾張在你沒跑到之前完全沉默。`qa-case-fidelity-reviewer` §4.5 會查回歸憑據，但它是唯讀的，
+**只能揭露、不能補跑**；`scripts/` 裡也沒有任何 gate 在強制這件事，所以這一步只有主對話會做。
+
 fix 路線**唯一該回頭找 planner 的情況**：失敗根因不是壞掉，而是 case 規格本身變了、或要新增一個
 還沒覆蓋的平台 —— 那等於重新設計，回 create 路線。
 
