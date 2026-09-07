@@ -64,6 +64,30 @@ def _platform_tokens(value) -> set:
     return {t for t in re.split(r"[,\s/|;+]+", raw) if t}
 
 
+_FAMILY_OF = {
+    "ios": "app", "android": "app", "app": "app", "mobile": "app",
+    "web": "web", "mweb": "web", "desktop": "web",
+    "api": "api", "backend": "api",
+}
+
+
+def _platform_family(value) -> str:
+    """platform 原字串 → 平台家族（去重用）。
+
+    ios / android / app / mobile / "ios,android" 一律回 'app'；web / mweb 回 'web'；
+    api 回 'api'；any / all / 空回 'any'；認不出來的回排序後的原 token（不硬塞進任何家族，
+    寧可多一列也不要把不同東西併掉）。
+    """
+    toks = _platform_tokens(value)
+    if not toks or toks <= _GENERIC:
+        return "any"
+    fams = {_FAMILY_OF[t] for t in toks if t in _FAMILY_OF}
+    unknown = sorted(t for t in toks if t not in _FAMILY_OF and t not in _GENERIC)
+    if fams and not unknown:
+        return "+".join(sorted(fams))
+    return "+".join(sorted(fams) + unknown) or "any"
+
+
 def _platform_match(entry_platform, want: str):
     """回 'exact' / 'family' / 'generic' / 'sibling'，完全不相關回 None。"""
     want = (want or "").strip().lower()
@@ -138,24 +162,31 @@ def _loc_key(loc) -> str:
 
 
 def _dedup(cands: list) -> list:
-    """讀取端去重：key = **(name, kind)**，不含 platform。
+    """讀取端去重：key = **(name, kind, 平台家族)**。
 
-    刻意不含 platform：同一個 function 被不同人分別註冊成 ios / app / mobile / "ios,android"
-    是最常見的重複來源（platform 詞彙不統一的直接產物）。把 platform 放進 key 等於承認那些
-    是不同東西，於是讀的人看到三四筆長得一樣的候選，再自己造第五個。合併成一筆、把看過的
-    platform 寫法收進 `platform_variants`，讓「其實是同一個」看得出來。
+    刻意用「家族」而不是 platform 原字串：同一個 function 被不同人分別註冊成
+    ios / app / mobile / "ios,android" 是最常見的重複來源（platform 詞彙不統一的直接產物）。
+    用原字串當 key 等於承認那些是不同東西，於是讀的人看到三四筆長得一樣的候選，再自己造第五個。
+    同家族合併成一筆、把看過的寫法收進 `platform_variants`，讓「其實是同一個」看得出來。
+
+    🔴 但**不可**跨家族合併：app 的實作與 web 的實作是兩個真的不同的東西（實測 298 筆裡
+    `create_ticket_event` 就同時有 api 與 web 兩份、落在不同檔）。整個 platform 都不進 key 時
+    這兩份會被併成一筆，另一份靜默消失 —— 那正是「讀回來的東西不完整」的來源。
     留最新一筆（by last_verified）、平台吻合度高的優先。"""
+    def _key(e):
+        return (str(e.get("name", "")).lower(), str(e.get("kind", "")).lower(),
+                _platform_family(e.get("platform")))
+
     best = {}
     for e in cands:
-        key = (str(e.get("name", "")).lower(), str(e.get("kind", "")).lower())
+        key = _key(e)
         cur = best.get(key)
         if cur is None or (_PLATFORM_RANK.get(e.get("platform_match"), 0),
                            _datekey(e)) > (_PLATFORM_RANK.get(cur.get("platform_match"), 0),
                                            _datekey(cur)):
             best[key] = e
     for key, e in best.items():
-        same = [c for c in cands
-                if (str(c.get("name", "")).lower(), str(c.get("kind", "")).lower()) == key]
+        same = [c for c in cands if _key(c) == key]
         variants = sorted({str(c.get("platform") or "") for c in same})
         if len(variants) > 1:
             e["platform_variants"] = variants

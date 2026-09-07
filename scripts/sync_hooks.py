@@ -72,9 +72,14 @@ def desired_hooks(repo: str) -> dict:
             f'python3 "{repo}/scripts/send_case_fidelity.py" --indir /tmp/case_fidelity_results.d',
             f'bash "{repo}/scripts/fidelity_gate_stop_hook.sh"',
             f'python3 "{repo}/scripts/send_locator_registry.py" --indir /tmp/locator_results.d',
-            # 讀取 gate 必須排在 locator 寫入 gate **之前**：兩者共用同一個 claimed 檔
-            # （automator arm 的那個），而寫入 gate 過關時會刪掉它——排在後面就永遠看不到 claim，
-            # 等於靜默不 enforce。讀取 gate 自己什麼都不刪（claimed 的所有權在寫入 gate）。
+            # flow 寫回：automator 收成的可重用 step。**帶 --purge**——flow 沒有對應的寫入 gate，
+            # 不會有人拿它當證據，留著只會每輪重送。過去這支沒掛進 Stop，寫入只靠 planner 自己
+            # nohup 觸發，而 fix 路線跳過 planner ⇒ 最常走的路線從來不回寫（實測：9 月 154 筆
+            # 寫入裡 app 家族只 12 筆，主幹 step 一筆都沒有）。
+            f'python3 "{repo}/scripts/send_flow_registry.py" --indir /tmp/flow_results.d --purge',
+            # 讀取 gate 必須排在 locator 寫入 gate **之前**：它的 arm 訊號是從 automator arm 的
+            # claimed 檔抄一份到自己的 ledger，而寫入 gate 過關時會刪掉 claimed——排在後面就永遠
+            # 抄不到，等於靜默不 enforce。讀取 gate 只清自己的 ledger，不動 claimed。
             f'bash "{repo}/scripts/registry_read_gate_stop_hook.sh"',
             f'bash "{repo}/scripts/locator_gate_stop_hook.sh"',
             f'python3 "{repo}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl --purge',

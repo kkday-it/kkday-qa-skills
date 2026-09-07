@@ -246,9 +246,9 @@ def _kkday_www_host(env: str) -> str:
 
 > **「跑過」不等於「過」。** 你只負責實作 + 跑過 + 產可追溯表；**忠實度把關由主對話在你回報後 spawn `qa-case-fidelity-reviewer`（對抗式、獨立）** 做——它比對 case 規格 vs 你的實作，出覆蓋率/信心，達標才算真的過，不達標退回你修。你**不自己 spawn reviewer**（非本職責）。
 
-## 收尾必做：武裝忠實度 gate + locator gate（含收成）+ 記錄工具使用量（強制，讓流程不靠記憶、團隊都遵守）
+## 收尾必做：武裝忠實度 gate + locator gate（含收成）+ 記錄工具使用量 + 收成可重用 flow（強制，讓流程不靠記憶、團隊都遵守）
 
-這三件是**遙測與把關的觸發點**，過去都靠「主對話記得手動做」而反覆被漏。把它們綁在**你**身上（你一定會跑、且知道自己的 case×平台），全隊用這個 agent 就都會執行，不再是某人某台環境才有。回報**之前**做：
+這四件是**遙測與把關的觸發點**，過去都靠「主對話記得手動做」而反覆被漏。把它們綁在**你**身上（你一定會跑、且知道自己的 case×平台），全隊用這個 agent 就都會執行，不再是某人某台環境才有。回報**之前**做：
 
 **① 武裝忠實度 gate** — 把「這次真的跑出 `0 failed` 交付的每個 case×平台」各追加一行到 **session 專屬的** claimed 檔（**append 不覆蓋**）。檔名一定要帶 `$CLAUDE_CODE_SESSION_ID`，這樣同機並發的其他 session（沒在跑 agent 的）不會被你的 claim 擋到：
 
@@ -294,8 +294,33 @@ printf '{"tool":"automate-tcms-cases","outcome":"%s","case_ids":["%s"],"platform
 # 交付成功用 outcome=delivered；blocked/fail 用 outcome=blocked（「有人用過但沒交付」也要記）
 ```
 
+**④ 收成可重用 flow（reusable step）** — 這是**你的職責，不是 planner 的**。實測資料：flow 寫入
+只接在 `qa-case-planner` 身上，而 fix 路線刻意跳過 planner ⇒ **最常走的那條路線從來不回寫**。
+後果就是 app 側（fix 為主）在 registry 幾乎空白：9 月 154 筆寫入裡 app 家族只 12 筆（8%），
+而 `create_order_by_app`、`verify_order_success_results`、`compare_order_info_between_ui_and_api`
+這種天天在用的主幹 step **一筆都沒有** —— 下一個人讀回空，只能再寫一份差不多的。
+
+交付後（case 綠 + fidelity 過），把這次**新寫的**、或**沿用/修好而確認還活著的**可重用 step
+各一行寫進 per-process 檔。**只記 test step / setup flow / helper 這種可被別的 case 直接呼叫的東西**，
+不要記只有這張 case 用得到的一次性程式碼：
+
+```bash
+mkdir -p /tmp/flow_results.d
+F="/tmp/flow_results.d/$$-harvest.jsonl"   # per-process，避免並行互覆（單一共用檔會被別人的 purge 吃掉）
+printf '{"name":"%s","kind":"%s","purpose":"%s","location":"%s","signature":"%s","platform":"%s","status":"verified"}\n' \
+    "create_order_by_app" "setup_flow" "App 端下單主幹，payment_channel 決定付款方式" \
+    "QATest/src/test_steps/kkday/app/bookings/booking.py:372" \
+    "create_order_by_app(pages, test_run_config, payment_channel)" "app" \
+    >> "$F"
+```
+
+- `platform` 用 **`app`**（ios/android 共用主幹時）或 `ios` / `android`（只有單邊適用時）；讀取端會做別名展開，不要寫成 `ios,android` 之外的自創格式。
+- `location` 帶 `file:line` 就好，行號會漂但讀取端是**按 symbol 名**驗證的，不影響。
+- 送出由 Stop hook `send_flow_registry.py --indir /tmp/flow_results.d` 背景處理，**你不用自己呼叫 script**（你 cwd 在框架 worktree，叫不到 kkday-qa-skills 的 `scripts/`）。
+
 **規則（共通）**：
 - **① / ② 只 arm 你「已交付（該平台真跑出 `0 failed`）」的**；`fail`/`blocked`/`skipped` **不 arm**（回報給人處理，不是宣稱做完）。
+- **④ 同樣只在已交付時收成**（未交付的 step 沒被真的跑過，標 verified 是假的）；這次沒有任何值得別人重用的 step 就不寫，但**不准因為「懶得判斷」而一律不寫**。
 - **② 只對 UI case 做**（web/mweb/android/ios）；純 API case 不 arm locator gate、不用收成 locator。
 - **③ tool_usage 一律 emit**（delivered 或 blocked 都記）。
 - fix 模式重修後同樣照此規則。
