@@ -105,6 +105,10 @@ except Exception:
     _fetch_with_retry = None
     _shape = None
 try:
+    import registry_read_receipt  # noqa: E402
+except Exception:
+    registry_read_receipt = None
+try:
     from verify_locator import _open_page, _verify_candidates  # noqa: E402
     from playwright.sync_api import sync_playwright  # noqa: E402
 except Exception:
@@ -211,6 +215,18 @@ def main() -> int:
         return 4
 
     entries, source = _gather_candidate_entries(args)
+
+    # 讀取收據：valve 只 import fetch 的兩個 helper，不會經過那邊的收據路徑，所以自己寫一列。
+    # 撈到空的也寫（記的是「有沒有去問」）；任何錯誤吞掉，不影響 valve 回傳。
+    if registry_read_receipt is not None and args.case:
+        try:
+            registry_read_receipt.write(
+                kind="locator", case=args.case, platform=args.platform,
+                query={"flow": args.flow, "page": args.page,
+                       "component": args.component, "element": args.element},
+                n=len(entries), endpoint="/api/qa-automation/locator-registry")
+        except Exception:
+            pass
 
     results = []
     emit_rows = []

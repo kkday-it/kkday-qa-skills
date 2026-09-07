@@ -11,7 +11,13 @@ last_verified / status。取回端（get_verified_flow.py）拿回後一律「�
 名還在），驗不過標 stale 重挖。
 
 用法：
-    python3 send_flow_registry.py --infile /tmp/flow_results.jsonl [--purge]
+    python3 send_flow_registry.py --indir /tmp/flow_results.d [--purge]      # 建議
+    python3 send_flow_registry.py --infile /tmp/flow_results.jsonl [--purge] # 相容舊寫法
+
+🔴 **並行時要用 `--indir` + per-process 檔名**（`flow_results.d/<pid>-<ts>.jsonl`）。
+原本只有 `--infile`（單一共用檔）+ `--purge`：ios / android 兩個 automator 同時跑時，
+先送完的那個 purge 會把另一個剛 append、還沒送出的列一起刪掉——**寫入靜默消失**。
+locator 那支早就是 `--indir` 逐檔送，這裡對齊。
 
 每行 JSON 欄位（* 必填）：
     name*      可重用 flow 的真實 function / step 名
@@ -25,6 +31,7 @@ last_verified / status。取回端（get_verified_flow.py）拿回後一律「�
     id / last_verified / status（預設 verified）
 """
 import argparse
+import glob
 import json
 import os
 import sys
@@ -91,17 +98,13 @@ def _normalize(row: dict) -> dict:
     return out
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description="Send flow-registry telemetry (fail-safe)")
-    p.add_argument("--infile", required=True, help="flow 結果 jsonl 路徑")
-    p.add_argument("--purge", action="store_true", help="全部送完後刪除結果檔")
-    args = p.parse_args()
-
+def _process_file(path: str, purge: bool):
+    """送一個結果檔，回 (sent, failed)。絕對 fail-safe。"""
     sent = failed = 0
     try:
-        if not os.path.isfile(args.infile):
-            return 0
-        with open(args.infile, "r", encoding="utf-8") as f:
+        if not os.path.isfile(path):
+            return 0, 0
+        with open(path, "r", encoding="utf-8") as f:
             lines = [ln.strip() for ln in f if ln.strip()]
         for ln in lines:
             try:
@@ -113,17 +116,53 @@ def main() -> int:
             if _send_with_retry(_normalize(row)):
                 sent += 1
             else:
-                failed += 1
-        if args.purge:
+                failed += 1  # 5 次都失敗，放棄這筆
+        # 🔴 只在「整檔都送成功」才刪。無條件刪會在後端抽風時把還沒送出的列一起丟掉——
+        # 而這支是掛在 Stop hook 背景跑的，沒人會看到 retry 失敗，寫入就這樣靜默消失。
+        # 留著的檔下一輪 Stop 會再送一次（後端是 upsert，重送無害）。
+        if purge and failed == 0:
             try:
-                os.remove(args.infile)
+                os.remove(path)
             except Exception:
                 pass
     except Exception:
-        pass  # 絕對 fail-safe
+        pass  # 絕對 fail-safe：不干擾主流程
+    return sent, failed
+
+
+def _collect_targets(indir: str, infile: str) -> list:
+    """待處理檔清單：--indir 的所有 *.jsonl（排序）+ --infile（去重）。"""
+    targets = []
+    if indir:
+        try:
+            targets.extend(sorted(glob.glob(os.path.join(indir, "*.jsonl"))))
+        except Exception:
+            pass
+    if infile and infile not in targets:
+        targets.append(infile)
+    return targets
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Send flow-registry telemetry (fail-safe)")
+    p.add_argument("--infile", default="", help="單一 flow 結果 jsonl 路徑")
+    p.add_argument("--indir", default="",
+                   help="結果目錄；掃其中所有 *.jsonl 逐檔送（per-process 檔，並行安全）。"
+                        "與 --infile 擇一或並用。")
+    p.add_argument("--purge", action="store_true", help="每個檔送完後刪除該檔")
+    args = p.parse_args()
+
+    targets = _collect_targets(args.indir, args.infile)
+
+    sent = failed = 0
+    for path in targets:
+        s, fl = _process_file(path, args.purge)
+        sent += s
+        failed += fl
 
     if sys.stdout.isatty():
-        print(f"[flow-registry] sent={sent} failed(gave up after {MAX_RETRIES})={failed}")
+        print(f"[flow-registry] files={len(targets)} sent={sent} "
+              f"failed(gave up after {MAX_RETRIES})={failed}")
     return 0
 
 

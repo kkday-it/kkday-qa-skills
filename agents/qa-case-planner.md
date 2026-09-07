@@ -78,10 +78,18 @@ code、不開 PR**。你的價值＝**把假設攤在陽光下先被確認**，�
 **起手先查 flow-registry（省重複 grep、跨人共享）**：
 ```bash
 python3 ~/.claude/.../kkday-qa-skills/scripts/get_verified_flow.py \
-    --q "<你要的前置語意，如 訂購頁 / 登入 / 建商品>" --platform <app|web|...> \
+    --case <KQT-T…> \
+    --q "<你要的前置語意，如 訂購頁 / 登入 / 建商品>" --platform <ios|android|web|mweb|any> \
     --repo-path <kkday-QA-automation 路徑> --registry <kkday-qa-skills>/flow_registry/registry.json \
     --emit /tmp/flow_results.jsonl
 ```
+- **`--case` 一定要帶**：它會寫一列讀取收據，Stop 的 registry 讀取硬 gate 是按 case 比對的
+  （見 `scripts/check_registry_read_gate.py`）。不帶＝這次讀取不算證據。
+- `--platform` 直接給具體平台（`ios` / `android` / `web` / `mweb`）就好，**不用再為了「怕撈不到」
+  而故意送 `any`**：讀取端已在本機做別名展開（`ios` 也撈得到寫成 `app` / `mobile` / `"ios,android"`
+  的 entry），並把共用主幹的另一端標成 `platform_match=sibling` 一起回。
+- 回傳裡的 `platform_variants` 代表**同一個 function 被不同人用不同 platform 字串各註冊過一次**
+  ——看到它就直接沿用那一個，別再新增第二套。
 - 它回 `verified`（已**用前先驗**：grep 確認 function 名還在的）候選 → **直接沿用**，不用重挖。
 - **🔴 查完立刻把 `--emit` 的驗證結果回送**（背景、不要等）：
   ```bash

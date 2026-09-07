@@ -4,6 +4,58 @@
 
 ---
 
+## 臨時分析腳本讀錯回應鍵 → 在空集合上算出「沒問題」
+
+**症狀**：查「registry 有沒有同名但不同實作的 entry」，第一次跑出 11 組可疑、其中 `create_ticket_event` 明顯落在兩個不同檔；改寫腳本再跑，同一個 URL、同樣回 298 筆，卻變成 **0 組衝突**，而且那筆消失了。
+
+**根因**：flow-registry 的清單鍵是 **`entries`**，不是 `items`。第一版腳本寫了 `d.get("items") or d.get("flows") or d.get("entries")` 的 fallback 鏈所以撈到；第二版只寫 `d.get("items", [])` → 拿到空 list → 迴圈跑 0 次 → 印出「0 組衝突」。**空集合算出來的結論，長得跟「檢查過、沒問題」一模一樣**，而且方向剛好是「對自己有利」，特別容易就這樣收貨。（同一家族：`total 0 cases` 假綠、registry 讀回空 vs 真的沒人記過。）
+
+**對策**：一次性分析腳本也要**先印出資料形狀再算**（`{k: len(v) if list}`、筆數、單筆欄位），把「我以為的鍵」跟「實際的鍵」對上；結論若剛好是零／剛好對自己有利，回頭確認分母不是 0。不要用 `.get(a) or .get(b) or .get(c)` 的鍵名 fallback 鏈 —— 它讓「鍵名猜錯」這件事永遠不會報錯。
+
+---
+
+## 兩支 gate 共用同一個 claimed 檔 —— 誰先 pass 誰就把另一支解除武裝（擋一次就自己失效）
+
+**症狀**：新加的「registry 讀取」硬 gate 第一次結束時正確擋下，但**再按一次結束就過了** —— 收據從頭到尾都不存在，rc=0、無任何輸出。單看它自己的三態測試（無 claim 放行 / 有 claim 無收據擋下 / 讀過放行）全部正確，所以測不出來。
+
+**根因**：讀取 gate 當初刻意「不另立 arm 契約」，直接讀 locator 寫入 gate 的 `locator_claimed.<sid>.jsonl`。但**同一個 Stop 事件裡兩支 hook 都會跑完** —— 前面那支輸出 `decision:block` 不會中止後面那支。而寫入 gate 只要 emit 證據齊全就 pass，pass 時**會刪掉 claimed**（那是它的生命週期）。於是：
+
+```
+① 讀取 gate block  ② 寫入 gate pass 並刪 claimed  ③ 下一輪讀取 gate 看不到 claim → 靜默放行
+```
+
+「借別人的 arm 訊號」等於把自己的存續權交給別人。而且失效方式**完全靜默**，長得跟「這輪本來就沒有 case 要驗」一模一樣。
+
+**對策（已落地）**：`registry_read_gate_stop_hook.sh` 改成 claim 一出現就先抄進**自己的** ledger（`registry_read_claimed.<sid>.jsonl`，`REGISTRY_READ_CLAIMED` 可覆寫），之後只認 ledger、**只有自己 pass 時才清**；別人刪 claimed 不影響它的記憶。它仍必須排在寫入 gate**之前**（要在 claimed 被刪掉前抄到）。SID 拿不到時退回全機共用的 `shared` ledger，故加 7 天加齡防呆。
+
+**通則**：**每支 gate 都要擁有自己的 arm 訊號與清除權**。共用一個檔看起來省事，但「誰擁有刪除權」＝「誰能解除誰的武裝」。驗一支新 gate 不能只驗它自己的三態，要**把同一個事件裡的其他 hook 一起按順序跑一遍**，看它下一輪還擋不擋 —— 只擋一次的 gate 等於沒有 gate（繞過方法就是再按一次結束）。
+
+---
+
+## 共享 registry 只寫不讀 —— 硬 gate 只做在寫入側，讀取側的規則就等於不存在
+
+**症狀**：locator registry 累積 1600+ 筆、天天有人寫，但同一件事還是被不同人各寫一套差不多的 test step（例：`login_with_email_account` 同一支 function 被分別註冊成 `ios` / `app` / `mobile` 三筆）。而 flow registry 的 **stale 率兩個月恆為 0.0** —— 那個數字只有「有人讀、且讀到失效的」才會動，恆為 0 就是「沒有人在讀」的鐵證。
+
+**根因（四層，缺一層都還不足以造成「完全沒讀」）**：
+
+1. **讀取指令只寫在 `qa-case-planner`**，而 `CLAUDE.md` 的 **fix 路線刻意跳過 planner** —— 最常走的那條路線（report 派工、既有 case 修復）從頭到尾沒有任何一步叫人讀。`report-url-dispatch` / `qa-test-runner` 兩份 SKILL.md 對 registry 的提及次數是 **0**。
+2. **寫入側有硬 gate、讀取側只有軟指令**：`check_locator_gate.py` 只驗 emit 證據，沒有任何東西驗「有沒有 GET 過」。本檔上面那條「失敗靜默且累積的規則要用硬 gate」的判準，當初只套在寫入側。
+3. **不知道 key 就沒得讀**：locator 主端點只吃精確的 `flow` / `page` key，沒有自由文字搜尋，也沒有任何腳本能列出現有的 key。復用等於要猜別人取的字串；猜錯回空，而**「回空」跟「真的沒人記過」長得一模一樣** —— 那個誤判就是重造的起點。
+4. **讀得到也對不上**：flow registry 的 `platform` filter 是「完全相等 ∪ 'any'」，不吃 `"ios,android"` 這種逗號寫法。寫入端各寫 ios / app / mobile / 逗號列，讀取端 `--platform ios` 實測約**四成撈不到**。
+
+**為什麼難發現**：後端 `/events` 回的是 entry 清單、**不是存取記錄**，沒有任何「誰讀過」的稽核資料 —— 所以「有沒有讀」在後端本來就查不出來。唯一的間接訊號就是 stale 率恆為 0，而那要有人特地去問「這個 0 合理嗎」才會浮出來。
+
+**對策（已落地）**：
+- **讀取側補硬 gate**：`scripts/check_registry_read_gate.py` + `registry_read_gate_stop_hook.sh`，claim 沿用 automator 已經在 arm 的 `$LOCATOR_CLAIMED`（不另立第二套 arm 契約）。證據是 `registry_read_receipt.py` 寫的讀取收據。**判準刻意訂在「有沒有去問」而非「有沒有問到」** —— registry 還沒資料的新流程一樣要能過，否則第一個開路的人被永久擋死。
+- **排序有意義**：讀取 gate 必須排在 locator 寫入 gate **之前**（兩者共用同一個 claimed 檔，寫入 gate 過關時會刪掉它），且讀取 gate 自己什麼都不刪（收據若在它 pass 時清掉，接著被寫入 gate 擋下就變成「claimed 還在、收據沒了」的假性卡死）。
+- **fix 路線補讀取入口**：`CLAUDE.md`「派工前必讀 registry」段 + `report-url-dispatch` §3.5。
+- **補探索入口**：`fetch_locator_registry.py --list-flows [--q]` 走 `/events` 分頁 + 本機比對，列出真的存在的 flow key；關鍵字沒命中時**退回列出全部並在 `note` 說明**（key 多為英文、element 敘述多為中文，中文關鍵字常打不中）。
+- **platform 詞彙統一在讀取端做**：後端一律送 `platform=any`（＝不過濾），本機做別名展開（`ios` ⊇ app/mobile/逗號列）+ 兄弟平台標 `platform_match=sibling`；去重 key 去掉 platform，改把各種寫法收進 `platform_variants` —— 讓「其實是同一個」看得出來，而不是變成三筆候選。
+
+**通則**：**一條「共享」機制要兩側都有強制點，只做寫入側等於做了一個只進不出的垃圾場。** 而且要問「這個機制若失效，哪個數字會動？」—— 找不出任何會動的數字（本例：後端根本沒有讀取稽核）就代表**失效是靜默的**，那就必須在 client 側自己留證據，不能等後端給。
+
+---
+
 ## 「locator 共享記憶」看似有、實則從沒進後端
 
 **症狀**：跑完 case，automator 回報「起手用 registry 拿到 N 個候選命中」，但直接打 ai_studio GET 撈 `things-to-do-search`，後端一直是空的（`entries: []`）。

@@ -106,6 +106,28 @@ emit 檔是 locator gate 的證據，生命週期交給 gate（pass 才清；後
 
 環境變數：`AI_STUDIO_BASE`（預設 SIT ai_studio，與 case-fidelity 同一個）、`KKDAY_TOOLS_USER_NAME`（operator）。
 
+## 讀取收據（read receipt）—— 只寫本機，不上傳
+
+`fetch_locator_registry.py` / `locator_valve.py` / `get_verified_flow.py` 帶 `--case` 時，會在
+**本機**寫一列讀取收據到 `/tmp/registry_reads.d/`（可用 `REGISTRY_READ_DIR` 覆寫）：
+
+```json
+{"kind":"locator","case":"KQT-T7172","platform":"ios","query":{...},"n":4,"hit":true,
+ "endpoint":"/api/qa-automation/locator-registry/events","read_at":"2026-09-07T01:06:14+00:00"}
+```
+
+- **不 POST 到任何後端**，純粹是 Stop 的讀取硬 gate（`check_registry_read_gate.py`）的證據來源。
+  後端沒有「誰讀過」的稽核端點（`/events` 回的是 entry 清單、不是存取記錄），所以「有沒有讀」
+  在後端本來就查不出來 —— 這也是為什麼「只寫不讀」能靜默存在兩個月。
+- 不含任何憑證 / 個人 email；`case` / `platform` / 查詢字串與筆數而已。
+- 生命週期：gate 每次執行順手刪掉**超過 7 天**沒更新的收據檔。刻意**不**綁在 gate 的 pass/block
+  上 —— 綁了就會出現「claimed 還在、收據被清掉」的假性卡死。
+- 另有一份**本機 claim ledger** `/tmp/registry_read_claimed.<session>.jsonl`（`REGISTRY_READ_CLAIMED`
+  可覆寫），內容只有 `{"case_id","platform"}`，同樣不上傳。它是讀取 gate 自己的 arm 訊號：
+  claim 一出現就抄一份，只有本 gate pass 時才清。**不能直接沿用 locator gate 的 claimed 檔**
+  —— 那支 pass 時會刪掉它，讀取 gate 就會變成「擋一次就失效」（實測踩過，見
+  `docs/lessons-learned.md`）。
+
 ## 關閉
 
 - 移除上面的 Stop hook 即完全停止 POST 回寫。

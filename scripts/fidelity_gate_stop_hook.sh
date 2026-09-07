@@ -25,7 +25,10 @@ CLAIMED="${CASE_FIDELITY_CLAIMED:-/tmp/case_fidelity_claimed.$_SID.jsonl}"
 # 送遙測的 send_case_fidelity **不 purge**（見 sync_hooks Stop 順序），只有本 gate 在 pass 時才刪，
 # 否則 gate 擋下時被 sender 刪掉輸入 → 下輪變「找不到結果」的假性卡死。相容舊單一檔路徑。
 FID="${CASE_FIDELITY_RESULTS:-/tmp/case_fidelity_results.d}"
-GATE="${CLAUDE_PROJECT_DIR:-.}/scripts/check_fidelity_gate.py"
+# gate 路徑從 $BASH_SOURCE 推，不用 CLAUDE_PROJECT_DIR：user-level hook 的工作目錄是使用者
+# 當下的專案（多半是 kkday-QA-automation），不是本 repo。用 CLAUDE_PROJECT_DIR 的話，隊友在
+# 別的專案裡開 session 就會找不到 gate → fail-closed 擋死，而且沒有任何補救動作能解開。
+GATE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check_fidelity_gate.py"
 # #5 根治：過 gate 時把交付記錄寫進 ledger（交付＝過 gate 的副產品，不靠主對話記得跑
 # send_case_delivery）。供 detect_test_rot / link_escaped_defect 回查「後來壞了 / 綠了卻出事」。
 DELIVERY_LEDGER="${CASE_DELIVERY_LEDGER:-$HOME/.claude/harness/case_delivery.jsonl}"

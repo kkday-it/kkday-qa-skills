@@ -13,6 +13,7 @@ from get_verified_flow import (  # noqa: E402
     _dedup,
     _emit_row,
     _EMIT_KEYS,
+    _platform_family,
     _rank_and_cap,
     _score,
 )
@@ -35,6 +36,42 @@ def test_dedup_keeps_latest():
     assert len(out) == 2
     app = [e for e in out if e["platform"] == "app"][0]
     assert app["last_verified"] == "2026-07-16"
+
+
+def test_dedup_collapses_platform_family_but_not_across_families():
+    """同家族的不同寫法要併（ios/app/"ios,android" 是同一件事被記三次）；
+    跨家族**不可**併——app 的實作與 web 的實作是兩份真的不同的東西，併掉一份就靜默消失。"""
+    cands = [
+        {"name": "go_pay", "kind": "test_step", "platform": "ios",
+         "last_verified": "2026-07-01", "platform_match": "exact", "location": "a/ios_pay.py:10"},
+        {"name": "go_pay", "kind": "test_step", "platform": "app",
+         "last_verified": "2026-07-16", "platform_match": "family", "location": "a/pay.py:20"},
+        {"name": "go_pay", "kind": "test_step", "platform": "ios,android",
+         "last_verified": "2026-07-05", "platform_match": "family", "location": "a/pay.py:20"},
+        {"name": "go_pay", "kind": "test_step", "platform": "web",
+         "last_verified": "2026-07-05", "platform_match": "sibling", "location": "w/pay.py:30"},
+    ]
+    out = _dedup(cands)
+    assert len(out) == 2, [e["platform"] for e in out]
+    app = [e for e in out if _platform_family(e["platform"]) == "app"][0]
+    assert app["platform_variants"] == ["app", "ios", "ios,android"], app.get("platform_variants")
+    # 家族內合併掉的另一個檔案不能無聲消失
+    assert app["location_variants"] == ["a/ios_pay.py:10", "a/pay.py:20"], app.get("location_variants")
+    web = [e for e in out if _platform_family(e["platform"]) == "web"][0]
+    assert web.get("platform_variants") is None
+
+
+def test_platform_family():
+    for p in ("ios", "android", "app", "mobile", "ios,android", "ios/android"):
+        assert _platform_family(p) == "app", p
+    for p in ("web", "mweb", "desktop"):
+        assert _platform_family(p) == "web", p
+    assert _platform_family("api") == "api"
+    for p in ("any", "all", "", None):
+        assert _platform_family(p) == "any", p
+    # 認不出來的不硬塞進家族（寧可多一列，也不要把不同東西併掉）
+    assert _platform_family("be2") == "be2"
+    assert _platform_family("web,api") == "api+web"
 
 
 def test_score_relevance_order():
