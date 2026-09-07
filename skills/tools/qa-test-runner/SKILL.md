@@ -241,8 +241,12 @@ ls -l /tmp/<log>                       # 要非 0 bytes
 
 1. **讀取終端輸出的錯誤訊息** — 找出失敗的步驟和異常類型
 2. **定位失敗的 test step 函式** — 從 YAML 案例的 steps 找到對應的 Python 函式
-3. **Mobile 一律加讀 Appium server log，不要只看 `qatest.log`** — 「某個分支完全沒動作」「元素明明在畫面上卻 `located failed`」時，真正的錯誤只寫在 Appium server log 裡。最常見是 **uiautomator2 對合法 XPath 回 500**（`ArrayList$ListItr cannot be cast to ...NodeType`，肇因是用了 `following::`／`preceding::` —— **單獨用就會炸，不是只有接 `ancestor::` 才會**，別因為「我沒串 `ancestor::`」就排除這個可能）：元素永遠 resolve 不到 → `is_present` 恆為 False → 分支靜默 no-op；`qatest.log` 只會看到一直 swipe，容易誤判成「文字沒抓到」而一路改錯方向。修法與「在真機 session 上實打候選 locator」的做法見 `qa-automation-writer` SKILL.md「階段 2 — App / Android」。
-4. **分類失敗原因**：
+3. 🔴 **失敗點在共用 step 時：先數那個 step 有多少 case 在用，再下根因** —— 多數 case 長年是綠的
+   就代表機制沒壞，第一假設必須是「這張的接法不對」。**「A 與 B 不一致」只是現象，不是根因**；
+   派工前一定要再問一句「這條路徑本來是怎麼設計來處理這種情境的？」答案通常就在同一個檔案的隔壁分支。
+   詳見下面 [F 類](#f-共用-step-的既有機制沒接上--症狀偽裝成共用主幹有結構性錯誤)。
+4. **Mobile 一律加讀 Appium server log，不要只看 `qatest.log`** — 「某個分支完全沒動作」「元素明明在畫面上卻 `located failed`」時，真正的錯誤只寫在 Appium server log 裡。最常見是 **uiautomator2 對合法 XPath 回 500**（`ArrayList$ListItr cannot be cast to ...NodeType`，肇因是用了 `following::`／`preceding::` —— **單獨用就會炸，不是只有接 `ancestor::` 才會**，別因為「我沒串 `ancestor::`」就排除這個可能）：元素永遠 resolve 不到 → `is_present` 恆為 False → 分支靜默 no-op；`qatest.log` 只會看到一直 swipe，容易誤判成「文字沒抓到」而一路改錯方向。修法與「在真機 session 上實打候選 locator」的做法見 `qa-automation-writer` SKILL.md「階段 2 — App / Android」。
+5. **分類失敗原因**：
 
 #### A. 元件路徑更改（自動修復）
 
@@ -376,6 +380,51 @@ locator 全掛、連候選都找不到時，用 `tap <x> <y>` 照 `*_names.txt` 
 - API 回傳結構改變
 
 處理：回報用戶，說明哪個步驟的流程發生了什麼變化，讓用戶決定如何調整。
+
+#### F. 共用 step 的既有機制沒接上 —— 症狀偽裝成「共用主幹有結構性錯誤」
+
+🔴 **判定共用 step 壞掉之前，先做這兩件事。** 少做這一步的代價不是白跑一輪，是**把 20 幾張綠的 case
+賴以運作的共用主幹改壞**，而且改完那張 case 會變綠 —— 綠燈會讓你以為改對了。
+
+特徵（掛掉的那張 case 走了「非預設前置」）：
+- 失敗訊息是「查不到資料 / 清單為空 / 對不到帳號」，而不是找不到元素
+- 同一個 step 有一大票 case 長年是綠的，掛的只有少數幾張
+- 掛掉那幾張的前置跟綠的那些不一樣（現場註冊新帳號、指定特殊帳號、換幣別/語系、走 cart 而非直購…）
+
+**必做兩步（30 秒，順序不可顛倒）：**
+
+```bash
+# 1) 數用量 —— 這個 step 有多少 case 在用？
+grep -rho "<step_name>" QATestData/cases/yaml | wc -l
+# 2) 分群 —— 綠的那些跟掛的那張，前置差在哪
+grep -rl "<step_name>" QATestData/cases/yaml   # 再逐檔看 pre-condition 的差異
+```
+
+多數 case 是綠的 → **第一假設必須是「這張的接法不對」，不是「機制壞了」**。機制對 21 張有效，
+它就不是結構性錯誤。
+
+**然後讀隔壁分支**：找出那個 step 的帳號／資料來源有幾條分支、綠的 case 走哪一條、有沒有為
+「非預設情境」預留的鉤子。**這種鉤子通常就在同一個檔案，註解還直接寫著用途** —— 例如
+`login_with_email_playwright` 對共用帳號會寫死 `memberUuid`（註解 `# update for cancel order api`），
+而 `get_java_auth_token` 的第一優先分支讀 `static_test_data['fe_login_id']`/`fe_password`
+支援指定帳號。掛掉的 case 只是走到 register 那條 else 分支，兩個鉤子都沒被填。
+
+**修法優先序（由上往下試，不可跳級）：**
+
+| 順序 | 做法 | 何時適用 |
+|---|---|---|
+| 1 | **填既有鉤子** | 那個 step 已經為這種情境留了入口，只是沒人填 |
+| 2 | **在單案側補資料** | 沒有鉤子，但在該 case 的前置把需要的 key 準備好就夠 |
+| 3 | 改共用主幹 | **最後手段**，且回報裡要說明為什麼既有機制真的涵蓋不到 |
+
+🔴 **禁止掩蓋式改法**：把「頁數 0 就硬跑一頁」、「清單空就跳過斷言」這類改成剛好讓 assert 過。
+根因還在，換個資料狀態又會炸，而且下一個人看到的是一個「看起來被修過」的 step。
+
+實例（2026-09-07，KQT-T63751 web）：`cancel_order_by_api_with_web` 訂單列表回空。log 證實
+「算頁數用共用 API 帳號、撈訂單用下單帳號」，看起來像 `get_order_list` 有結構性錯誤 —— 差點就去改
+那個 app 側 20+ 張 case 共用的 step。實際上 24 張用這個 step 的 case 有 21 張是綠的，差別只在那 21 張
+`register=False`（用共用帳號下單，`memberUuid` 被寫死進 dynamic data），掛的 3 張 `register=True`
+（現場註冊新帳號，兩個鉤子都沒填）。正解是填 `fe_login_id`/`fe_password`，共用 step 一行都不用動。
 
 #### D. 載到「別平台那份 case」——症狀會偽裝成 driver／環境問題
 
@@ -534,6 +583,26 @@ grep -rn -A1 "change_language" QATestData/cases/yaml/ui/AppRegression/ | grep -B
 「重跑才知道下一顆也壞」代表上一輪的 session 被浪費掉了。mobile A 類的正確節奏是：
 **同一輪內先 sniff 撈畫面 → 再 probe 把下游點過去 → 拿到完整破口清單 → 一次改完 → 才重跑**
 （見上面「趁 run 還在跑撈失敗畫面」與「點點看」）。重跑只該用來確認，不該用來探索。
+
+🔴 **改到共用檔時，「當前 case 綠」不構成驗證完成 —— 必須盤出回歸範圍再跑。**
+共用的 test step / page object / locator 被別的 case 用著，改壞它們**在只跑當前 case 時完全看不到**，
+而當前 case 會是綠的。所以只要 diff 落在共用檔上（**「只加 `if platform==X` 岔路」也算** ——
+新閘門的條件會在每一條既有路徑上被求值，誤命中就把別的 case 導進新分支）：
+
+```bash
+# 1) 盤範圍：改到的每個共用符號，還有誰在用
+grep -rho "<改到的 step/element 名>" QATestData/cases/yaml | wc -l
+grep -rl  "<改到的 step/element 名>" QATestData/cases/yaml
+# 2) 同組另一平台也要算進來（web↔mweb 共用 test step、android↔ios 共用 base page object）
+```
+
+拿到清單後**回報範圍並問使用者要跑多少**（全跑常常不現實），至少要涵蓋：
+- **每條互斥路徑各一張證人** —— 新分支一張、每個 `elif`/`else` 各一張，且要能說明「這張為什麼會走到那條」
+- **同組另一平台**（改 web 就補 mweb，改 android 就補 ios）
+- 動到帳號／幣別／語系相關共用邏輯時，**前置與當前 case 不同群的那幾張**（F 類的教訓：綠的那群和掛的那張差別就在前置）
+
+「程式結構本身安全」（`no_exception=True` 選不到就落回原路）**可以降低風險等級，但不能取代實跑證人**。
+只重跑當前 case 的兩平台**證明不了**共用改動沒把別的 case 改壞。
 
 ### 6. 發 PR
 
