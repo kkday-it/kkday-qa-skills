@@ -69,7 +69,7 @@ grep -rl "<ID>:" <clone>/QATestData/cases/yaml    # 有命中 = 既有 case
 | grep 結果 | 走哪條 | 為什麼 |
 |---|---|---|
 | **沒命中**（新 case） | create 路線：`qa-case-planner` → `qa-case-automator` → `qa-case-fidelity-reviewer` | 前置怎麼建、關鍵斷言驗什麼還沒決定，planner 要先攤開給人確認 |
-| **有命中**（既有 case） | **fix 路線：先重現 → `qa-case-automator`（帶失敗訊息）→ `qa-case-fidelity-reviewer`，跳過 planner** | 規劃早就做過也寫進 code 了。重跑 planner 只會產出一份跟現況打架的計畫，automator 還可能照計畫重造一份既有實作 |
+| **有命中**（既有 case） | **fix 路線：先重現 → 讀 registry（帶 `--case`）→ `qa-case-automator`（帶失敗訊息）→ `qa-case-fidelity-reviewer`，跳過 planner** | 規劃早就做過也寫進 code 了。重跑 planner 只會產出一份跟現況打架的計畫，automator 還可能照計畫重造一份既有實作 |
 
 fix 路線的重現步驟不可省：**先照 `qa-test-runner` 跑一次拿實際 log**，再把失敗訊息一起交給
 automator。沒有 log 就 spawn automator，它只能用猜的，改動範圍會失控。
@@ -101,9 +101,32 @@ Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=KQT-T…')
 
 # fix（grep 有命中）
 先用 qa-test-runner 跑一次重現，拿到失敗訊息 →
-Agent(subagent_type='qa-case-automator',         prompt='case=KQT-T… 既有實作，失敗訊息=<log 摘要>，最小改')
+讀一次共享 registry（見下方「派工前必讀 registry」，**帶 --case**）→
+Agent(subagent_type='qa-case-automator',         prompt='case=KQT-T… 既有實作，失敗訊息=<log 摘要>，
+                                                        registry 已讀=<既有 locator / 可重用 step 或「查無」>，最小改')
 Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=KQT-T…')
 ```
+
+#### 🔴 派工前必讀 registry（fix 路線最容易漏的一步）
+
+fix 路線刻意跳過 `qa-case-planner`，而 planner 是唯一被規定要讀共享 registry 的角色 ——
+所以不補這一步，最常走的這條路線就從來沒讀過共享記憶。實測後果：locator registry 累積
+1600+ 筆、flow registry 的 stale 率兩個月恆為 0.0（沒人讀），同一件事被不同人各寫一套
+差不多的 test step。
+
+```bash
+S=<kkday-qa-skills>/scripts
+python3 $S/fetch_locator_registry.py --case <KQT-T…> --platform <ios|android> --list-flows --q <關鍵字>
+python3 $S/fetch_locator_registry.py --case <KQT-T…> --platform <ios|android> --flow <挑到的 key>
+python3 $S/locator_valve.py          --case <KQT-T…> --platform <web|mweb> --flow <key>   # web/mweb
+python3 $S/get_verified_flow.py      --case <KQT-T…> --q <關鍵字> --platform <platform> --repo-path <framework repo>
+```
+
+- **`--case` 必帶**：Stop 有 registry 讀取硬 gate（`scripts/check_registry_read_gate.py`），
+  按 case 比對讀取收據；沒讀就交付會被擋下結束。
+- 不知道 flow key 就 `--list-flows` **探索**，不要猜字串 —— 猜錯回空，而「回空」跟「真的沒人記過」
+  長得一模一樣，那個誤判就是重造的起點。
+- 讀回來是空的也算過（收據記的是「有沒有去問」），但不准跳過不問。
 
 為什麼不能 inline：`qa-case-planner` 的規劃只在動手**之前**有意義（決定前置怎麼建真實資源、
 關鍵斷言驗什麼），錯過就補不回來；而 fidelity / locator 兩個 Stop gate 是由 `qa-case-automator`

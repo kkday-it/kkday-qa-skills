@@ -72,6 +72,10 @@ def desired_hooks(repo: str) -> dict:
             f'python3 "{repo}/scripts/send_case_fidelity.py" --indir /tmp/case_fidelity_results.d',
             f'bash "{repo}/scripts/fidelity_gate_stop_hook.sh"',
             f'python3 "{repo}/scripts/send_locator_registry.py" --indir /tmp/locator_results.d',
+            # 讀取 gate 必須排在 locator 寫入 gate **之前**：兩者共用同一個 claimed 檔
+            # （automator arm 的那個），而寫入 gate 過關時會刪掉它——排在後面就永遠看不到 claim，
+            # 等於靜默不 enforce。讀取 gate 自己什麼都不刪（claimed 的所有權在寫入 gate）。
+            f'bash "{repo}/scripts/registry_read_gate_stop_hook.sh"',
             f'bash "{repo}/scripts/locator_gate_stop_hook.sh"',
             f'python3 "{repo}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl --purge',
         ],

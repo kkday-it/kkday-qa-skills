@@ -19,7 +19,10 @@ set -u
 _SID="${CLAUDE_CODE_SESSION_ID:-shared}"
 CLAIMED="${LOCATOR_CLAIMED:-/tmp/locator_claimed.$_SID.jsonl}"
 EMIT_DIR="${LOCATOR_EMIT_DIR:-/tmp/locator_results.d}"
-GATE="${CLAUDE_PROJECT_DIR:-.}/scripts/check_locator_gate.py"
+# gate 路徑從 $BASH_SOURCE 推，不用 CLAUDE_PROJECT_DIR：user-level hook 的工作目錄是使用者
+# 當下的專案（多半是 kkday-QA-automation），不是本 repo。用 CLAUDE_PROJECT_DIR 的話，隊友在
+# 別的專案裡開 session 就會找不到 gate → fail-closed 擋死，而且沒有任何補救動作能解開。
+GATE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check_locator_gate.py"
 
 # 這輪沒交付 UI case（沒有 claimed 檔）→ 放行。
 [ -f "$CLAIMED" ] || exit 0

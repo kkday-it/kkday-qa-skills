@@ -113,8 +113,23 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 2. **取 locator + 回寫，依平台走不同路（都不准讀 `registry.json` 敘述冒充）：**
    - **Web/MWeb**：起手一律先跑 `scripts/locator_valve.py`（唯一入口 valve）——**一定要帶 `--case <本 case id>`**（emit 的 source 才會是「這次的 case」，locator gate 才對得上；重用既有 locator 時 registry origin case ≠ 當前 case，不帶會被 gate 假擋）。valve 內部「GET 候選 → 當前 DOM 逐一驗 → verified 直接回；全 stale 回 `remine`」並自動 emit 回寫（`--emit` 預設就開，別關）。用 `--flow <key>` 一次批次驗整組。只有 valve 回 `remine`（或後端/本地都無候選）才退回 `verify_locator.py` 從零挖。
      範例：`python3 scripts/locator_valve.py --case KQT-Txxxxx --flow things-to-do-search --platform web --env stage --registry locator_registry/registry.json`
-   - **App（Android/iOS）**：**valve 不涵蓋 app**（`--platform` 只吃 web/mweb；app 沒有可導航 URL 不能事前驗）。取 hints 直接跑 `scripts/fetch_locator_registry.py --platform android|ios ...`（app 唯一的 sanctioned GET 路徑，不必事前驗），寫進 page object；**驗證＝測試本身**：跑測試,定位不到就 fail → 重挖。測試通過後照「收尾 ②」把用到的 app locator 收成 emit。
+   - **App（Android/iOS）**：**valve 不涵蓋 app**（`--platform` 只吃 web/mweb；app 沒有可導航 URL 不能事前驗）。取 hints 直接跑 `scripts/fetch_locator_registry.py`（app 唯一的 sanctioned GET 路徑，不必事前驗），寫進 page object；**驗證＝測試本身**：跑測試,定位不到就 fail → 重挖。測試通過後照「收尾 ②」把用到的 app locator 收成 emit。
+     - 🔴 **不知道 flow key 就先探索，不要猜字串**：主端點只吃精確的 `--flow` / `--page` key，猜錯回空，
+       而「回空」跟「真的沒人記過」長得一模一樣——那個誤判就是大家各寫一套差不多 step 的來源。
+       ```bash
+       # 先列出這個平台真的存在的 flow key（含筆數 / 頁面 / 來源 case / 最後驗證日）
+       python3 scripts/fetch_locator_registry.py --case KQT-Txxxxx --platform ios --list-flows --q login
+       # 找到 key 再取候選
+       python3 scripts/fetch_locator_registry.py --case KQT-Txxxxx --platform ios --flow app-naver-login
+       ```
+       flow key 幾乎都是英文（`app-naver-login`），**中文關鍵字常打不中**；打不中時它會退回列出全部
+       key 並在 `note` 說明——那不是「沒東西」，是關鍵字沒對上，要自己看清單挑。
+     - 🔴 **`--case` 一定要帶**（兩種模式都要）：它會寫一列讀取收據，Stop 的 registry 讀取硬 gate
+       是按 case 比對的。沒讀就交付會被擋下結束（見 `scripts/check_registry_read_gate.py`）。
    - ❌ 不准「讀了 `registry.json` 的 selector 就當作驗過」——那是候選 hint 不是真理,且不觸發回寫,共享記憶永遠不更新。
+   - 🔴 **撈回來的東西要真的用**：同一個 flow 已經有人記過 locator / 已經有現成 test step 時，
+     **沿用同一個**，不要平行新增一份「差不多但名字不同」的。要偏離既有做法就在回報裡講清楚為什麼
+     （例：第三方頁面改版、既有 step 綁死別的平台），讓 reviewer 有機會反對。
 3. **強制元素驗證，locator 不准猜定稿**（一律用 **Python playwright** 驗，不用 MCP，見 §3.5）：從零挖時 Web/MWeb 驗 DOM 用 `scripts/verify_locator.py`（`--url <頁面>` + `--candidate <type:value>`，mweb 加 `--device 'iPhone 15'`），皆走 **依環境組出的 host**，見下方規則，**禁用 prod `www.kkday.com`**；Android 用 `adb uiautomator dump`；iOS 用 `idb ui describe-all`。工具/裝置沒裝沒開 → 照 qa-automation-writer preflight 自動 bootstrap。**抓不到元素樹就停下回報**，不得臆測。**App 裝置 udid 一律由主對話在 prompt 傳入（主對話已先列裝置、由使用者/預設選定），你直接用那個 udid（`--udid <傳入值>`）**——接多隻時你不自己挑，prompt 沒給 udid 就標 `blocked` 回報「請主對話指定裝置」，不得隨便抓一隻（可能是別人正在用的）。
 4. **🔴 動手寫 automation code 前，先 `Skill(qa-automation-writer)` 載入規範並遵守——不是「記得才用」，是硬前置。不管是「從零新建」還是「修復既有」都一樣要先讀**——修復模式（只改幾行 locator/wait/斷言）最容易以為「小改不用讀」而自創非慣例寫法（如自包 `try/except` 吞 wait 逾時），這正是規範要擋的。Page Object / Test Step / API / case data 一律照它。
 5. **🔴 driver-call 硬規則（見 `qa-automation-writer/references/driver-call-rules.md`）：除 `playwright_element.py` / `playwright_elements.py` 外，任何檔案（含 test_steps、pages、common）禁止 `uidriver.execute_js`、`.page.*` 等底層直呼。**元素查詢用 page object 的 `Element`/`Elements` + Element API（`.count`/`.wait`/`.is_visible`/`.scroll_into_view`…）；框架缺方法要先在 `playwright_element.py` 擴充，不自己繞。診斷用途也不例外——不要為了 fail-loud 塞 `execute_js` dump DOM，讓 Element API wait 逾時自然拋錯即可。
@@ -204,6 +219,9 @@ def _kkday_www_host(env: str) -> str:
    細節見 `qa-test-runner` SKILL.md「趁 run 還在跑撈失敗畫面」與「點點看」。
 3. **診斷失敗類別**，決定怎麼修：
    - **locator 漂移 / DOM 改版** → 用真實元素樹重驗，最小改 locator。
+     🔴 **改之前先讀共享 registry（帶 `--case`，照 §3.2）**：同一個 flow 別人可能已經修過同一顆
+     locator，或該頁的正解已經被記過。fix 模式最常見的浪費就是「重新挖一次別人上週挖完的東西」，
+     而且挖出第二個寫法之後，下一個人看到兩套又不知道該信哪個。Stop 的讀取硬 gate 也會擋這件事。
    - **TCMS case 內容改了**（steps/expected 與現有實作對不上）→ 更新實作對齊**最新** TCMS（記得先重新 fetch）。
    - **框架/流程調整** → 跟著調。
    - **產品真的有 bug（regression）** → 見紅線。

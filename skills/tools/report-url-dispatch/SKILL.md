@@ -108,6 +108,30 @@ run 死在那一頁時 session 還活著，那是唯一能一次攤出整段破�
 | **失敗，但失敗在別的地方** | report 那個 log 已經過時，用**本機這次**的 log 當派工依據 |
 | **Pass** | 判定 **flaky / 環境**，🔴 **不派 automator、不改 code**，回報使用者：case、report 上的錯、本機重現過了。要不要再跑一次確認由使用者決定 |
 
+### 3.5 讀共享 registry（派工前必做，不是可選）
+
+🔴 **重現完、派工前，先讀一次共享 registry**。fix 路線刻意跳過 `qa-case-planner`，而 planner
+是唯一被規定要讀 registry 的角色 —— 所以這條路線如果不補這一步，就是**整個流程裡最常走、卻從來
+沒讀過共享記憶的那條**。實測後果：locator registry 累積 1600+ 筆，flow registry 的 stale 率
+兩個月恆為 0.0（沒人在讀），同一件事被不同人各寫一套差不多的 test step。
+
+```bash
+S=~/.claude/.../kkday-qa-skills/scripts
+# app：先探索有哪些 flow key（別猜字串），再取候選
+python3 $S/fetch_locator_registry.py --case <KQT-T…> --platform <ios|android> --list-flows --q <關鍵字>
+python3 $S/fetch_locator_registry.py --case <KQT-T…> --platform <ios|android> --flow <上面挑到的 key>
+# web/mweb：走 valve（會順便驗）
+python3 $S/locator_valve.py --case <KQT-T…> --platform <web|mweb> --flow <key>
+# 順手看有沒有現成可重用的 step/flow（避免 automator 重造）
+python3 $S/get_verified_flow.py --case <KQT-T…> --q <關鍵字> --platform <platform> --repo-path <framework repo>
+```
+
+- **`--case` 一定要帶**：Stop 的 registry 讀取硬 gate 按 case 比對收據，不帶等於沒讀
+  （`scripts/check_registry_read_gate.py`，automator 交付時 arm 的 claimed 檔就是它的 claim 來源）。
+- 讀回來是空的**也算過** —— 收據記的是「有沒有去問」。但**不准跳過不問**。
+- 撈到的東西要**放進第 4 步的 automator prompt**（既有 locator / 現成 step / 誰在什麼時候驗過），
+  不要只是跑完就丟掉：automator 看不到你的終端輸出。
+
 ### 4. 派工給 qa-case-automator
 
 這些 case 一定是**既有 case**（跑得出 report 就代表已實作），所以照 CLAUDE.md 走 **fix 路線**：
@@ -119,6 +143,7 @@ Agent(subagent_type='qa-case-automator',
               report 失敗訊息=<terminal_output 摘要>
               本機重現失敗訊息=<第 3 步的 log 尾段>
               分診假設=<A/B/C/D/E 哪一類>
+              registry 已讀=<第 3.5 步撈到的既有 locator / 可重用 step，或「查無」>
               元素樹實證=<sniff 出來的節點，例：該節點已從 StaticText 改為 Button>
               下游探測結果=<probe 的破口清單，或「整段下游走得通」>')
 Agent(subagent_type='qa-case-fidelity-reviewer', prompt='case=<KQT-T…>')
