@@ -19,7 +19,7 @@ import locator_valve as gvl  # noqa: E402
 
 def test_emit_flag_defaults_to_none():
     # parser 層預設 None（sentinel＝用 per-process 預設）；解析交給 _resolve_emit
-    args = gvl._build_parser().parse_args(["--flow", "things-to-do-search"])
+    args = gvl._build_parser().parse_args(["--flow", "things-to-do-search", "--platform", "web"])
     assert args.emit is None, f"未帶 --emit 時 parser 應為 None，實際 {args.emit!r}"
 
 
@@ -72,9 +72,9 @@ def test_emit_source_falls_back_to_origin_when_no_case():
 
 
 def test_case_flag_parses():
-    args = gvl._build_parser().parse_args(["--flow", "x", "--case", "KQT-500"])
+    args = gvl._build_parser().parse_args(["--flow", "x", "--case", "KQT-500", "--platform", "web"])
     assert args.case == "KQT-500"
-    assert gvl._build_parser().parse_args(["--flow", "x"]).case == ""
+    assert gvl._build_parser().parse_args(["--flow", "x", "--platform", "web"]).case == ""
 
 
 if __name__ == "__main__":

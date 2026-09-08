@@ -308,7 +308,10 @@ bytes**（框架先開檔、真正的內容進了 `qatest.log`）。但也**不�
 2. 取得當前畫面結構：
    - **Mobile**：🔴 **在重現那一輪的 run 進行中，掛上 `sniff_live_element_tree.py` 撈**（見下面
      「趁 run 還在跑撈失敗畫面」）。**不要等 run 跑完再另起一台 appium 去 dump。**
-   - **Web / MWeb**：用 Playwright 取 DOM（必須用 `https://www.stage.kkday.com`，不可用 `www.kkday.com`）
+   - **Web / MWeb**：🔴 **用 `verify_locator.py` 並帶 `--platform web|mweb`，不要自己開瀏覽器**
+     （見下面「[驗 web / mweb 的 locator](#驗-web--mweb-的-locatorplatform-必填不是可選)」）。
+     自己開會漏掉 **device emulation**，而漏掉的後果不是報錯，是拿到**另一個平台的版型**，
+     然後把對的 locator 判成過期。
 3. 比對現有 XPath 和實際頁面結構，找出正確的新 locator
 4. **如果 locator 用 i18n key（如 `t('register_button', locale=AppConfig.language)`）**，檢查 `QATestData/data/i18n/<platform>/<locale>.yaml` 的值是否跟 App 實際文字一致，不一致就更新 yaml；**若是整個 key 沒收在 yaml 裡，走下面 C，不要補一顆就重跑**
 5. 修改對應 `pages/` 下的 page object 檔案
@@ -319,6 +322,63 @@ bytes**（框架先開檔、真正的內容進了 `qatest.log`）。但也**不�
 7. 🔴 **在同一輪 session 把下游流程「點點看」**（見下面「點點看」）——
    **驗收標準不是「元素找得到」，是「按下去之後那一段還走得通」**
 8. 重新執行測試驗證修復
+
+##### 驗 web / mweb 的 locator：`--platform` 必填，不是可選
+
+```bash
+S=<kkday-qa-skills>/scripts
+python3 $S/verify_locator.py --platform mweb \
+  --url https://www.stage.kkday.com/zh-tw \
+  --candidate "xpath://div[contains(@class,'home-category-panel-item')]"
+
+# 挑新 locator（傾印該頁可見元素 + 建議 selector，取代 MCP snapshot）
+python3 $S/verify_locator.py --snapshot --platform mweb \
+  --url https://www.stage.kkday.com/zh-tw --near "門票"
+```
+
+🔴 **mweb 與 web 是兩套不同的版型與 DOM，靠 UA（＋`isMobile`/`hasTouch`）切換，不是看 viewport。**
+自己開瀏覽器（含 Playwright MCP）預設是桌面 UA → 拿到的是 **web 版** DOM → mweb 專屬節點根本
+不存在 → 每個候選都 stale → 於是得出「這個 locator 過期了」並去改它，**而那條 locator 一直是
+對的**。這個錯不報錯、長得像正常的調查結果，所以特別危險。
+
+**`--platform` 不明示會直接被擋下**（`status: blocked`，exit 3）—— 因為原本的預設是桌面
+viewport，「忘了加」的後果是靜默拿到錯版型，不是報錯。這條只能靠擋，不能靠記得。
+`mweb` 會自動套框架用的同一台 `iPhone 15`（真值在 `QATest/src/lib/fixtures/playwright.py`：
+`Platform.WEB` 走桌面 `1920×1080`，其餘一律 `devices["iPhone 15"]`）。
+
+實測長相（2026-09-08 stage 首頁）—— 同一個 URL、只差 `--platform`：
+
+| `--platform` | `category-bar__*`（web 專屬） | `home-category-panel-*`（mweb 專屬） |
+|---|---|---|
+| `web` | 命中 | 0 |
+| `mweb` | 0 | 命中 |
+
+**兩邊互斥。** 所以「某個 class 查到 0 個」在確定 platform 對之前，完全不能當成「class 改名了」。
+
+**全候選 stale 時它會自動多做一次 tag 放寬診斷**（xpath 的 `//div[` → `//*[` 再數一次），
+命中就在輸出補一段 `tag_hints`。「選擇器條件全對、只有 tag 假設錯了」是實際踩過的坑：
+**KQT-T11835 那批 28 張**就是 stage 把首頁 15 個分類中的 9 個從 `<div>` 改成 `<a>`
+（class 沒改、文字沒改），而 locator 硬寫 `//div[`。實際輸出：
+
+```json
+{"status": "stale", "tag_hints": [{"matches": 1, "actual_tags": ["a"],
+  "note": "選擇器條件命中，錯的是 tag 假設；改 tag 即可，不要重寫整條"}]}
+```
+
+這種情況要改的是 tag，不是重寫整條選擇器 —— 不必自己想到要試。
+
+⚠️ **用 Playwright MCP 就是做不到這件事**：它只能 `browser_resize`，**UA 設不了**，所以光改
+viewport 不保證真的切到 mweb。**判準是「mweb 專屬節點有沒有真的出現」**（例如
+`home-category-panel-wrapper`）——沒出現就不准把那份輸出當實證。另外 MCP 是單一共用瀏覽器、
+沒有 per-call 隔離，並行時會互相沖掉 navigation／登入態，所以 **spawn 出去的 agent 一律禁用
+MCP**，只有主對話做一次性探索可以用（詳見 `qa-automation-writer` SKILL.md）。
+
+🔴 **派 sub-agent 去驗 web / mweb locator 時，要求它用這支腳本並在回報中附上輸出的
+`platform` / `device` 欄位。** 只在 prompt 寫「必須用 stage 不可用 production」是不夠的 ——
+漏的就是 device emulation 這半邊。
+
+（**跑測本身不用管**：`run_case.sh <case> mweb` 走框架，框架自己會掛 iPhone 15。這條只約束
+「人／agent 手動開瀏覽器去看」的場合。）
 
 ##### 趁 run 還在跑撈失敗畫面（mobile A 類唯一正解）
 

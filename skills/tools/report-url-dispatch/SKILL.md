@@ -102,6 +102,24 @@ PAGEOBJECT_DEFAULT_WAIT_TIMEOUT=600   # 重現那一輪開跑前 export，把窗
 run 死在那一頁時 session 還活著，那是唯一能一次攤出整段破口的時機。見
 `qa-test-runner` SKILL.md「點點看」。
 
+🔴 **分診是 A 且 platform 是 web / mweb 時，用 `verify_locator.py` 驗，不要自己開瀏覽器：**
+
+```bash
+python3 <kkday-qa-skills>/scripts/verify_locator.py --platform <web|mweb> \
+  --url "https://www.stage.kkday.com/<失敗那頁>" --candidate "xpath:<失敗的那條 locator>"
+```
+
+**mweb 與 web 是兩套不同版型**，靠 UA 切換 —— 自己開瀏覽器預設是桌面 UA，拿到的是 **web 版**
+DOM，於是 mweb 專屬節點全部 stale，很容易誤判成 class 改名而去改一條本來正確的 locator。
+`--platform` **不明示會被擋下**（`status: blocked`），mweb 會自動套框架用的 iPhone 15。
+實測 stage 首頁 web 與 mweb 的分類列 class **完全互斥**。
+
+全候選 stale 時它會自動補一段 `tag_hints`（tag 放寬診斷）—— KQT-T11835 那批 28 張就是
+`<div>`→`<a>`、class 與文字都沒變，靠這段才不會誤判成「locator 過期」。細節見
+`qa-test-runner` SKILL.md「驗 web / mweb 的 locator」。
+
+Playwright MCP 做不到（UA 設不了），除非輸出裡真的出現 mweb 專屬節點，否則不算實證。
+
 | 重現結果 | 動作 |
 |---|---|
 | **失敗，且失敗點跟 report 一致** | 確認真壞 → 進第 4 步派工 |
