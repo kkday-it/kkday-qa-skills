@@ -58,7 +58,7 @@ mweb 驗證法。把可複用的部分固化，讓下一個搜尋/前端 case �
 - kkday 靠 **User-Agent**（＋`isMobile`/`hasTouch`）決定回 web 還是 mweb DOM，**不是看 viewport**。
   只設 `--viewport` 仍是桌面 UA → server 回的是 **web 頁**，會驗到錯的頁。
 - 驗 mweb 真實 DOM 用 **Python playwright** 搭**框架同一份 `devices["iPhone 15"]`**
-  （`QATest/src/lib/fixtures/playwright.py` 裡 mweb 用的同一台）：`verify_locator.py --device "iPhone 15"`
+  （`QATest/src/lib/fixtures/playwright.py` 裡 mweb 用的同一台）：`verify_locator.py --platform mweb`
   會在起 context 時自動套 `pw.devices["iPhone 15"]`（手機 UA + `isMobile`/`hasTouch`）。**不用 playwright MCP。**
   - 進頁前先 `navigator.userAgent` 確認是 iPhone/Mobile UA，是桌面 Chrome UA 就停、別在錯的頁上驗。
 - 注意：`iPhone 15` 的確切 UA / isMobile / hasTouch 是 Playwright 內建 device registry 動態載入，

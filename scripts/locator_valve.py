@@ -109,9 +109,10 @@ try:
 except Exception:
     registry_read_receipt = None
 try:
-    from verify_locator import _open_page, _verify_candidates  # noqa: E402
+    from verify_locator import MWEB_DEVICE, _open_page, _verify_candidates  # noqa: E402
     from playwright.sync_api import sync_playwright  # noqa: E402
 except Exception:
+    MWEB_DEVICE = "iPhone 15"
     _open_page = None
     _verify_candidates = None
     sync_playwright = None
@@ -184,7 +185,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="當前正在自動化的 case id（如 KQT-T500）。emit 列的 source 會蓋成這個，"
                         "讓 locator gate 對得上『這次交付的 case』——重用既有 locator 時，registry "
                         "entry 的 origin case 不等於當前 case，不帶會造成 gate 假擋。")
-    p.add_argument("--platform", default="web", choices=["web", "mweb"])
+    p.add_argument("--platform", required=True, choices=["web", "mweb"],
+                   help="**必填**。決定撈哪個平台的候選、以及用什麼 device profile 驗（mweb 套 "
+                        f"'{MWEB_DEVICE}'）。原本預設 web —— 做 mweb 卻忘了帶時，會靜默用桌面 UA "
+                        "去驗，於是候選全 stale、判成 locator 過期，而那條 locator 其實是對的。")
     p.add_argument("--env", default="stage", help="環境：stage / sit0x / sit20x（現階段禁 prod）")
     p.add_argument("--registry", default="", help="本地 registry.json（backend 拿不到時的 fallback 來源）")
     p.add_argument("--url", default="", help="覆寫驗證 URL（預設用 entry 的 verify_url）")
@@ -234,7 +238,7 @@ def main() -> int:
         with sync_playwright() as pw:
             for e in entries:
                 url = args.url or e.get("verify_url")
-                device = "iPhone 15" if e.get("platform") == "mweb" else ""
+                device = MWEB_DEVICE if e.get("platform") == "mweb" else ""
                 base = {"id": e.get("id"), "element": e.get("element"),
                         "component": e.get("component"), "platform": e.get("platform"),
                         "verify_url": url}

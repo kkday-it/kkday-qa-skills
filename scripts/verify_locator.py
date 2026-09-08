@@ -12,16 +12,27 @@ Locator cheap 驗證腳本（非 LLM、非遙測）
   - 全部候選都沒命中 → status=stale，skill 必須回退到「從零挖」原本流程並重挖。
 
 mweb 方法論（重要）：kkday 靠 User-Agent 決定回 web 還是 mweb DOM，不是看 viewport。
-所以 mweb 驗證要用 `--device "iPhone 15"`（＝框架 mweb 用的同一台，見
+所以 mweb 驗證必須套 iPhone 15 device profile（＝框架 mweb 用的同一台，見
 QATest/src/lib/fixtures/playwright.py 的 devices["iPhone 15"]），**不能只縮 viewport 冒充**。
+
+**所以單元素／快照模式一律要明示 `--platform web|mweb`**（會自動配對應的 device），不明示直接
+擋下。原本 device 預設空字串＝桌面 1920×1080，忘了加 `--device "iPhone 15"` 的下場不是報錯，
+是**靜默拿到 web 版 DOM**：mweb 專屬節點在那份 DOM 裡根本不存在 → 每個候選都 stale → 於是
+判定「locator 過期了」並去改它，**而那條 locator 一直是對的**。這個錯不報錯、長得像正常的
+調查結果，所以只能靠「不明示就不准跑」擋，不能靠記得。
+
+全候選 stale 時會多做一次 **tag 放寬診斷**（xpath 候選的 `//div[` → `//*[` 再數一次）：
+「選擇器條件全對、只有 tag 假設錯」是實際踩過的坑 —— 2026-09-08 KQT-T11835 那批 28 張，
+stage 把首頁 15 個分類中的 9 個從 `<div>` 改成 `<a>`（class 沒改、文字沒改），而 locator
+硬寫 `//div[`。這種情況要改的是 tag，不是重寫整條選擇器。
 
 需要 playwright（Python）：`pip install playwright && playwright install chromium`。
 
 用法 A — 單一元素，直接給候選（type:value，可重複，依優先序）：
-    python3 verify_locator.py --url https://www.stage.kkday.com/zh-tw/category/global/things-to-do \\
+    python3 verify_locator.py --platform web \\
+        --url https://www.stage.kkday.com/zh-tw/category/global/things-to-do \\
         --candidate "css:input.things-to-do-search-bar__input" \\
-        --candidate "xpath://input[contains(@class,'search-input__keyword')]" \\
-        [--device "iPhone 15"]
+        --candidate "xpath://input[contains(@class,'search-input__keyword')]"
 
 用法 B — 驗整個 registry（可依 flow/page/platform/env 過濾），並可回寫 status/last_verified：
     python3 verify_locator.py --registry locator_registry/registry.json \\
@@ -39,6 +50,26 @@ from datetime import datetime, timezone
 
 # 現階段安全紅線：環境只接受 stage / sit0x / sit20x（比照 server _VALID_ENV_RE），禁 prod。
 _VALID_ENV_RE = re.compile(r"stage|sit\d*")
+
+# 框架 mweb 用的同一台（QATest/src/lib/fixtures/playwright.py 的 devices[...]）。
+# 這裡與 registry 模式共用同一個值，避免兩處各寫一份而 drift。
+MWEB_DEVICE = "iPhone 15"
+
+
+def _resolve_device(args):
+    """把 platform 換成 device profile。單元素／快照模式不明示 platform 就擋下 —— 沉默地
+    用桌面 viewport 去驗 mweb 是本腳本最貴的誤判來源，理由見檔頭 mweb 方法論。"""
+    if args.device:
+        return args.device
+    if args.platform == "mweb":
+        return MWEB_DEVICE
+    if args.platform == "web":
+        return ""
+    raise ValueError(
+        "必須明示 --platform web|mweb（或自行指定 --device）。"
+        f"mweb 會自動套 '{MWEB_DEVICE}'；預設桌面 viewport 拿到的是 web 版 DOM，"
+        "拿它驗 mweb locator 會全部誤判成過期。"
+    )
 
 
 def _is_prod_url(url: str) -> bool:
@@ -124,7 +155,49 @@ def _verify_candidates(page, candidates: list, per_wait_ms: int = 3000) -> dict:
         checked.append({"type": sel_type, "value": value, "exists": exists})
         if exists:
             return {"status": "verified", "hit": {"type": sel_type, "value": value}, "checked": checked}
-    return {"status": "stale", "hit": None, "checked": checked}
+    result = {"status": "stale", "hit": None, "checked": checked}
+    hints = _diagnose_tag_assumption(page, candidates)
+    if hints:
+        result["tag_hints"] = hints
+    return result
+
+
+# xpath 裡「/tagname[」的 tagname 部分（`//div[...]`、`.//span[...]` 都吃）。
+_TAG_STEP_RE = re.compile(r"(?<=/)(?:[a-zA-Z][\w-]*)(?=\[)")
+
+
+def _diagnose_tag_assumption(page, candidates: list) -> list:
+    """全候選 stale 時，逐一把 xpath 的 tag 限定放寬成 `*` 再數一次。
+
+    有命中就代表選擇器的條件（class / 文字 / 結構）全都還對，錯的只是 tag 假設 —— 該改 tag，
+    不是重寫整條。實例見檔頭 KQT-T11835。純 css 候選不處理（tag 放寬語意不等價）。"""
+    hints = []
+    for c in candidates:
+        if c.get("type", "css") != "xpath":
+            continue
+        value = c.get("value", "")
+        relaxed = _TAG_STEP_RE.sub("*", value)
+        if not value or relaxed == value:
+            continue
+        try:
+            loc = page.locator(f"xpath={relaxed}")
+            count = loc.count()
+            if not count:
+                continue
+            tags = sorted({
+                str(loc.nth(i).evaluate("e => e.tagName")).lower()
+                for i in range(min(count, 10))
+            })
+        except Exception:
+            continue
+        hints.append({
+            "original": value,
+            "relaxed": relaxed,
+            "matches": count,
+            "actual_tags": tags,
+            "note": "選擇器條件命中，錯的是 tag 假設；改 tag 即可，不要重寫整條",
+        })
+    return hints
 
 
 _SNAPSHOT_JS = r"""
@@ -197,15 +270,21 @@ def _mode_snapshot(args) -> int:
     if _is_prod_url(args.url):
         print(json.dumps({"status": "blocked", "error": f"現階段禁打 prod，拒絕開站：{args.url}"}, ensure_ascii=False))
         return 3
+    try:
+        device = _resolve_device(args)
+    except ValueError as e:
+        print(json.dumps({"status": "blocked", "error": str(e)}, ensure_ascii=False))
+        return 3
     with sync_playwright() as pw:
-        browser, _, page = _open_page(pw, args.device, args.storage_state)
+        browser, _, page = _open_page(pw, device, args.storage_state)
         try:
             page.goto(args.url, wait_until="domcontentloaded", timeout=20000)
             _settle(page)
             result = page.evaluate(_SNAPSHOT_JS, {"near": args.near, "max": args.max_elements})
         finally:
             browser.close()
-    result["device"] = args.device or "desktop"
+    result["platform"] = args.platform or "(由 --device 指定)"
+    result["device"] = device or "desktop"
     if args.near:
         result["near"] = args.near
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -225,8 +304,13 @@ def _mode_single(args) -> int:
     if _is_prod_url(args.url):
         print(json.dumps({"status": "blocked", "error": f"現階段禁打 prod，拒絕開站：{args.url}"}, ensure_ascii=False))
         return 3
+    try:
+        device = _resolve_device(args)
+    except ValueError as e:
+        print(json.dumps({"status": "blocked", "error": str(e)}, ensure_ascii=False))
+        return 3
     with sync_playwright() as pw:
-        browser, _, page = _open_page(pw, args.device, args.storage_state)
+        browser, _, page = _open_page(pw, device, args.storage_state)
         try:
             page.goto(args.url, wait_until="domcontentloaded", timeout=20000)
             _settle(page)
@@ -234,7 +318,8 @@ def _mode_single(args) -> int:
         finally:
             browser.close()
     result["url"] = args.url
-    result["device"] = args.device or "desktop"
+    result["platform"] = args.platform or "(由 --device 指定)"
+    result["device"] = device or "desktop"
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result["status"] == "verified" else 2
 
@@ -255,7 +340,7 @@ def _mode_registry(args) -> int:
     with sync_playwright() as pw:
         for e in targets:
             url = e.get("verify_url")
-            device = "iPhone 15" if e.get("platform") == "mweb" else ""
+            device = MWEB_DEVICE if e.get("platform") == "mweb" else ""
             if not url:
                 results.append({"id": e.get("id"), "status": "skipped", "reason": "no verify_url"})
                 continue
@@ -297,7 +382,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Cheap locator verifier (non-LLM)")
     p.add_argument("--url", help="單元素模式：要驗的頁面 URL")
     p.add_argument("--candidate", action="append", default=[], help="單元素模式：type:value（可重複，依優先序）")
-    p.add_argument("--device", default="", help="套 Playwright device profile（mweb 用 'iPhone 15'）")
+    p.add_argument("--device", default="", help=f"直接指定 Playwright device profile；一般不用，交給 --platform 配（mweb → '{MWEB_DEVICE}'）")
     p.add_argument("--storage-state", default="", help="載入已登入 session（Playwright storage_state JSON）→ 可探登入後頁面（單元素/快照模式皆適用），免每次重跑完整登入")
     p.add_argument("--snapshot", action="store_true", help="快照模式：headless 傾印該頁可見互動/標籤元素 + 建議 selector（取代 MCP snapshot），讓 AI 一眼挑對元素。搭 --url，可加 --device/--storage-state/--near")
     p.add_argument("--near", default="", help="快照模式：只列「文字含此字串或其附近」的元素，聚焦目標區塊")
@@ -305,7 +390,9 @@ def main() -> int:
     p.add_argument("--registry", help="registry 模式：registry.json 路徑")
     p.add_argument("--flow", default="", help="registry 模式過濾：flow key")
     p.add_argument("--page", default="", help="registry 模式過濾：page key")
-    p.add_argument("--platform", default="", choices=["", "web", "mweb"], help="registry 模式過濾")
+    p.add_argument("--platform", default="", choices=["", "web", "mweb"],
+                   help="單元素／快照模式：**必填**，決定 device profile（mweb 會套 "
+                        f"'{MWEB_DEVICE}'；不填直接擋下，理由見檔頭 mweb 方法論）。registry 模式：當過濾條件")
     p.add_argument("--env", default="", help="registry 模式過濾：stage / sit0x / sit20x（現階段禁 prod）")
     p.add_argument("--write", action="store_true", help="registry 模式：把驗證結果回寫 status/last_verified")
     args = p.parse_args()

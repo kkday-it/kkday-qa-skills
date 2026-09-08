@@ -95,7 +95,7 @@ flowchart TD
 | `tcms-fetch-cases` | 📄 Skill | 撈 case steps + `labels`/`tags`（平台資訊）。 |
 | `qa-automation-writer` | 📄 Skill | 寫 code + 驗 locator + 產可追溯表的規範。 |
 | `qa-test-runner` | 📄 Skill | 跑測試 + 失敗診斷/修復。 |
-| **Python playwright**（`scripts/verify_locator.py`） | 工具 | 驗 locator 的真實瀏覽器；**headless、無彈窗、各自 launch**——單案與批次並行**都用它**（不用 playwright MCP，避免彈窗/搶共用瀏覽器）。驗 mweb 加 `--device 'iPhone 15'`。 |
+| **Python playwright**（`scripts/verify_locator.py`） | 工具 | 驗 locator 的真實瀏覽器；**headless、無彈窗、各自 launch**——單案與批次並行**都用它**（不用 playwright MCP，避免彈窗/搶共用瀏覽器）。**必帶 `--platform web|mweb`**（不帶會被擋下；mweb 自動套框架用的 iPhone 15，靠 UA 才拿到 mweb DOM）。 |
 | **kkday-QA-automation** | 本機 repo | 測試碼落地處（page object / test step / case yaml）。 |
 
 ### 各 Agent 用哪個 model

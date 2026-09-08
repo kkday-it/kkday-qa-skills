@@ -263,22 +263,28 @@ bootstrap 完成後驗可用性（`verify_locator.py` 能跑 / `adb devices` / `
 > - 登入後頁面（如 `/member/basic`）的 locator **必須經真實 logged-in DOM 定案**，禁憑經驗猜元件型態（是 select2？KkSelect？原生 select？——猜錯會整條做壞）。取得登入後 DOM 兩條合法路徑：① 主對話用 MCP 探索後把 ground 好的 recipe（真實 class/屬性）交給 automator；② 用框架既有 `login_with_email_playwright` 跑到登入後 dump `storage_state`，再 `verify_locator.py --storage-state <檔>` 探該頁。
 > - **禁止自建假 case ID（如 `KQT-T99001`）塞進 yaml 跑框架來 ground** —— 那會被誤判成亂跑 / 假綠，且暫存檔容易漏刪進 PR。若真要暫存探索檔，用固定前綴且**流程結束強制清除**（不靠記得刪）。
 
-- **Web（Python playwright / `verify_locator.py`）**
-  1. 對 `https://www.stage{suffix}.kkday.com/...`（**禁用** prod `www.kkday.com`）逐一驗候選 locator：
+- **Web / MWeb（Python playwright / `verify_locator.py` — `--platform` 必填）**
+
+  🔴 **`--platform web|mweb` 一律要帶，不帶會被擋下（`status: blocked`，exit 3）。**
+  kkday 是靠 **User-Agent**（＋`isMobile`/`hasTouch`）決定回 web 還是 mweb DOM，**不是看
+  viewport**。`--platform mweb` 會自動套框架用的同一台 `iPhone 15`（見
+  `QATest/src/lib/fixtures/playwright.py` `devices['iPhone 15']`）；**不帶就是桌面 UA →
+  server 回 web 頁 → mweb 候選全部 stale**，而那個 stale 是假的，照它去改會把對的 locator 改壞。
+  這條做成硬擋而非提醒，就是因為「忘了加」不會報錯。
+
+  1. 對 `https://www.stage{suffix}.kkday.com/...`（**禁用** prod `www.kkday.com`）逐一驗候選：
      ```bash
-     python3 scripts/verify_locator.py --url "https://www.stage.kkday.com/..." \
+     python3 scripts/verify_locator.py --platform web --url "https://www.stage.kkday.com/..." \
        --candidate "css:.things-to-do-search-bar__input" --candidate "css:..."
+
+     python3 scripts/verify_locator.py --platform mweb --url "https://www.stage.kkday.com/..." \
+       --candidate "css:..."
      ```
   2. 它 headless 開頁、回報每個候選有沒有**唯一命中**；沒命中就依真實 DOM 改成能唯一命中的 css/xpath 再驗。
-
-- **MWeb（Python playwright / `verify_locator.py` — 必須用手機 device profile，不能只縮 viewport）**
-  kkday 是靠 **User-Agent**（＋`isMobile`/`hasTouch`）決定回 web 還是 mweb DOM，**不是看 viewport**。只縮 viewport 仍是桌面 UA → server 回 **web 頁**，就驗到錯的頁。
-  - 加 `--device "iPhone 15"`（＝框架 mweb 用的同一台，見 `QATest/src/lib/fixtures/playwright.py:90` `devices['iPhone 15']`），`verify_locator.py` 會套該 device profile（手機 UA + `isMobile`/`hasTouch`）：
-    ```bash
-    python3 scripts/verify_locator.py --url "https://www.stage.kkday.com/..." \
-      --device "iPhone 15" --candidate "css:..."
-    ```
-  - mweb 的 class 常與 web 不同，勿照搬 web locator。
+  3. **全候選 stale 時看輸出有沒有 `tag_hints`** —— 那是自動做的 tag 放寬診斷（`//div[` → `//*[`）。
+     有的話代表選擇器條件全對、**只有 tag 假設錯**（例：KQT-T11835 那批 28 張，stage 把首頁 15 個
+     分類中的 9 個從 `<div>` 改成 `<a>`，class 與文字都沒變）。這種只改 tag，不要重寫整條。
+  - mweb 的 class 常與 web 不同，勿照搬 web locator；反之亦然。
 
 - **App / Android（adb dump uiautomator tree）**
   ```bash
