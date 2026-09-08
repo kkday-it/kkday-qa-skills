@@ -85,14 +85,19 @@ def main() -> int:
     ap.add_argument("--xpath", action="append", default=[], help="要實打的 locator，可重複")
     ap.add_argument("--tap", action="store_true", help="真的點下去（需同時給 --confirm-mutates）")
     ap.add_argument("--confirm-mutates", action="store_true")
+    ap.add_argument("--tap-xy", metavar="X,Y", help="照座標硬點（locator 全掛時用來確認流程本身還對不對）")
+    ap.add_argument("--type", dest="type_text", help="app 層 typeText（mobile: keys），不經元素")
+    ap.add_argument("--send-keys", help="對第一個 --xpath 解析到的元素 send_keys，等同框架 Element.input")
+    ap.add_argument("--tap-keys", help="逐一點 XCUIElementTypeKey 鍵盤按鍵輸入這串字（locator 全無時的唯一路徑）")
     ap.add_argument("--port", type=int, default=IOS_PORT)
     ap.add_argument("--wda-port", type=int, default=WDA_PORT_DEFAULT)
     ap.add_argument("--out", default=OUT_DIR_DEFAULT)
     ap.add_argument("--max-nodes", type=int, default=200)
     args = ap.parse_args()
 
-    if args.tap and not args.confirm_mutates:
-        sys.exit("--tap 會動到裝置，必須同時給 --confirm-mutates")
+    mutating = (args.tap, args.tap_xy, args.type_text, args.send_keys, args.tap_keys)
+    if any(mutating) and not args.confirm_mutates:
+        sys.exit("--tap / --tap-xy / --type / --send-keys / --tap-keys 會動到裝置，必須同時給 --confirm-mutates")
 
     try:
         from appium import webdriver
@@ -136,6 +141,7 @@ def main() -> int:
             extra = f" label={n['label']!r}" if n["label"] else ""
             print(f"  y={n['rect'][1]:>5} h={n['rect'][3]:>4} {n['type']:<28} name={n['name']!r}{extra}")
 
+        first_els = []
         for xp in args.xpath:
             print(f"\n=== xpath: {xp}")
             try:
@@ -143,6 +149,8 @@ def main() -> int:
             except Exception as e:
                 print(f"  !! 解析失敗: {type(e).__name__}: {e}")
                 continue
+            if xp == args.xpath[0]:
+                first_els = els
             print(f"  解析到 {len(els)} 個節點" + ("  ← union/following:: 選到多個，框架會取第一個" if len(els) > 1 else ""))
             for i, el in enumerate(els):
                 try:
@@ -161,6 +169,64 @@ def main() -> int:
                 time.sleep(2)
                 driver.get_screenshot_as_file(after)
                 print(f"  已點第 [0] 個；截圖 before={before} after={after}")
+
+        if args.tap_xy:
+            x, y = (int(v) for v in args.tap_xy.split(","))
+            before = os.path.join(args.out, f"{stamp}_tapxy_before.png")
+            after = os.path.join(args.out, f"{stamp}_tapxy_after.png")
+            driver.get_screenshot_as_file(before)
+            driver.execute_script("mobile: tap", {"x": x, "y": y})
+            time.sleep(2)
+            driver.get_screenshot_as_file(after)
+            src2 = os.path.join(args.out, f"{stamp}_tapxy_source.xml")
+            with open(src2, "w") as f:
+                f.write(driver.page_source)
+            print(f"\n=== tap ({x},{y})")
+            print(f"  截圖 before={before} after={after}")
+            print(f"  點完的元素樹 {src2}")
+
+        if args.send_keys:
+            print(f"\n=== send_keys {args.send_keys!r}（等同框架 Element.input）")
+            if not first_els:
+                print("  !! 第一個 --xpath 沒解析到元素，無法 send_keys")
+            else:
+                before = os.path.join(args.out, f"{stamp}_sendkeys_before.png")
+                after = os.path.join(args.out, f"{stamp}_sendkeys_after.png")
+                driver.get_screenshot_as_file(before)
+                try:
+                    first_els[0].send_keys(args.send_keys)
+                    print("  send_keys 沒拋錯（不代表真的進到欄位，看 after 截圖）")
+                except Exception as e:
+                    print(f"  !! send_keys 拋錯: {type(e).__name__}: {e}")
+                time.sleep(2)
+                driver.get_screenshot_as_file(after)
+                print(f"  截圖 before={before} after={after}")
+
+        if args.tap_keys:
+            print(f"\n=== tap_keys {args.tap_keys!r}（逐鍵點 XCUIElementTypeKey，{len(args.tap_keys)} 鍵）")
+            before = os.path.join(args.out, f"{stamp}_tapkeys_before.png")
+            after = os.path.join(args.out, f"{stamp}_tapkeys_after.png")
+            driver.get_screenshot_as_file(before)
+            failed = []
+            for ch in args.tap_keys:
+                try:
+                    driver.find_element("xpath", f"//XCUIElementTypeKey[@name='{ch}']").click()
+                except Exception as e:
+                    failed.append(f"{ch}({type(e).__name__})")
+            time.sleep(2)
+            driver.get_screenshot_as_file(after)
+            print(f"  點不到的鍵: {failed or '無'}")
+            print(f"  截圖 before={before} after={after}")
+
+        if args.type_text:
+            before = os.path.join(args.out, f"{stamp}_type_before.png")
+            after = os.path.join(args.out, f"{stamp}_type_after.png")
+            driver.get_screenshot_as_file(before)
+            driver.execute_script("mobile: keys", {"keys": list(args.type_text)})
+            time.sleep(2)
+            driver.get_screenshot_as_file(after)
+            print(f"\n=== type {args.type_text!r}（{len(args.type_text)} 字）")
+            print(f"  截圖 before={before} after={after}")
         return 0
     finally:
         if driver:
