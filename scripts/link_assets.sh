@@ -9,6 +9,18 @@
 # 用法：link_assets.sh [--quiet]
 #   --quiet → 不印任何 log（hook 用；hook 的 stdout 有協定，不可污染）。
 # 冪等：重複跑安全（symlink 重指、非 symlink 的既有檔案不覆蓋）。
+#
+# ## 「不覆蓋」為什麼要留紀錄
+#
+# 撞到非 symlink 的既有檔案時本檔選擇不覆蓋（那可能是人家自己寫的東西），這是對的。
+# 錯的是**只用 say 講**：每個 session 跑的是 `--quiet`，那行訊息永遠不會出現。結果是
+# 本機那份**永久遮蔽** repo 版，而且沒有任何地方看得到——eden 的 `tcms-create-case`
+# 就這樣跟大家跑不同版本跑了兩個月，是靠人工 `ls -la ~/.claude/skills` 才發現的。
+#
+# 所以衝突另外寫進 CONFLICTS 檔（quiet 也寫），由 `telemetry_identity.py` 讀進
+# `skills_version` 的 `!N` 後綴送上 dashboard——把「我這台跟別人不一樣」變成看得見的數字，
+# 而不是要每個人自己想到去 ls。**每次執行整檔重寫**：它描述的是當下狀態，不是歷史；
+# 人把遮蔽的目錄移掉之後，下一個 session 就該自動恢復乾淨。
 set -u
 
 QUIET=0
@@ -19,12 +31,16 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 mkdir -p "$CLAUDE_DIR/skills" "$CLAUDE_DIR/agents"
 
+CONFLICTS="$CLAUDE_DIR/harness/link_conflicts.txt"
+conflicts=""
+
 link_one() {  # $1=src $2=dstdir
   local src="$1" dst="$2/$(basename "$1")"
   if [ -L "$dst" ]; then
     ln -sfn "$src" "$dst"; say "  ~ relink $(basename "$1")"
   elif [ -e "$dst" ]; then
     say "  ! skip $(basename "$1")（已存在且非 symlink，不覆蓋——如要接管請先手動移除）"
+    conflicts="$conflicts$dst"$'\n'
   else
     ln -s "$src" "$dst"; say "  + link $(basename "$1")"
   fi
@@ -45,4 +61,11 @@ say "[link] agents:"
 for a in "$REPO"/agents/*.md; do
   [ -f "$a" ] && link_one "$a" "$CLAUDE_DIR/agents"
 done
+
+# 寫入不能讓本檔失敗（它是每個 session 都跑的 hook 的一部分）。寫不進去就算了，
+# 頂多回到「看不見」的現狀，不該因此擋住任何人的 symlink 或 prompt。
+if mkdir -p "$(dirname "$CONFLICTS")" 2>/dev/null; then
+  printf '%s' "$conflicts" > "$CONFLICTS" 2>/dev/null || :
+fi
+[ -n "$conflicts" ] && say "[link] ⚠ 有 $(printf '%s' "$conflicts" | grep -c '') 個被本機檔案遮蔽，清單：$CONFLICTS"
 exit 0
