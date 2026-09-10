@@ -56,7 +56,9 @@ except Exception:
         _CLIENT_USER = f"{os.getlogin()}@{socket.gethostname()}"
     except Exception:
         _CLIENT_USER = "unknown"
-    _SKILLS_VERSION = ""
+    # 跟 resolve_skills_version() 同一個理由：空字串在 dashboard 上跟「舊 sender
+    # 沒送這欄」分不出來，這條路就永遠不會有人來查。
+    _SKILLS_VERSION = "unknown:no-identity-module"
 
 # 由 --hooks-rev 覆寫（見 main()）。模組層預設 0＝沒帶＝快照比版本號上線更早。
 _HOOKS_REV = 0

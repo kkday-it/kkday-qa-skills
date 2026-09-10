@@ -76,6 +76,66 @@ class TestLinkAssets(unittest.TestCase):
             self.assertEqual(r.stdout, "")
 
 
+class TestConflictsAreRecorded(unittest.TestCase):
+    """不覆蓋是對的，只用 say 講不是——每個 session 跑的是 --quiet，那行永遠不會出現。
+
+    真實後果：eden 的 `~/.claude/skills/tcms-create-case/` 是自己的真目錄，永久遮蔽
+    repo 版，跟同事跑不同版本跑了兩個月都沒人知道。清單要落地，才餵得到
+    `telemetry_identity._shadow_suffix()` 的 `!N`。
+    """
+
+    def _conflicts(self, claude: str) -> str:
+        path = os.path.join(claude, "harness", "link_conflicts.txt")
+        if not os.path.exists(path):
+            return "<missing>"
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def test_quiet_模式也要寫下衝突(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, claude = fake_repo(root), os.path.join(root, "claude")
+            write(os.path.join(claude, "skills", "foo-skill", "SKILL.md"), "MINE")
+            r = run("link_assets.sh", repo, claude, "--quiet")
+            self.assertEqual(r.stdout, "")  # stdout 協定不可污染
+            self.assertIn("foo-skill", self._conflicts(claude))
+
+    def test_沒有衝突就是空檔_不是不存在(self):
+        """留一個空檔，才分得出「跑過、乾淨」與「還沒跑過新版」（後者不該報 !N）。"""
+        with tempfile.TemporaryDirectory() as root:
+            repo, claude = fake_repo(root), os.path.join(root, "claude")
+            run("link_assets.sh", repo, claude, "--quiet")
+            self.assertEqual(self._conflicts(claude), "")
+
+    def test_衝突解掉後下次要自動清乾淨(self):
+        """整檔重寫而不是 append：它描述當下狀態，不是歷史。"""
+        with tempfile.TemporaryDirectory() as root:
+            repo, claude = fake_repo(root), os.path.join(root, "claude")
+            shadow = os.path.join(claude, "skills", "foo-skill")
+            write(os.path.join(shadow, "SKILL.md"), "MINE")
+            run("link_assets.sh", repo, claude, "--quiet")
+            self.assertIn("foo-skill", self._conflicts(claude))
+            subprocess.run(["rm", "-rf", shadow], check=True)
+            run("link_assets.sh", repo, claude, "--quiet")
+            self.assertEqual(self._conflicts(claude), "")
+
+    def test_agent_被遮蔽也要記(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, claude = fake_repo(root), os.path.join(root, "claude")
+            write(os.path.join(claude, "agents", "foo-agent.md"), "MINE")
+            run("link_assets.sh", repo, claude, "--quiet")
+            self.assertIn("foo-agent.md", self._conflicts(claude))
+
+    def test_寫不進去也不能讓_link_失敗(self):
+        """它是每個 session 都跑的 hook 的一部分：最差只該回到「看不見」的現狀。"""
+        with tempfile.TemporaryDirectory() as root:
+            repo, claude = fake_repo(root), os.path.join(root, "claude")
+            # 把 harness 佔成一個檔案 ⇒ mkdir -p 必定失敗
+            write(os.path.join(claude, "harness"), "not a dir")
+            r = run("link_assets.sh", repo, claude, "--quiet")
+            self.assertEqual(r.returncode, 0)
+            self.assertTrue(os.path.islink(os.path.join(claude, "skills", "foo-skill")))
+
+
 class TestAutopullRelinks(unittest.TestCase):
     """autopull 必須 (1) 對『本 script 的 clone』動作、(2) 沒更新也補 symlink。"""
 
