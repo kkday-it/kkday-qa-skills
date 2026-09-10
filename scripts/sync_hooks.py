@@ -28,7 +28,8 @@ import sys
 # 沒帶這個 flag（0）＝那個快照比版本號機制上線還早。
 #
 # 沿革：1 = 首次引入版本號 + flow sender 掛進 Stop + registry 讀取 gate
-HOOKS_REV = 1
+#       2 = 派工結案 gate（task_verdict_gate_stop_hook）掛進 Stop
+HOOKS_REV = 2
 
 
 def _repo() -> str:
@@ -93,6 +94,11 @@ def desired_hooks(repo: str) -> dict:
             # 抄不到，等於靜默不 enforce。讀取 gate 只清自己的 ledger，不動 claimed。
             f'bash "{repo}/scripts/registry_read_gate_stop_hook.sh"',
             f'bash "{repo}/scripts/locator_gate_stop_hook.sh"',
+            # 派工（ai-studio AI 派工中心）沒自報結案就不准結束這一輪。arm 訊號是**環境
+            # 變數**（AGENT_TASK_REQUIRE_VERDICT）而不是 claimed 檔，所以跟上面那幾個
+            # gate 沒有先後關係 —— 放最後只是因為它跟 TCMS 批次無關，別插在那組中間。
+            # 一般人在自己筆電上的 session 沒有那個變數，這支第一行就放行。
+            f'python3 "{repo}/scripts/task_verdict_gate_stop_hook.py"',
             # --hooks-rev 讓後台看得出「這個 session 的快照是哪一世代」（見 HOOKS_REV）。
             f'python3 "{repo}/scripts/send_tool_usage.py" --infile /tmp/tool_usage.jsonl '
             f'--purge --hooks-rev {HOOKS_REV}',
