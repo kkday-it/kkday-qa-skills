@@ -9,6 +9,8 @@ task_verdict_gate_stop_hook 的單元測試。
 2. **關鍵字認錯** → 認整段的話，「我等測試跑完就回 TASK_DONE 給你」這種句子會直接
    把 gate 關掉；只認最後一行才擋得住。
 3. **無限擋** → 燒的是使用者自己的訂閱額度，推不動要放手。
+4. **關鍵字少一個** → 三種結案關鍵字要跟 ai-studio `agent_runner` 那份同步。少收一種
+   的話，寫對答案的 agent 會被擋回去、改寫成別的關鍵字，然後被判成失敗（58540035）。
 
 跑法：python3 scripts/test_task_verdict_gate_stop_hook.py
 """
@@ -85,6 +87,24 @@ def test_做不完也算收尾():
     assert g.decide(payload(path, "t-blocked")) is None
 
 
+def test_查清楚了不該改也算收尾():
+    # 任務 58540035：agent 查出是 stage 端間歇 5xx、重跑即過，寫了 TASK_NO_FIX ——
+    # 這支當時只收兩種，把它擋回去，它改寫成 TASK_BLOCKED，runner 於是判成失敗。
+    # 一個判斷完全正確的任務被逼成紅色卡片。
+    path = transcript(assistant("stage 間歇 5xx，重跑即過。\nTASK_NO_FIX: 產品端問題"))
+    assert g.decide(payload(path, "t-nofix")) is None
+
+
+def test_擋回去那句話要把三種都講出來():
+    # 只列兩種的話，agent 會以為 TASK_NO_FIX 不被接受而改寫成 TASK_BLOCKED ——
+    # 58540035 就是這樣發生的，它還在報告裡註明了「gate 只收下列兩種」。
+    path = transcript(assistant(REAL_UNFINISHED[0]))
+    reason = g.decide(payload(path, "t-三種"))
+
+    for mark in g.VERDICT_MARKS:
+        assert mark in reason, mark
+
+
 def test_線上那兩則都會被擋下來():
     for i, summary in enumerate(REAL_UNFINISHED):
         path = transcript(assistant(summary))
@@ -101,7 +121,7 @@ def test_關鍵字在句子中間不算收尾():
 
 
 def test_markdown_包起來也算():
-    for line in ("**TASK_DONE**", "`TASK_DONE`"):
+    for line in ("**TASK_DONE**", "`TASK_DONE`", "**TASK_NO_FIX: 產品端壞了**"):
         path = transcript(assistant(f"修好了\n{line}"))
         assert g.decide(payload(path, "t-md")) is None, line
 

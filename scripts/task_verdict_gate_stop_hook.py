@@ -17,13 +17,25 @@ ai-studio 的「AI 派工中心」把失敗的 case 丟給 agent 修。agent 講
 
 ## 契約
 
-agent 每一輪的**最後一行**只能是這兩者之一：
+agent 每一輪的**最後一行**只能是這三者之一：
 
     TASK_DONE                 結果已經拿到手
+    TASK_NO_FIX: <原因>       查清楚了，但不該改 code（產品端真的壞了、案例本身該失敗）
     TASK_BLOCKED: <原因>      做不完，說清楚卡在哪
 
 沒有那一行 ⇒ 這一輪不算收尾。**fail-closed**：漏講的代價是被推回去再做一次，誤判成完成
 的代價是使用者不知道事情沒做完 —— 兩邊不對稱。
+
+## `TASK_NO_FIX` 是後來補的，補之前踩過一次
+
+這支原本只收前兩種，而 ai-studio 的 system prompt（`agent_runner._FINISH_RULE`）講的是
+三種。任務 58540035 因此走成這樣：agent 查出來是 stage 端間歇 5xx、重跑即過，寫了
+`TASK_NO_FIX` —— 被這支擋下來，擋回去那句話還明確要求「只能是 TASK_DONE 或
+TASK_BLOCKED」。它照做改寫成 `TASK_BLOCKED`，並在報告裡註明「結案類型實為
+TASK_NO_FIX，但 gate 只收下列兩種」。runner 看到 `TASK_BLOCKED` 就判沒做完，卡片變成
+紅色的失敗 —— 一個判斷完全正確、還附了五張證據圖的任務。
+
+所以這裡的關鍵字清單跟 `agent_runner` 那份是同一份契約，少一個就會把正確答案逼成錯的。
 
 ## 為什麼要這支（規則已經寫在 system prompt 裡了）
 
@@ -51,22 +63,26 @@ import os
 import sys
 
 DONE_MARK = "TASK_DONE"
+NO_FIX_MARK = "TASK_NO_FIX"
 BLOCKED_MARK = "TASK_BLOCKED"
+VERDICT_MARKS = (DONE_MARK, NO_FIX_MARK, BLOCKED_MARK)
 
 # 同一輪最多擋幾次。跟 runner 的 `AGENT_TASK_MAX_UNFINISHED_NUDGE` 同一個精神：
 # 推不動就放手，不能為了要一行關鍵字把人家的訂閱額度燒光。
 MAX_BLOCKS = int(os.environ.get("AGENT_TASK_VERDICT_MAX_BLOCKS", "2"))
 
 BLOCK_REASON = (
-    f"你還沒有回報結案。這一輪的最後一行必須是 `{DONE_MARK}` 或 "
-    f"`{BLOCKED_MARK}: 原因`，前後不要再加任何字。\n"
+    f"你還沒有回報結案。這一輪的最後一行必須是 `{DONE_MARK}`、"
+    f"`{NO_FIX_MARK}: 原因` 或 `{BLOCKED_MARK}: 原因`，前後不要再加任何字。\n"
     "\n"
     "注意這不只是格式問題：你這一輪講完話，派工系統就會判定整件任務結束並"
     "**立刻刪掉整個工作區** —— 沒有人會替你等背景執行的指令或還沒收到的通知，"
     "它們會連同工作區一起消失。\n"
     "\n"
     "所以：測試、build 這種要等的指令一律在前景跑（timeout 直接設足夠長），"
-    f"等到結果真的拿到手再寫 `{DONE_MARK}`；真的做不完就寫 "
+    f"等到結果真的拿到手再寫 `{DONE_MARK}`；查清楚了但判定不該改 code（產品端真的"
+    f"壞了、案例本身就該失敗）寫 `{NO_FIX_MARK}: 原因` —— 那是正常結案，不要為了"
+    f"寫得出 `{DONE_MARK}` 去硬改不該改的東西；真的做不完就寫 "
     f"`{BLOCKED_MARK}: 原因`，那也是一種正當的收尾。"
 )
 
@@ -129,7 +145,7 @@ def has_verdict(text: str) -> bool:
     if not lines:
         return False
     bare = lines[-1].strip("*`_ ").strip().upper()
-    return bare.startswith(DONE_MARK) or bare.startswith(BLOCKED_MARK)
+    return any(bare.startswith(mark) for mark in VERDICT_MARKS)
 
 
 def decide(payload: dict):
@@ -160,7 +176,8 @@ def decide(payload: dict):
         # 推不動就放手。runner 那邊會把這一輪判成「沒做完」（不是完成），
         # 使用者看到的是 failed + 原因，不是一張騙人的「完成」卡片。
         print(
-            f"[task_verdict_gate] 已擋 {blocked} 次仍沒有 {DONE_MARK}，放手交給 runner 判定",
+            f"[task_verdict_gate] 已擋 {blocked} 次仍沒有結案關鍵字"
+            f"（{'／'.join(VERDICT_MARKS)}），放手交給 runner 判定",
             file=sys.stderr,
         )
         return None
