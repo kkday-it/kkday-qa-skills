@@ -99,24 +99,34 @@ locator gate 只驗「有 source==本 case 的 emit 存在」，**不驗 emit �
 
 這些除 c、f 為近期補入外**都是 skill 本來就有的規範**；上 PR 會被 repo reviewer 擋，要在這裡先擋掉。
 
-## 輸出（結構化，給主對話當閘門）
+## 回傳給主對話（**極簡**，完整判定寫在結果檔裡）
+
+完整的結構化判定一律照下一節寫進結果檔 —— **gate（`check_fidelity_gate.py`）與遙測
+（`send_case_fidelity.py`）讀的都是那個檔，欄位一個都不能少**。這一節只管「回傳給主對話的文字」，
+它不影響把關也不影響遙測：那只是「要不要退回」的路由訊號，**不是報告**。
+
+批次跑十幾條時，每條都把結果檔的內容再鋪一段散文回來，那些字全部進主對話的 context，而且沒有人
+會讀 —— 同一份資料講兩次，第二次純粹是成本。
+
+**pass —— 就一行，不准多寫：**
 
 ```
-case: KQT-Txxxxx
-platform: web                 # 多平台逐一輸出
-step_coverage: 5/6
-assertion_coverage: 3/5
-uncovered:
-  - step 4「切換 SKU_002」：無對應動作
-  - expected(step 2)「顯示原價無劃線」：無斷言
-suspicious_assertions:
-  - category_page.py:88  assert_that(True, ...) 恆真
-drift: none
-fidelity: FAIL                # PASS / FAIL
-confidence: 0.4               # 0-1
-recommend: needs-fix          # pass / needs-fix / flag-for-human
-notes: <一句話重點>
+KQT-T37931 / web — pass (step 3/3, assert 3/3, conf 0.85)
 ```
+
+**非 pass —— 一行 + 待修項，每項一行，各附 `file:line`：**
+
+```
+KQT-T37931 / web — needs-fix (step 5/6, assert 3/5, conf 0.4)
+- 未覆蓋 expected(step 2)「顯示原價無劃線」：無斷言
+- category_page.py:88 恆真斷言 assert_that(True, ...)
+- product_page.py:212 element 暫存（skill 禁止）
+```
+
+待修項是要原封不動交給 automator 去改的，所以要具體；除此之外一個字都不要加。
+
+**禁止**：複述 case 規格、解釋你怎麼查的、列跑過哪些指令、重述判準、寫「以下是我的分析」這類開場，
+以及把已經寫進結果檔的欄位再抄一次。多平台就多幾行，不要每個平台各起一段。
 
 ## 判準（門檻可由主對話 / harness 覆寫，以下為預設）
 
