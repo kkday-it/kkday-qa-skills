@@ -703,6 +703,51 @@ _AUTHORIZATION_PAGE_POLL_SECONDS = 3
 不要照做——**在 PR comment 逐條回 `won't fix` 並附理由**即可。同理，reviewer 要求的重構若只會
 讓 code 變長而不讓人更懂，一律先判斷再決定，不要因為它給了低分就照單全收。
 
+### 🔴 常數的位置：預設寫在用它的 function 內，不准一律提到檔頭
+
+過了上面判準、確定**該抽**的常數，接著要決定放哪。預設是**定義在使用它的 function 內部**。
+只有滿足下列其中一項才准提到 module 層：
+
+| 可以放 module 層 | 為什麼 |
+|---|---|
+| **真的有 2 個以上 function 用到** | 跨 function 才需要共用定義點 |
+| step A 寫、step B 讀的 `dynamic_test_data` **鍵名** | 上一列的特例，但務必抽：字串打錯不會報錯，讀到 `None` 後判定被靜默跳過，是假綠來源 |
+| `re.compile()` 等**只該在 import 時做一次**的物件 | 這是效能理由，與「具名常數」無關，別混為一談 |
+| 模組級的**對照表**，且該表本身就是這個檔案的對外契約 | 例：平台 → locator 前綴的對照表 |
+
+判準一句話：**只在一個 function 內用到的值，提到檔頭就是錯的。**
+
+理由跟上面禁止複述型常數是同一條——讀者在第 1400 行看到 `_TRAVELER_MENTION_MAX_GAP`，得跳回
+第 104 行才知道是 24，再跳回來。單看一顆不痛，但檔頭常數區長到 20 行以上時這個成本是複利的，
+而且它會自我增殖：檔頭已經有一整區，下一個人加第 24 顆時不會覺得有什麼問題。
+
+```python
+# ❌ 錯：只有 verify_search_result_card_components_match_api 一個 function 用到，卻放檔頭
+_CARD_TITLE_MIN_MATCH_LENGTH = 8
+
+def verify_search_result_card_components_match_api(...):
+    ...
+    elif len(stripped) < _CARD_TITLE_MIN_MATCH_LENGTH:
+
+# ✅ 對：跟著使用處走
+def verify_search_result_card_components_match_api(...):
+    min_title_match_length = 8
+    ...
+    elif len(stripped) < min_title_match_length:
+```
+
+交付前盤點自己新增的檔頭常數，逐個回答「有幾個 function 用到」：
+
+```bash
+for c in $(grep -oE "^_[A-Z][A-Z0-9_]*" <檔案> | sort -u); do
+  printf "%-44s %s\n" "$c" "$(grep -c "\b$c\b" <檔案>)"
+done
+# 次數（含定義行）<= 2 的一律回去看使用處：若集中在單一 function → 搬進去
+```
+
+這是盤點起點不是硬 gate（註解裡提到常數名也會被算進去），**判準仍是「幾個 function 用到」**。
+既有檔案已經堆在檔頭的那些屬 tech-debt 基線，不在本次 case 範圍就別動，但**不授權你再加一顆**。
+
 ## 發 PR
 
 用戶要求發 PR 時，必須：
