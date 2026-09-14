@@ -512,7 +512,7 @@ def describe_tool(name: str) -> dict:
         },
         "ensure_hq_qa_permission": {
             "purpose": "把指定 email 加進 be2 IT.hq-qa 角色：確保角色勾滿全模組權限 + 啟用該使用者 + 指派角色 + 驗證",
-            "note": "冪等、只加不減。IT.hq-qa 的 role oid 各環境不同（後端動態查，不硬編）。登入失敗 / 403 / 查無此人等錯誤會原封回報。",
+            "note": "⚠️ 這會賦予後台存取權（啟用帳號 + 全模組權限角色），屬提權操作——執行前請與使用者確認對象/環境無誤（只限 sit/stage、不碰 prod）。冪等、只加不減。IT.hq-qa 的 role oid 各環境不同（後端動態查，不硬編）。登入失敗 / 403 / 查無此人等錯誤會原封回報。",
             "params": {
                 "email": "目標使用者 email（be2 authKey）",
                 "env": "sit / stage（例：sit / sit218 / stage），沒有預設值，先問使用者",
@@ -911,8 +911,9 @@ def ensure_hq_qa_permission(email: str, env: str) -> dict:
     〔全自動模式〕使用者明確要求自動時才直接執行。env 只有 sit / stage 兩種；使用者選 sit 時
     **必須**追問是哪一台（sit0x 或 sit20x 系列，如 sit04 / sit206），**不得自行預設或編造**環境代號。
 
-    冪等、只加不減（角色權限與使用者角色都只補缺、不移除）。登入失敗 / PUT 403 /
-    查無此人等錯誤會原封回報（不做防禦性跳過）。
+    ⚠️ 提權操作：會啟用帳號並賦予全模組權限角色，執行前務必與使用者確認對象/環境
+    （只限 sit/stage，不碰 prod）。冪等、只加不減（角色權限與使用者角色都只補缺、不移除）。
+    登入失敗 / PUT 403 / 查無此人等錯誤會原封回報（不做防禦性跳過）。
 
     Args:
         email: 目標使用者 email（be2 authKey）

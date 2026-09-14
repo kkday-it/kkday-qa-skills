@@ -62,10 +62,10 @@ LLM → MCP tool ensure_hq_qa_permission(email, env)   [kkday-qa-skills server.p
 POST /api/tools/ensure-hq-qa-permission
 body: { "email": "user@kkday.com", "env": "sit" | "sit218" | "stage" }
 resp: {
-  "env": "...", "role": "IT.hq-qa (roleOid=21, platformOid=1)",
+  "env": "...", "role": "IT.hq-qa (roleOid=<動態查>, platformOid=1)",
   "role_permission": {"total": 42, "added": 0, "skipped": true},
-  "user": {"email":"...", "enabled": true, "roles_added": [21], "already_ok": false},
-  "verified": true, "warnings": []
+  "user": {"email":"...", "subAuthOid": 99, "enabled_now": false, "roles_added": [], "already_ok": true},
+  "verified": true, "logs": [...]
 }
 ```
 
