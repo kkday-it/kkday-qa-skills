@@ -30,18 +30,34 @@ import sys
 import time
 
 OUT_DIR_DEFAULT = os.path.expanduser("~/Documents/QATest_Output/_attach_probe")
-IOS_PORT = 10199
+# 必須落在框架的 platform port 段（Android 10000–10099、iOS 10100–10199，見 run_case.sh）之外：
+# 段內的話 `kill_stale_appium` 會把這支的 server 當殘留 pgrep 掉，而框架也可能反過來配到同一個
+# port，讓 probe 接上正在跑的 run、搶同一台實機的 session。
+IOS_PORT = 10250
 WDA_PORT_DEFAULT = 8158
 
 
+def _port_busy(port: int) -> bool:
+    import socket
+
+    with socket.socket() as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def _start_appium(port: int) -> subprocess.Popen:
+    # 先擋住「port 已經有人」：否則自己的 appium 因 EADDRINUSE 秒退，health check 卻打中舊 server
+    # 回 200，我們就默默接到別人的 server 上去了。
+    if _port_busy(port):
+        sys.exit(f"port {port} 已經有人在用；換一個 --port（別用 10000–10199，那是框架的段）")
     proc = subprocess.Popen(
-        ["appium", "-p", str(port), "--relaxed-security"],
+        ["appium", "-a", "127.0.0.1", "-p", str(port), "--relaxed-security"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     for _ in range(60):
         time.sleep(1)
+        if proc.poll() is not None:
+            sys.exit(f"appium 自己退了 (port {port}, exit={proc.returncode})")
         try:
             import urllib.request
 
@@ -123,14 +139,14 @@ def main() -> int:
         driver = webdriver.Remote(f"http://127.0.0.1:{args.port}", options=opts)
 
         src_path = os.path.join(args.out, f"{stamp}_source.xml")
-        with open(src_path, "w") as f:
+        with open(src_path, "w", encoding="utf-8") as f:
             f.write(driver.page_source)
         shot_path = os.path.join(args.out, f"{stamp}_screen.png")
         driver.get_screenshot_as_file(shot_path)
 
         nodes = _visible_nodes(driver, args.max_nodes)
         nodes_path = os.path.join(args.out, f"{stamp}_nodes.json")
-        with open(nodes_path, "w") as f:
+        with open(nodes_path, "w", encoding="utf-8") as f:
             json.dump(nodes, f, ensure_ascii=False, indent=1)
 
         print(f"source : {src_path}")
@@ -179,7 +195,7 @@ def main() -> int:
             time.sleep(2)
             driver.get_screenshot_as_file(after)
             src2 = os.path.join(args.out, f"{stamp}_tapxy_source.xml")
-            with open(src2, "w") as f:
+            with open(src2, "w", encoding="utf-8") as f:
                 f.write(driver.page_source)
             print(f"\n=== tap ({x},{y})")
             print(f"  截圖 before={before} after={after}")
@@ -234,7 +250,12 @@ def main() -> int:
                 driver.quit()
             except Exception:
                 pass
-        appium_proc.kill()
+        if appium_proc.poll() is None:
+            appium_proc.terminate()
+            try:
+                appium_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                appium_proc.kill()
 
 
 if __name__ == "__main__":
