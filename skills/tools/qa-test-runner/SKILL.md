@@ -303,6 +303,11 @@ bytes**（框架先開檔、真正的內容進了 `qatest.log`）。但也**不�
 - **批次全掛、單張跑會綠** → 語系污染，見下面 [E](#e-語系污染--批次全掛單張跑會綠症狀偽裝成-locator-過期)
 - **locator 在找一個英文 key 名** → i18n 缺 key，見下面 C
 
+🔴🔴 **第 0 步（mobile，沒有例外）：run 已經跑完、App 還停在失敗畫面時，先
+`attach_device_probe.py` 接上去把原本定義的 element 實打一次。** 不准先讀 code 推論、不准先重跑
+一輪、不准先寫任何診斷結論。詳見下面
+「[run 跑完了才想看那一頁](#run-跑完了才想看那一頁attach_device_probepy)」。
+
 修復步驟：
 1. 找到失敗步驟中使用的 page object element
 2. 取得當前畫面結構：
@@ -379,6 +384,45 @@ MCP**，只有主對話做一次性探索可以用（詳見 `qa-automation-write
 
 （**跑測本身不用管**：`run_case.sh <case> mweb` 走框架，框架自己會掛 iPhone 15。這條只約束
 「人／agent 手動開瀏覽器去看」的場合。）
+
+##### run 跑完了才想看那一頁：`attach_device_probe.py`
+
+🔴 **這一步是 mobile 失敗分析的第 0 步，不是備案。** run 結束後 appium session 沒了，但 **iOS App
+還停在失敗那一頁**，畫面其實還在。直接接上去，把 page object 原本定義的 locator 實打一次：
+
+```bash
+R=<framework repo 絕對路徑>
+# ① 唯讀：dump 當前畫面 + 列可見節點 + 逐條解析 locator
+"$R/venv/bin/python" ~/.claude/skills/qa-test-runner/scripts/attach_device_probe.py \
+    --udid "$(idevice_id -l | head -1)" --bundle-id com.kkday.member \
+    --xpath "<page object 裡那條，union 的每一支要分開各給一次>"
+
+# ② 真的點下去（前後各存一張截圖，證明落點）
+... --xpath "<locator>" --tap --confirm-mutates
+```
+
+它用 `noReset` 接現況（不重啟 App、不清資料），輸出落在
+`~/Documents/QATest_Output/_attach_probe/`：`*_source.xml`、`*_nodes.json`、`*_screen.png`。
+
+**為什麼一定要先做這一步**：這條路徑不存在的期間，「run 跑完才發現要看那一頁」時手上只剩
+「重跑一輪 15~20 分鐘」或「讀 code 猜」，而實測會選後者 —— 2026-09-08 KQT-T7516 一小時內連猜了
+三個互相矛盾的根因（Safari 沒跳回 App → `scroll_to` 慣性滑過頭 → locator union 寫壞），**全是推論、
+全部錯**。接上去實打一次就結案了。**現在有這支了，所以「先讀 code 推論」不再有任何正當理由。**
+
+判讀重點：
+
+| 看到 | 意思 |
+|---|---|
+| 解析到 **1 個**、rect 落在對的位置 | **locator 是對的，不要改它** —— 破口在別處 |
+| 解析到 **多個** | union（`\|`）／`following::` 選到不只一個，框架取第一個，哪支贏不受控 |
+| 解析到 **0 個**，但畫面上明明看得見 | **元素沒有 accessibility node／identifier**，見下面那條 |
+
+🔴 **`0 個節點` + 畫面上看得見 = App 端沒掛 identifier，這不是 locator 該修的問題。**
+先用 `--xpath "//XCUIElementTypeTextField"`（或對應型別）確認**整棵樹裡有沒有那個型別**，再照
+rect 的 y 值檢查「上一列」跟「下一列」之間是不是**整段空的**。整段空 = 那個 subtree 根本沒進
+accessibility tree，**任何 XPath 都寫不出來** → 這是 **B 類（回報 App/RD 補 identifier）**，
+不是 A 類。改 locator 只會愈改愈遠。反例見 [[ios-identifier-does-not-remove-plain-text-node]]：
+掛了 identifier 不代表純文字節點消失，兩件事要分開判。
 
 ##### 趁 run 還在跑撈失敗畫面（mobile A 類唯一正解）
 
