@@ -94,6 +94,8 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
   - **「交付某平台」的唯一判準 = 真的用 `--platform X` 跑過、且 qatest 尾巴那行是 `0 failed`。** 不是口頭說 pass、不是「case 能跑」、更不是拿別平台硬套跑綠。
   - 某平台做不了（缺實體機/前置）→ 標 `blocked`＋原因，其餘平台照跑；tag 全部都無法進行才整個 case blocked。**逐平台列出結果,並附每平台那行 qatest summary 原文（見輸出規範）**；tag 平台缺任一「跑出 0 failed」即非完成。
 - **能安全帶預設就帶入並記錄假設**，繼續做：環境 `stage`、語系 `zh-tw`、商品 URL slug→oid、既定測試帳號、label 標的所有 UI 平台…
+- 🔴 **「不知道這步打哪支 API / payload 長怎樣」不列入待確認、也不標 blocked——APP 的先自己去 Kibana 撈（§2.6）。**
+  這是**自己查得到**的東西，丟回主對話只是把 15 秒的查詢換成一輪來回。撈完仍拼不出編排順序才回報。
 - **需判斷或可能測錯的點**（label 混 API 如 `web/API`、多平台這輪是否全做、平台標記對不上、缺 oid 又推不出、測資前置未知如「該商品是否已配好折扣/godate」）→ **回報主對話**，附「候選平台 + 步驟切分 + 已帶入的假設 + 真正卡住需輸入的點（缺哪項／為何需要／可接受格式，如 oid `9468` 或商品 URL）」。**subagent 不自己拍板、不直接問使用者、不 hang。**
 - **完全無法進行**（如缺 oid 推不出）→ 該平台／該 case 標 `blocked`＋原因，跳過續跑。
 
@@ -107,6 +109,75 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 - **(2) 真正 blocker**（真實系統也沒有、或非 code 能解）→ 才標 `blocked`＋原因：缺實體機、prod-only 帳號、外部依賴掛了、環境沒開。
 
 **判準**：問「這條流程在**真實系統**裡存不存在？」存在=（1）去建；不存在且建不出=（2）blocked。**不准因為 grep 不到 repo 就跳 blocked**（呼應 qa-case-planner §3.6；planner 已把可建的規劃好標 `需新建`，你照著建）。
+
+### 2.6 🔴 APP 要 API 契約 → 去 Kibana 撈，不准因為「抓不到封包」標 blocked
+
+上面 (1) 說「把真實 API 挖出來（API 文件 / SA-SD / 抓封包 / 既有零散 step 拼）」——**抓封包那條對 APP 走不通**
+（native app 沒 DevTools、有 SSL pinning）。這不是 blocker：**APP 打出去的每一支 API 都完整記在 Kibana**，
+`log_label: REQUEST` 帶 `request.url` / `route` / `method` / `headers` / `body`，等於封包該給你的東西。
+
+```bash
+cd <你正在用的那個 framework clone> && source venv/bin/activate
+S=<kkday-qa-skills>/scripts/app_api_from_kibana.py
+
+python $S --platform ios                                # 這台實機剛打了哪些 endpoint（近 15 分鐘）
+python $S --platform ios --email auto                   # 再收斂到該平台預設測試帳號
+python $S --platform ios --route api/v2.2/orders --detail   # 單支完整 contract
+python $S --platform ios --from 14:30 --to 14:45        # 指定時段（隔一陣子才回來撈時用）
+python $S --platform ios --list-devices                 # 該時段實際有哪些裝置在打
+```
+
+🔴 **不要自己填 `--env` / `--device` / `--member-uuid` / `--ad-id`，預設全自動——這幾個是猜錯最貴的參數。**
+
+| 參數 | 自動怎麼來 | 什麼時候才手動 |
+|---|---|---|
+| `--env` | 拿裝置識別去 sit / stage 各試撈一次，**哪邊有資料算哪邊**（會印 `stage=24 sit=0`） | 沒接實機、或要查別人的流量 |
+| `--device` | `ideviceinfo -k ProductType` / `adb getprop ro.product.model`；iOS 的 ProductType→行銷名查[社群維護的對照表](https://github.com/kyle-seongwoo-jun/apple-device-identifiers)（本地快取，**不自己維護**） | 對照表沒收錄新機型時，照 `--list-devices` 的真實值填 |
+| `--ad-id` | 先拿 udid 問 ai_studio 裝置註冊庫；沒登記過就用「**型號 ∩ 帳號**」從 log 反推，推出來寄回註冊庫共用 | 同型號多台、腳本印 ⚠️ 判不出是哪台時 |
+| `member_uuid` | `--email auto` 取該平台 framework 預設帳號（同 `login_with_email_account` 那把 secret key），再從 log 的 request/response body 反查 uuid | 要查非預設帳號 → `--email <addr>`；已知 uuid → `--member-uuid` |
+
+**為什麼要 `ad-id` 這層**：`--device` 不足以認人。① `request.headers` 是全文欄位，`iPhone 15`
+會把 `iPhone 15 Plus` 一起比中（實測 24 筆裡混進 6 筆別台的）② 就算精確比對，同型號常常好幾台
+在打（實測近 2 小時 stage 有 3 台 iPhone 15）。帳號也不唯一——同一個 `kkqa_auto` 帳號實測同時掛在
+兩台上。**型號 ∩ 帳號取交集才唯一**，交集出來的 `ad-id` 每支 REQUEST 都帶，還能一併蓋到不帶
+`member_uuid` 的商品／搜尋 endpoint。
+
+`ad-id` 是 IDFA/IDFV 類，**裝置端讀不到**（只有 app 行程內拿得到；`ideviceinfo`、`adb`、
+`idevicesyslog` 都不吐，實測 126,287 行 syslog 零命中），所以只能這樣反推，也因此推出來要存
+（`/api/qa-automation/device-registry`，用 udid 當 key）。App 重裝會換 IDFV ⇒ 腳本用「同型號有流量、
+裡面卻沒有這個 ad-id」當過期判準，自動標 stale 重推。**後端連不上時整條路徑靜默退回自己推，不會擋你。**
+
+**為什麼 `--env` 特別要小心**：撈錯 env **不會報錯**，只會回 0 筆、或回**同時段別人的流量**
+（sit 上一堆 `device-model: Simulator` / `locale: cn` 的 log），兩種都跟「這段沒操作」長得一模一樣。
+實測就這樣把「撈錯 env」誤判成「log 落地延遲」，繞了一大圈。撈到 0 筆時腳本會自動印出該時段真正
+出現過的裝置清單——**先看那份清單再動任何別的參數**。
+
+⚠️ **`--member-uuid` / `--email` 蓋不滿一次操作，不要當唯一過濾。** 只有會員域的 endpoint 才帶
+`member_uuid`；商品、搜尋那些不帶（實測一次商品頁操作 42 筆裡只有 12 筆有 uuid，加了 uuid 過濾
+只剩 6 筆）。要**完整 trace 就只用 `--platform` + 時間窗 + 自動裝置收斂**；`--email` 只適合
+「確認某帳號有沒有打到某支會員 API」。
+
+**操作完馬上撈，預設 15 分鐘就夠**；隔了一段時間才回來查再用 `--from/--to`（吃 `14:30`、
+`2026-09-14 14:30`、`now-2h`）。時間**按本地時區解析**——log 的 `@timestamp` 是 UTC，差 8 小時，
+直接當 UTC 送會撈回空的，而空的跟「那段真的沒流量」分不出來。輸出第二行會印實際查詢區間，**撈到 0 筆先核對那行**。
+
+⚠️ **要分平台一定用 `--platform`，不要自己對 `custom_api-b2c.source` 下 term 查詢**——log 裡大小寫不一致
+（實測 sit 6h：`iOS` 3039 / `IOS` 642 / `ANDROID` 1974 / `Android` 4），只比對一種拼法會**靜默漏掉一半流量**，
+而且漏掉的長得就像「這平台沒打這支 API」。script 已涵蓋全部變體。
+
+env → Kibana：`sit0x`/`sit20x` → kibana.sit、`stage*` → kibana.stage。走匿名登入，**不需要任何 credential**。
+
+**三個會讓你誤判成「查無此欄位」的坑**（都實測踩過）：
+
+| 坑 | 真相 |
+|---|---|
+| 取值全回 `None`，看起來像沒這欄位 | **兩種 schema 並存**：Java 系（`kkday-api`）是**扁平 dotted key**（字面就叫 `"request.url"`），PHP/Node 系（`api-b2c`/`auth`）是**巢狀 object**。取錯方式 = 全 `None`，跟「沒這欄位」長得一樣 |
+| 撈到 `kkday-api` 卻沒有 body | 它只記 `request.body_length`。要 contract 找 `api-b2c` 這類服務，**不是每個 service 都記 payload** |
+| 以為 `log_label: TRACE` 是 API 進出 | TRACE 是一般日誌（"unable to parse version number" 那種）。API 進出是 `REQUEST` / `RESPONSE`，用 `request.uuid` 串配對 |
+
+**順手可做的交叉驗證**：同一支 endpoint 在 log 裡會同時有「真 APP 送的」（`device-model: iPhone 15`、
+`x-req-version: 1.212.0`）和「既有自動化送的」（`user-agent: python-requests/…`、`x-qa-platform: QA_TestPlatform`）。
+**API case 跑出非預期結果時先比這兩組 header** —— header 漏帶 / 版本對不上會直接現形，比從 code 猜快得多。
 
 ### 3. 實作 + 元素驗證（照 qa-automation-writer 三階段）
 1. 規劃草擬（把這個 case 想完再驗）。
@@ -362,5 +433,6 @@ printf '{"name":"%s","kind":"%s","purpose":"%s","location":"%s","signature":"%s"
 - ❌ **跳過 `locator_valve.py` valve**（直接讀 `registry.json` 敘述、或只跑 `verify_locator.py`）→ 不 GET 後端候選、不 emit 回寫，共享記憶永遠不更新
 - ❌ **fix 模式為了讓測試變綠而改斷言/預期，掩蓋真實產品 regression**（判為產品 bug 要回報，不是硬修成 pass）
 - ❌ case 缺關鍵資訊（商品 oid、指定帳號、日期年份、方案代號…）卻自己猜 / 編造，該反問卻沒問
+- ❌ **APP case 猜 endpoint / payload，或因「native app 抓不到封包」標 blocked**——Kibana 有完整真實請求，先撈（§2.6）
 - ❌ 開頁 host 寫死或用 prod `www.kkday.com`（須依環境組出 `www{suffix}.kkday.com`）
 - ❌ 測試沒 pass 就宣稱完成

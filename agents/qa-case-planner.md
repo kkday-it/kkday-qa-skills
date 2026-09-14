@@ -135,9 +135,40 @@ python3 ~/.claude/.../kkday-qa-skills/scripts/get_verified_flow.py \
 2. **swagger/OpenAPI/Postman**（CP 值最高）：先自己找（grep repo、後端 repo、TCMS 附連結）；能自己找到就別當待確認。給的是 route/schema/必填/error code。
 3. **後端 source**（controller、error enum、DTO、狀態機）。
 4. **PRD/API 文件**。
-5. **跑真實 API 觀察**：補前面沒有的 tacit 行為（如「哪個 error code 是暫態」——不寫在任何 spec，只能觀察）。
+5. **Kibana 真實流量**（APP 平台優先用這層，見下）：APP 實際打過的請求全記在 log，`log_label: REQUEST` 帶
+   `request.url` / `route` / `method` / `headers` / `body`。這是**事實不是文件**，不會有 spec 過期的問題。
+6. **跑真實 API 觀察**：補前面沒有的 tacit 行為（如「哪個 error code 是暫態」——不寫在任何 spec，只能觀察）。
 
 🔴 swagger **不涵蓋**、要另解的兩塊：**編排順序**（如 status 10→20→80、先拿 supplierOid 才能 approve → 讀 code/試）、**未文件化 runtime 行為**（暫態碼/重試 → 觀察）。
+
+🔴 **APP（ios/android）平台不准因為「沒 swagger / 抓不到封包」就標 `← 待驗證` 丟回去問人。**
+native app 沒 DevTools、有 SSL pinning，抓封包本來就走不通——但 Kibana 撈得到，而且是你**自己查得到**的來源，
+照 §142 的判準就不該列待確認。純 UI case 跳過本層。
+
+```bash
+cd <framework clone> && source venv/bin/activate
+S=<kkday-qa-skills>/scripts/app_api_from_kibana.py
+python $S --platform ios --minutes 30                 # 這台實機打過哪些 endpoint
+python $S --platform ios --email auto                 # 再收斂到該平台預設測試帳號
+python $S --platform ios --route <route> --detail     # 單支完整 contract
+python $S --platform ios --list-devices               # 該時段實際有哪些裝置在打
+```
+
+⚠️ 分平台一律用 `--platform`，別自己對 `custom_api-b2c.source` 下 term——log 大小寫不一致
+（`iOS`/`IOS`、`ANDROID`/`Android`），只比對一種拼法會靜默漏掉一半，看起來就像「這平台沒打這支」。
+
+🔴 **`--env` / `--device` / `--ad-id` / 帳號都預設自動偵測，不要自己填。** env 由裝置識別去各環境試撈
+決定——**撈錯 env 不會報錯**，只回 0 筆或回別人的流量（sit 上一堆 `Simulator` / `locale: cn`），兩種都跟
+「這段沒操作」長得一樣。0 筆時腳本會自動列出該時段真正存在的裝置，先看那份再改參數。
+裝置識別用 `ad-id` 不是型號：型號全文比對會把 `iPhone 15 Plus` 算進 `iPhone 15`，同型號也常好幾台在打。
+`ad-id` 裝置端讀不到，腳本用「型號 ∩ 帳號」從 log 反推，並存進 ai_studio 裝置註冊庫（udid 當 key）供共用；
+後端連不上就靜默退回自己推。細節見 `qa-case-automator` §2.6。
+帳號用 `--email auto`（取 framework 既有那把 secret key）自動反查 `member_uuid`——但**它蓋不滿一次操作**
+（只有會員域 endpoint 才帶 uuid，實測 42 筆只有 12 筆有），盤 endpoint 時不要拿它當唯一過濾。
+
+匿名登入不需 credential。**坑**：Java 系（`kkday-api`）是扁平 dotted key 且只記 `body_length`；
+PHP/Node 系（`api-b2c`）是巢狀 object 才有 body；`TRACE` 是一般日誌不是 API 進出（要找 `REQUEST`/`RESPONSE`，
+用 `request.uuid` 串配對）。細節見 `qa-case-automator` §2.6。
 
 🔴 **自己找不到 swagger/spec** → 「待確認點」列請求（請人提供 URL/路徑）＋該 endpoint 標 `← 待驗證`，**不產看似篤定其實用猜的計畫**。planner 不自己問人，主對話據此問（見 §邊界）。
 
@@ -169,7 +200,7 @@ case: <ID>   platform: <web|mweb|android|ios>   mode: <create|fix>
 解讀（要測的真正邏輯）: <一兩句，講清楚這 case 要驗哪條邏輯，不是照抄步驟>
 
 endpoint 來源盤點（僅打後端 API 的 case 要填；純 UI 寫「不適用」）:
-  - 用了哪層 grounding: <merged helper / swagger / 後端 source / PRD / 待跑觀察>
+  - 用了哪層 grounding: <merged helper / swagger / 後端 source / PRD / kibana 真實流量 / 待跑觀察>
   - swagger / spec: <找到→路徑或 URL；找不到→「無，已列待確認請人提供」>
   - 待驗證 endpoint（無權威來源、暫用猜測/觀察）: <清單，或「無」>
 
