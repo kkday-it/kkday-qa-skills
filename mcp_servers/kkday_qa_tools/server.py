@@ -307,6 +307,9 @@ def help() -> dict:
                 "tier_downgrade_history: 系統 downgrade 紀錄",
                 "trigger_dkron_tier: 觸發 Dkron tier-expire job",
             ],
+            "be2 權限": [
+                "ensure_hq_qa_permission: 把 user 加進 be2 IT.hq-qa 角色（含角色全模組權限 + 驗證）",
+            ],
             "訂單": [
                 "get_member_orders: 查會員訂單（需 PG 帳密）",
                 "member_orders_history: 最近查詢紀錄",
@@ -506,6 +509,16 @@ def describe_tool(name: str) -> dict:
                 "qyt": "數量（字串型別）",
             },
             "example": 'redeem_voucher(env="stage", product_oid="123456", package_oid="789", qyt="1")',
+        },
+        "ensure_hq_qa_permission": {
+            "purpose": "把指定 email 加進 be2 IT.hq-qa 角色：確保角色勾滿全模組權限 + 啟用該使用者 + 指派角色 + 驗證",
+            "note": "⚠️ 這會賦予後台存取權（啟用帳號 + 全模組權限角色），屬提權操作——執行前請與使用者確認對象/環境無誤（只限 sit/stage、不碰 prod）。冪等、只加不減。IT.hq-qa 的 role oid 各環境不同（後端動態查，不硬編）。登入失敗 / 403 / 查無此人等錯誤會原封回報。",
+            "params": {
+                "email": "目標使用者 email（be2 authKey）",
+                "env": "sit / stage（例：sit / sit218 / stage），沒有預設值，先問使用者",
+            },
+            "returns": "env / role(roleOid) / role_permission(total/added/skipped) / user(enabled_now/roles_added/already_ok) / verified",
+            "example": 'ensure_hq_qa_permission(email="someone@kkday.com", env="stage")',
         },
         "create_scm_supplier": {
             "purpose": "建立 SCM 供應商帳號（註冊 + 申請），完成後自動引導呼叫 activate_scm_supplier 啟用",
@@ -885,6 +898,32 @@ def register_member(login_id: str, env: str, password: str = "Aa12345678") -> di
 def register_member_history(limit: int = 20) -> dict:
     """列出最近註冊的測試會員。"""
     return _call("GET", "/api/tools/register-member/history", params={"limit": limit})
+
+
+# ── be2 權限 ────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def ensure_hq_qa_permission(email: str, env: str) -> dict:
+    """把指定使用者加進 be2 IT.hq-qa 角色（確保角色全模組權限 + 啟用/指派 + 驗證）。
+
+    〔詢問模式（預設）〕呼叫前先向使用者確認 email / env；可附「沿用慣例」選項供一鍵確認。
+    〔全自動模式〕使用者明確要求自動時才直接執行。env 只有 sit / stage 兩種；使用者選 sit 時
+    **必須**追問是哪一台（sit0x 或 sit20x 系列，如 sit04 / sit206），**不得自行預設或編造**環境代號。
+
+    ⚠️ 提權操作：會啟用帳號並賦予全模組權限角色，執行前務必與使用者確認對象/環境
+    （只限 sit/stage，不碰 prod）。冪等、只加不減（角色權限與使用者角色都只補缺、不移除）。
+    登入失敗 / PUT 403 / 查無此人等錯誤會原封回報（不做防禦性跳過）。
+
+    Args:
+        email: 目標使用者 email（be2 authKey）
+        env: sit / stage（例：sit / sit218 / stage）
+    """
+    return _call(
+        "POST",
+        "/api/tools/ensure-hq-qa-permission",
+        json={"email": email, "env": env},
+    )
 
 
 # ── 訂單 ────────────────────────────────────────────────────────────────

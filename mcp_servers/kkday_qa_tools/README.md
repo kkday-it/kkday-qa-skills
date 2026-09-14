@@ -14,7 +14,7 @@
 
 ---
 
-## Tools 一覽（共 37 個，含 `help` / `describe_tool` / `health` 3 個說明工具）
+## Tools 一覽（共 38 個，含 `help` / `describe_tool` / `health` 3 個說明工具）
 
 > 分兩組後端：**ai-studio 工具**（會員/點數/券/等級/…）下游打 `:8081`；**QA 平台工具**（建/複製商品、下單、兌換、月曆）下游打 QA Test Platform `:8080`。兩組併存於同一個 MCP，埋點都送 ai-studio dashboard（QA 平台工具 operator 標記 `kkday_qa_platform_mcp`）。
 
@@ -27,6 +27,7 @@
 | **經驗值** | `add_experience`, `experience_history`, `mark_experience_downgraded`, `query_exp_value` |
 | **等級** | `tier_rules`, `update_member_tier`, `tier_change_records`, `tier_upgrade_history`, `tier_downgrade_history`, `trigger_dkron_tier` |
 | **訂單** | `get_member_orders`, `member_orders_history`, `complete_order` |
+| **be2 權限** | `ensure_hq_qa_permission`（把 user 加進 be2 IT.hq-qa 角色：角色全模組權限 + 啟用/指派 + 驗證；提權操作，限 sit/stage） |
 | **商品** | `product_categories`, `product_types`, `fetch_packages`, `product_create_history` |
 | **兌換** | `redeem_history` |
 | **QA 平台 · 商品**（→:8080） | `create_product`（建測試商品，20 型別）、`copy_product_preview` + `copy_product`（跨環境複製，兩段式：preview 發 confirm_token → execute 帶 token）、`copy_product_verify`（唯讀：逐票種比對已複製商品與來源的成本售價/票種狀態） |
@@ -152,7 +153,7 @@ Config 指到 venv python：
 | 「建一張 5% 折扣券給 xxx@」 | 先 `coupon_templates()` → 選模板 → `create_coupon(...)` |
 
 **驗證有沒有裝好**（兩步都要過）：
-1. **連上**：在 Claude Code 跑 `/mcp`（內建指令）→ 看得到 `kkday-qa-tools ✓ connected`（約 37 tools）。
+1. **連上**：在 Claude Code 跑 `/mcp`（內建指令）→ 看得到 `kkday-qa-tools ✓ connected`（約 38 tools）。
 2. **打得動**：呼叫 `health`（唯讀）→ 兩組後端 `reachable: true` / `auth_ok: true`。**只到步驟 1 不算裝好** —— 沒內網時它一樣顯示 connected，但 tool 全打不動（見前置需求）。
 
 ---
