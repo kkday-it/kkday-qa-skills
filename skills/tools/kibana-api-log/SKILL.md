@@ -37,7 +37,8 @@ email、電話、訂單、金流。sit / stage 撈錯頂多白忙一場；prod �
 1. **先講清楚再撈**——你要 prod 的什麼、為什麼 sit / stage 不夠，等使用者明確同意。
 2. 同意之後才加 `--allow-prod`（沒有這個 flag，script 會直接擋下並退出；`--env auto` 也永遠
    不會自己選到 prod）。自己手寫 ES query 時這道關卡不存在，規矩一樣要遵守。
-3. 撈的時候：時間窗壓到**分鐘級**、能用 aggs 就不要拉 hits、不要順手 `--detail`。
+3. 撈的時候：時間窗壓到**分鐘級**、能用 aggs 就不要拉 hits、不要順手 `--detail`
+   （`--detail` 現在會把 headers / body 原文整串印出來，prod 那是真的客戶資料）。
 4. 撈完：**不要把 headers / body 原文貼進報告、PR、Slack**。要引用就只留結論與統計，
    需要指認特定 token／帳號時用指紋（sha1 前 8 碼），不要貼原值。
 
@@ -70,6 +71,11 @@ python3 "$S" --env stage --platform android \
                  {"metadata":{"status":"M001","desc":"zh-tw-unauthorized-user"}, …}
 ```
 
+上面那三行的 `…` 是這份文件在省略，**不是輸出在省略**：headers、request body、response body
+一律印全文，不截斷。`available_channels` 那種幾 KB 的清單也是整串給你——contract 的重點常常
+就在最後幾個欄位（`pay_endpoint`、`accepted_card_types`、`setting.tap_pay`），截掉就白撈了。
+洗版洗不下去時用 `--truncate 300` 自己收，它會標明「截斷，共 N 字」。
+
 `response` 那兩行是 script 自己去配對的（用 uuid ＋ route ＋ `log_label: RESPONSE`），
 **不是**取樣那筆文件身上帶的——取樣取的是 REQUEST，REQUEST 沒有 response 欄位。
 印不出來時會明講「配對不到」，不會靜靜省略。
@@ -91,6 +97,7 @@ python3 "$S" --env stage --platform android \
 | `--email` / `--member-uuid` | 收斂到某個帳號；`--email auto` 取該平台的框架預設帳號 |
 | `--list-devices` | 只列該時段出現過的裝置指紋，不做其他查詢 |
 | `--detail` | 印完整 contract（headers / body / response）而不是 route 統計 |
+| `--truncate N` | 把 headers / body / response 各截到 N 字。**預設 0＝不截**，截到時會標明共幾字 |
 
 ## 撈不到東西時，照這個順序查
 
