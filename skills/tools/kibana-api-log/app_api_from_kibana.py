@@ -49,7 +49,7 @@ def _resolve_framework():
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from kibana_client import KibanaClient  # noqa: E402  同層，獨立版（只需要 requests）
+    from kibana_client import KibanaClient, resolve_kibana_url  # noqa: E402  同層，獨立版（只需要 requests）
 except ImportError as e:
     sys.exit(f"無法 import kibana_client（{e}）。它應該跟這支放在同一層。缺的話：pip install requests")
 
@@ -178,6 +178,33 @@ def count_docs(client, must):
     rv = client.search({"size": 0, "query": {"bool": {"must": must}}})
     total = (rv.get("hits") or {}).get("total")
     return total.get("value") if isinstance(total, dict) else (total or 0)
+
+
+def is_prod(env):
+    """這個 env 是不是指向 prod 那座 Kibana。
+
+    比對解析後的 URL 而不是字串本身：`prod` / `production` 會落到同一座，之後多一個別名也自動算。
+    """
+    return bool(env) and resolve_kibana_url(env) == resolve_kibana_url("prod")
+
+
+PROD_REFUSAL = """
+🚨 這會撈 prod（{url}）—— 停下來先問人。
+
+prod 的 log 是**真實客戶的資料**：headers 裡有 member-uuid、token、裝置識別、IP，
+body 裡有姓名、email、電話、訂單、金流。sit / stage 撈錯頂多白忙一場，prod 撈錯是把
+客戶個資拉出來放進終端機、對話紀錄與截圖裡，收不回去。而且同一座 Kibana 是線上監控
+在用的，寬時間窗的查詢會影響正在處理事故的人。
+
+要繼續：
+  1. 先跟使用者講明你要撈 prod 的什麼、為什麼 sit / stage 不夠，**等他明確同意**。
+  2. 同意後加 --allow-prod 重跑，並且：
+       - 時間窗壓到分鐘級（不是 --minutes 60，是你真正要看的那幾分鐘）
+       - 能用統計就不要拉 hits，不要沒事就 --detail
+       - 別把撈到的 headers / body 原文貼進報告或 PR
+
+（沒得到同意就不要加那個 flag。這道關卡就是為了讓人先看見。）
+""".strip()
 
 
 def resolve_env(args):
@@ -461,6 +488,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--env", default="auto",
                     help="sit / stage；預設 auto 會拿裝置指紋去各環境試撈，哪邊有資料算哪邊")
+    ap.add_argument("--allow-prod", dest="allow_prod", action="store_true",
+                    help="確認要撈 prod（真實客戶資料）。**必須先得到使用者明確同意**才加這個 flag")
     # 實作時的典型用法：操作完馬上撈，15 分鐘window 夠用。
     ap.add_argument("--minutes", type=int, default=15,
                     help="相對時間窗（分鐘），預設 15")
@@ -506,6 +535,12 @@ def main():
             print(f"(裝置註冊庫 udid → ad-id={cached_ad_id})")
 
     args.env = resolve_env(args)
+    # prod 的門擋在建 client 之前：連線本身無害，但這道關卡要擋的是「順手就撈下去」。
+    if is_prod(args.env):
+        if not args.allow_prod:
+            sys.exit(PROD_REFUSAL.format(url=resolve_kibana_url(args.env)))
+        print(f"🚨 撈的是 prod（{resolve_kibana_url(args.env)}）—— 真實客戶資料，"
+              f"時間窗壓小、輸出別外流。")
     client = KibanaClient.for_env(args.env)
 
     if args.email and not args.member_uuid:
