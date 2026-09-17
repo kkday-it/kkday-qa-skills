@@ -96,7 +96,7 @@ python3 "$S" --env stage --platform android \
 headers **不做分類也不挑重點**，順序就是 log 裡的原順序。挑重點得維護一份欄位清單，而那份
 清單一定會過期——換一支 API、或 App 新加一個 header，最需要看的那個就被排到看不見的地方。
 
-`response` 那兩行是 script 自己去配對的（用 uuid ＋ route ＋ `log_label: RESPONSE`），
+`── response` 那段是 script 自己去配對的（用 uuid ＋ route ＋ `log_label: RESPONSE`），
 **不是**取樣那筆文件身上帶的——取樣取的是 REQUEST，REQUEST 沒有 response 欄位。
 印不出來時會明講「配對不到」，不會靜靜省略。
 
