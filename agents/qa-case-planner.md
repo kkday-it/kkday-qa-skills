@@ -147,7 +147,7 @@ native app 沒 DevTools、有 SSL pinning，抓封包本來就走不通——但
 
 ```bash
 cd <framework clone> && source venv/bin/activate
-S=<kkday-qa-skills>/scripts/app_api_from_kibana.py
+S=<kkday-qa-skills>/skills/tools/kibana-api-log/app_api_from_kibana.py
 python $S --platform ios --minutes 30                 # 這台實機打過哪些 endpoint
 python $S --platform ios --email auto                 # 再收斂到該平台預設測試帳號
 python $S --platform ios --route <route> --detail     # 單支完整 contract

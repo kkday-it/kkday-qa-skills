@@ -23,12 +23,13 @@ description: |
 
 ## 怎麼跑
 
-script 在本 repo，但**必須用 QA framework 的 venv 跑**（要 import 框架裡的 `KibanaClient`）：
+`app_api_from_kibana.py` 就在這個 skill 資料夾裡（`device_registry.py` 是它的相依，同一層），
+但**必須用 QA framework 的 venv 跑**（要 import 框架裡的 `KibanaClient`）：
 
 ```bash
 FW=/Users/eden.lai/Downloads/qa_test/web/kkday-QA-automation   # app/ test/ 那兩個 clone 也行
-cd "$FW" && QA_FRAMEWORK_PATH="$FW" ./venv/bin/python \
-  ~/kkday-qa-skills/scripts/app_api_from_kibana.py \
+S=~/.claude/skills/kibana-api-log/app_api_from_kibana.py       # = kkday-qa-skills/skills/tools/kibana-api-log/
+cd "$FW" && QA_FRAMEWORK_PATH="$FW" ./venv/bin/python "$S" \
   --env stage --platform android --route v2.2/payment/booking/channels \
   --minutes 3 --device none --detail
 ```

@@ -118,7 +118,7 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 
 ```bash
 cd <你正在用的那個 framework clone> && source venv/bin/activate
-S=<kkday-qa-skills>/scripts/app_api_from_kibana.py
+S=<kkday-qa-skills>/skills/tools/kibana-api-log/app_api_from_kibana.py
 
 python $S --platform ios                                # 這台實機剛打了哪些 endpoint（近 15 分鐘）
 python $S --platform ios --email auto                   # 再收斂到該平台預設測試帳號
