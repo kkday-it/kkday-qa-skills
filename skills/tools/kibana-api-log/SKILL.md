@@ -44,12 +44,12 @@ email、電話、訂單、金流。sit / stage 撈錯頂多白忙一場；prod �
 
 ## 怎麼跑
 
-整套都在這個 skill 資料夾裡（`app_api_from_kibana.py` ＋ 它的兩個同層相依
+整套都在這個 skill 資料夾裡（`api_from_kibana.py` ＋ 它的兩個同層相依
 `kibana_client.py` / `device_registry.py`），**不需要 QA framework clone，也不用它的 venv**，
 `python3` ＋ `requests` 就能跑，在哪個目錄跑都行：
 
 ```bash
-S=~/.claude/skills/kibana-api-log/app_api_from_kibana.py
+S=~/.claude/skills/kibana-api-log/api_from_kibana.py
 python3 "$S" --env stage --platform android \
   --route v2.2/payment/booking/channels --minutes 3 --device none --detail
 ```
@@ -60,23 +60,43 @@ python3 "$S" --env stage --platform android \
 輸出（`--detail`，最近 3 筆）：
 
 ```
-=== contract samples: 2
+=== contract samples: 3
 
---- POST api/v2.2/payment/booking/channels
-    route      : api/v2.2/payment/booking/channels
-    request.uuid: 99eb4f20-…   <- 整條 trace 的 id（見下方「注意」）
-    headers    : {… "x-req-source": "ANDROID", "x-req-version": "2.125.0", "ad-id": …}
-    body       : {"cart_amount":"1330.0","currency":"TWD","product_oids":"9468", …}
-    response   : HTTP 401 22ms  M001 zh-tw-unauthorized-user
-                 {"metadata":{"status":"M001","desc":"zh-tw-unauthorized-user"}, …}
+━━━ POST api/v2/points/estimate
+    time         : 2026-09-17 16:11:50.975  (本地時間)
+    route        : api/v2/points/estimate
+    request.uuid : 6eda0469-…   <- 整條 trace 的 id（見下方「注意」）
+    ── request headers
+       mixpanel-id       : be0f311e-…
+       device-model      : SM-A5560
+       member-uuid       : be0f311e-…
+       token             : <redacted>
+       x-req-source      : ANDROID
+       …（照 log 裡的原順序全印，一個不漏）
+    ── request body
+       {
+         "cart_amount": 0,
+         "currency": "TWD",
+         "ui_elements": [
+           "productBanner"
+         ]
+       }
+    ── response  HTTP 200 130ms  0000 Success
+       {
+         "metadata": { "status": "0000", "desc": "Success" },
+         "data": { "ui_elements": { "product_banner": { "title": "白金會員", … } } }
+       }
 ```
 
-上面那三行的 `…` 是這份文件在省略，**不是輸出在省略**：headers、request body、response body
-一律印全文，不截斷。`available_channels` 那種幾 KB 的清單也是整串給你——contract 的重點常常
+範例裡的 `…` 是**這份文件在省略**，不是輸出在省略：headers 逐行全印，request / response body
+是 JSON 就自動排版、整串給。`available_channels` 那種幾 KB 的清單也不截——contract 的重點常常
 就在最後幾個欄位（`pay_endpoint`、`accepted_card_types`、`setting.tap_pay`），截掉就白撈了。
 洗版洗不下去時用 `--truncate 300` 自己收，它會標明「截斷，共 N 字」。
 
-`response` 那兩行是 script 自己去配對的（用 uuid ＋ route ＋ `log_label: RESPONSE`），
+headers **不做分類也不挑重點**，順序就是 log 裡的原順序。挑重點得維護一份欄位清單，而那份
+清單一定會過期——換一支 API、或 App 新加一個 header，最需要看的那個就被排到看不見的地方。
+
+`── response` 那段是 script 自己去配對的（用 uuid ＋ route ＋ `log_label: RESPONSE`），
 **不是**取樣那筆文件身上帶的——取樣取的是 REQUEST，REQUEST 沒有 response 欄位。
 印不出來時會明講「配對不到」，不會靜靜省略。
 

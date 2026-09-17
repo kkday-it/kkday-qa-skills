@@ -117,7 +117,7 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 `log_label: REQUEST` 帶 `request.url` / `route` / `method` / `headers` / `body`，等於封包該給你的東西。
 
 ```bash
-S=<kkday-qa-skills>/skills/tools/kibana-api-log/app_api_from_kibana.py   # 不需要 framework clone
+S=<kkday-qa-skills>/skills/tools/kibana-api-log/api_from_kibana.py   # 不需要 framework clone
 
 python3 $S --platform ios                                # 這台實機剛打了哪些 endpoint（近 15 分鐘）
 python3 $S --platform ios --email auto                   # 再收斂到該平台預設測試帳號

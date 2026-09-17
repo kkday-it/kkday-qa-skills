@@ -3,10 +3,10 @@
 APP（iOS/Android 原生）沒有 DevTools、又有 SSL pinning，抓不到封包，Kibana 是唯一的來源。
 
 用法（env / device / 帳號 / 裝置識別全部預設自動推，不用自己填）:
-  python app_api_from_kibana.py --platform ios                     # 這台實機剛打了哪些 endpoint
-  python app_api_from_kibana.py --platform ios --email auto        # 再收斂到該平台預設測試帳號
-  python app_api_from_kibana.py --platform ios --route api/v2/dcs --detail   # 單支完整 contract
-  python app_api_from_kibana.py --platform ios --list-devices      # 該時段實際有哪些裝置在打
+  python api_from_kibana.py --platform ios                     # 這台實機剛打了哪些 endpoint
+  python api_from_kibana.py --platform ios --email auto        # 再收斂到該平台預設測試帳號
+  python api_from_kibana.py --platform ios --route api/v2/dcs --detail   # 單支完整 contract
+  python api_from_kibana.py --platform ios --list-devices      # 該時段實際有哪些裝置在打
 
 ⚠️ --env 必須是那台裝置實際打的環境。撈錯 env 不會報錯：不是回 0 筆，就是回同時段
    別人的流量（實測 sit 有一堆 Simulator 的 log）——兩者都跟「這段沒操作」長得一模一樣。
@@ -465,6 +465,39 @@ def time_range(args):
     return {"gte": f"now-{args.minutes}m", "lte": "now"}
 
 
+def format_headers(hdrs, limit):
+    """逐行對齊印出，順序就是 log 裡的原順序——不分類、不挑重點，免得清單過期。"""
+    if not hdrs:
+        return ["(無 headers)"]
+    w = max(len(k) for k in hdrs)
+    return [f"{k.ljust(w)} : {clip(v, limit)}" for k, v in hdrs.items()]
+
+
+def local_time(ts):
+    """@timestamp 存的是 UTC，印出來一律換回本地（人講的時間都是本地時間）。"""
+    if not ts:
+        return "?"
+    try:
+        dt = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S.") + f"{dt.microsecond // 1000:03d}"
+    except Exception:
+        return str(ts)
+
+
+def pretty_json(value):
+    """是 JSON 就排版，不是就原樣回（body 偶爾是 form-urlencoded 或空字串）。"""
+    s = "" if value is None else str(value)
+    try:
+        return json.dumps(json.loads(s), ensure_ascii=False, indent=2)
+    except Exception:
+        return s
+
+
+def indent_block(text, spaces):
+    pad = " " * spaces
+    return "\n".join(pad + line for line in text.splitlines()) or f"{pad}(空)"
+
+
 def clip(value, limit):
     """預設印全文。被截斷時一定要講，省略號混在 body 自己的內容裡看不出來。"""
     s = str(value)
@@ -648,24 +681,26 @@ def main():
     for src in samples:
         req = src.get("request") or {}
         resp = src.get("response") or {}
-        print(f"\n--- {req.get('method')} {req.get('url')}")
-        print(f"    route      : {req.get('route')}")
-        print(f"    request.uuid: {req.get('uuid')}   <- 用這個串 REQUEST/RESPONSE")
+        print(f"\n━━━ {req.get('method')} {req.get('url')}")
+        print(f"    time         : {local_time(src.get('@timestamp'))}  (本地時間)")
+        print(f"    route        : {req.get('route')}")
+        print(f"    request.uuid : {req.get('uuid')}   <- 用這個串 REQUEST/RESPONSE")
         hdrs = redact(parse_headers(req.get("headers")))
-        print(f"    headers    : {clip(json.dumps(hdrs, ensure_ascii=False), args.truncate)}")
-        print(f"    body       : {clip(req.get('body'), args.truncate)}")
+        print("    ── request headers")
+        for line in format_headers(hdrs, args.truncate):
+            print(f"       {line}")
+        print("    ── request body")
+        print(indent_block(clip(pretty_json(req.get("body")), args.truncate), 7))
         # 取樣取的是 REQUEST（要有 headers / body 才叫 contract），而 REQUEST 這筆身上沒有
         # response 欄位——回應是另一筆文件。所以這裡要自己去配對，不能等 src 裡有。
         if not resp:
             resp = fetch_response(client, args, req.get("uuid"), req.get("route"))
         if resp:
-            status = f"HTTP {resp.get('http_status')}"
-            meta = meta_status(resp)
             took = f" {resp.get('time')}ms" if resp.get("time") is not None else ""
-            print(f"    response   : {status}{took}  {meta}")
-            print(f"                 {clip(redact(resp).get('body'), args.truncate)}")
+            print(f"    ── response  HTTP {resp.get('http_status')}{took}  {meta_status(resp)}")
+            print(indent_block(clip(pretty_json(redact(resp).get("body")), args.truncate), 7))
         else:
-            print("    response   : (配對不到——回應可能落在時間窗外，或這筆請求沒有回應)")
+            print("    ── response  (配對不到——回應可能落在時間窗外，或這筆請求沒有回應)")
 
 
 if __name__ == "__main__":
