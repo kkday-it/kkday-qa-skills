@@ -11,15 +11,35 @@ description: |
   - 某個 case 失敗，想看當下那支 API 實際送了什麼、回了什麼
 
   不適用：
-  - prod 的 log —— 這支走 anonymous 登入，只有 sit / stage 開
   - 網頁（b2c web）的即時封包 → 用 `qa-sniff-api-with-playwright`（Playwright 攔截）
+
+  🚨 prod 也撈得到，但**撈之前一定要先問過使用者**（那是真實客戶資料）——見「prod」段。
 ---
 
 # Kibana API Log
 
-撈 `new-kklog-*` 裡的 API 請求／回應。背後是 QA framework 的 `KibanaClient`
-（`POST /internal/security/login` 拿 anonymous `sid` cookie → 打 `/internal/search/es`），
-所以**不需要帳密**，但只有 sit（`kibana.sit.kkday.com`）與 stage（`kibana.stage.kkday.com`）有。
+撈 `new-kklog-*` 裡的 API 請求／回應。走 anonymous provider
+（`POST /internal/security/login` 拿 `sid` cookie → 打 `/internal/search/es`），
+所以**不需要帳密**：sit（`kibana.sit.kkday.com`）、stage（`kibana.stage.kkday.com`）、
+prod（`kibana.kkday.com`）三座都進得去。
+
+## 🚨 prod：撈之前先問人
+
+**anonymous 在 prod 一樣過**（實測 login 200、拿得到 `sid`），所以「撈不到」不會幫你踩煞車——
+唯一的煞車是你自己。**沒有使用者明確同意，不要對 prod 下任何一筆查詢。**
+
+prod 的 log 是真實客戶的資料：headers 有 `member-uuid` / token / 裝置識別 / IP，body 有姓名、
+email、電話、訂單、金流。sit / stage 撈錯頂多白忙一場；prod 撈錯是把客戶個資拉進終端機、
+對話紀錄跟截圖裡，收不回去。而且那座 Kibana 是線上監控在用的，寬窗查詢會影響正在處理事故的人。
+
+所以：
+
+1. **先講清楚再撈**——你要 prod 的什麼、為什麼 sit / stage 不夠，等使用者明確同意。
+2. 同意之後才加 `--allow-prod`（沒有這個 flag，script 會直接擋下並退出；`--env auto` 也永遠
+   不會自己選到 prod）。自己手寫 ES query 時這道關卡不存在，規矩一樣要遵守。
+3. 撈的時候：時間窗壓到**分鐘級**、能用 aggs 就不要拉 hits、不要順手 `--detail`。
+4. 撈完：**不要把 headers / body 原文貼進報告、PR、Slack**。要引用就只留結論與統計，
+   需要指認特定 token／帳號時用指紋（sha1 前 8 碼），不要貼原值。
 
 ## 怎麼跑
 
@@ -55,7 +75,8 @@ python3 "$S" --env stage --platform android \
 
 | 參數 | 說明 |
 | --- | --- |
-| `--env` | `sit` / `stage`。預設 `auto`（拿裝置指紋逐一環境試撈）—— **人已經講明環境時一律明寫** |
+| `--env` | `sit` / `stage`。預設 `auto`（拿裝置指紋逐一環境試撈，只會試這兩座）—— **人已經講明環境時一律明寫** |
+| `--allow-prod` | 確認要撈 prod。**先得到使用者明確同意才加**，沒加會被擋下（見上面「prod」段） |
 | `--route` | endpoint 片段，`match_phrase`，不用帶完整 path（`v2.2/payment/booking/channels` 就夠） |
 | `--platform` | `ios` / `android`；不給就是 APP 全體 |
 | `--minutes` | 相對時間窗，預設 15 |
@@ -110,6 +131,8 @@ PY
 - 真的要看趨勢再放大，而且放大時**一律 `size: 0` + aggs**（`terms` / `date_histogram`），
   讓 ES 在自己那邊數完只回統計值。**絕對不要**用寬時間窗配 `size: 200` 去拉 hits 回本地自己數。
 - 一支 route、一個帳號這種條件先加好再送 —— 條件愈早收斂，掃到的 shard 愈少。
+- **自己下 query 時 prod 的門是不存在的**：`KibanaClient.for_env("prod")` 直接就通。
+  script 那道 `--allow-prod` 擋不到這條路，所以「先問過人」這件事得自己記得。
 
 ### 欄位
 
