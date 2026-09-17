@@ -59,15 +59,20 @@ python3 "$S" --env stage --platform android \
 輸出（`--detail`，最近 3 筆）：
 
 ```
-=== contract samples: 1
+=== contract samples: 2
 
 --- POST api/v2.2/payment/booking/channels
     route      : api/v2.2/payment/booking/channels
-    request.uuid: 419db3b1-…   <- 用這個串 REQUEST/RESPONSE
+    request.uuid: 99eb4f20-…   <- 整條 trace 的 id（見下方「注意」）
     headers    : {… "x-req-source": "ANDROID", "x-req-version": "2.125.0", "ad-id": …}
-    body       : {"cart_amount":"100","currency":"HKD","product_oids":"127033", …}
-    response   : {…}
+    body       : {"cart_amount":"1330.0","currency":"TWD","product_oids":"9468", …}
+    response   : HTTP 401 22ms  M001 zh-tw-unauthorized-user
+                 {"metadata":{"status":"M001","desc":"zh-tw-unauthorized-user"}, …}
 ```
+
+`response` 那兩行是 script 自己去配對的（用 uuid ＋ route ＋ `log_label: RESPONSE`），
+**不是**取樣那筆文件身上帶的——取樣取的是 REQUEST，REQUEST 沒有 response 欄位。
+印不出來時會明講「配對不到」，不會靜靜省略。
 
 不帶 `--detail` 則是「這個時間窗打了哪些 route、各幾筆」的清單，適合先看全貌再收斂。
 

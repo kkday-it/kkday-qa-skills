@@ -465,6 +465,44 @@ def time_range(args):
     return {"gte": f"now-{args.minutes}m", "lte": "now"}
 
 
+def meta_status(resp):
+    """回應 body 裡的業務狀態（`0000` 才是成功）。HTTP 200 配 M001 這種事很常見。"""
+    try:
+        m = (json.loads(resp.get("body") or "{}").get("metadata") or {})
+    except Exception:
+        return ""
+    return " ".join(str(m.get(k)) for k in ("status", "desc") if m.get(k))
+
+
+def fetch_response(client, args, uuid, route):
+    """撈這支請求自己的回應。
+
+    ⚠️ `request.uuid` 是整條 trace 的 id，不是單一請求的：同一個 uuid 底下還有 svc-member /
+    api-product / payment …十幾筆下游的 REQUEST/RESPONSE。只用 uuid 撈會拿到某個下游服務的
+    回應，而它長得完全像是這支 API 回的（實測拿到 member info，差點就當成付款 API 的回應）。
+    所以一定要同時鎖 route 與 log_label。
+
+    時間窗往後放寬 5 分鐘：回應通常只差幾毫秒，但請求落在窗尾那一刻時回應會掉到窗外。
+    """
+    if not uuid or not route:
+        return None
+    rng = dict(time_range(args))
+    try:
+        end = datetime.datetime.fromisoformat(rng["lte"]) + datetime.timedelta(minutes=5)
+        rng["lte"] = end.isoformat()
+    except Exception:
+        pass
+    rv = client.search({
+        "size": 1, "sort": [{"@timestamp": "asc"}],
+        "query": {"bool": {"must": [
+            {"range": {"@timestamp": rng}},
+            {"match_phrase": {"request.uuid": uuid}},
+            {"term": {"request.route.keyword": route}},
+            {"term": {"log_label.keyword": "RESPONSE"}}]}}})
+    hits = (rv.get("hits") or {}).get("hits") or []
+    return (hits[0].get("_source") or {}).get("response") if hits else None
+
+
 def base_filters(args):
     must = [{"range": {"@timestamp": time_range(args)}}]
     if args.member_uuid:
@@ -606,8 +644,18 @@ def main():
         hdrs = redact(parse_headers(req.get("headers")))
         print(f"    headers    : {json.dumps(hdrs, ensure_ascii=False)[:600]}")
         print(f"    body       : {str(req.get('body'))[:600]}")
+        # 取樣取的是 REQUEST（要有 headers / body 才叫 contract），而 REQUEST 這筆身上沒有
+        # response 欄位——回應是另一筆文件。所以這裡要自己去配對，不能等 src 裡有。
+        if not resp:
+            resp = fetch_response(client, args, req.get("uuid"), req.get("route"))
         if resp:
-            print(f"    response   : {json.dumps(redact(resp), ensure_ascii=False)[:600]}")
+            status = f"HTTP {resp.get('http_status')}"
+            meta = meta_status(resp)
+            took = f" {resp.get('time')}ms" if resp.get("time") is not None else ""
+            print(f"    response   : {status}{took}  {meta}")
+            print(f"                 {str(redact(resp).get('body'))[:600]}")
+        else:
+            print("    response   : (配對不到——回應可能落在時間窗外，或這筆請求沒有回應)")
 
 
 if __name__ == "__main__":
