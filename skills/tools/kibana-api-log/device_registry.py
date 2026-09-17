@@ -14,7 +14,7 @@ IDFA/IDFV 類，只有 app 行程內拿得到，ideviceinfo / adb / idevicesyslo
 拿它去撈，撈不到就 `save(..., status="stale")` 回寫並重推。**不要盲信快取。**
 
 為什麼不照 `fetch_*.py` / `send_*.py` 拆兩支：那兩對是給 Stop hook 背景批次送的，才需要 jsonl 佇列
-＋ purge。這裡的消費者是 `app_api_from_kibana.py` 同一個行程、同步讀寫一筆，拆開只會讓「讀到的」
+＋ purge。這裡的消費者是 `api_from_kibana.py` 同一個行程、同步讀寫一筆，拆開只會讓「讀到的」
 跟「寫回的」漂成兩套欄位定義。
 
 用法（也可當 CLI 直接查）：
