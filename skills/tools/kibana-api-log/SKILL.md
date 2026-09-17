@@ -70,8 +70,10 @@ cd "$FW" && QA_FRAMEWORK_PATH="$FW" ./venv/bin/python \
    跟「這段時間沒人打」完全一樣。**沒有要鎖特定機器就一定要 `--device none`。**
 2. **env 撈錯。** 撈錯環境不會報錯：不是 0 筆，就是回同時段別人的流量。人講 stage 就寫 stage，
    別靠 `auto`。
-3. **時間窗。** log 的 `@timestamp` 是 UTC，script 會把你給的時間當本地時區換算 —— 對照它印出來
-   的那行 `時間 … → …` 確認範圍。
+3. **時間窗。** 人給的時間一律當**本地時間**（台北 +08）用，不用自己換算成 UTC ——
+   `--from 13:20 --to 13:30` 就對了，script 會補時區給 ES。只有自己手寫 ES query 時才要記得
+   帶 offset（`2026-09-17T13:20:00+08:00`），因為 `@timestamp` 存的是 UTC，把本地時間當 UTC
+   直送會差 8 小時、回空的 —— 而空的跟「那段沒流量」長得一模一樣。
 4. `--platform` 的大小寫不用自己處理：log 裡 `iOS/IOS/ios`、`ANDROID/Android` 都有，script
    已經把變體全列進 `terms` 查詢。
 5. 查無資料時它會自動補印該時段的裝置清單，用來分辨是「env 錯」還是「型號字串對不上」。
@@ -81,4 +83,19 @@ cd "$FW" && QA_FRAMEWORK_PATH="$FW" ./venv/bin/python \
 - `token` / `b2c-token1` / `authorization` / `password` 這類 header 與欄位輸出前會被 `<redacted>`。
 - `request.headers` 是字串，只能全文比對 → `--device` / `--ad-id` 這兩個過濾**只留得住 REQUEST**
   （RESPONSE 沒有 headers）。要串回應就用輸出裡那個 `request.uuid`。
+- ⚠️ **`request.uuid` 是整條 trace 的 id，不是單一請求的**。同一個 uuid 底下會有前端那支，
+  加上它往下打的 `svc-member` / `api-product` / `payment` …十幾筆 REQUEST/RESPONSE/OUTBOUND。
+  只用 uuid 撈 RESPONSE 會拿到某個下游服務的回應（實測拿到 member info，看起來完全像是
+  這支 API 回的）。**一定要同時鎖 route 與 log_label**：
+
+  ```python
+  {"bool": {"must": [
+      {"match_phrase": {"request.uuid": uuid}},
+      {"term": {"request.route.keyword": "api/v2.2/payment/booking/channels"}},
+      {"term": {"log_label.keyword": "RESPONSE"}}]}}
+  ```
+
+  `log_label` 有 `REQUEST` / `RESPONSE` / `OUTBOUND` / `TRACE` 四種；HTTP 狀態與耗時在
+  `response.http_status` / `response.time`，業務狀態在 body 的 `metadata.status`
+  （`0000` 才是成功，例如 `M001` = unauthorized-user 會配 401）。
 - `--member-uuid` 只有會員域 endpoint 帶得到，商品／搜尋那些不帶，單靠它會漏掉大半 trace。
