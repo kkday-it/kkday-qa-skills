@@ -78,6 +78,61 @@ cd "$FW" && QA_FRAMEWORK_PATH="$FW" ./venv/bin/python \
    已經把變體全列進 `terms` 查詢。
 5. 查無資料時它會自動補印該時段的裝置清單，用來分辨是「env 錯」還是「型號字串對不上」。
 
+## 自己下查詢（統計／時間軸這類 script 做不到的形狀）
+
+script 只回「最近 N 筆的 contract」。要問的是「這支 API 今天成功幾次失敗幾次」「這個帳號的
+token 什麼時候換的」「iOS 有沒有一樣的症狀」時，直接拿同一個 `KibanaClient` 下 ES query：
+
+```bash
+FW=/Users/eden.lai/Downloads/qa_test/web/kkday-QA-automation
+cd "$FW" && QA_FRAMEWORK_PATH="$FW" ./venv/bin/python - <<'PY'
+import sys; sys.path.insert(0, "QATest/src")
+from lib.helpers.kibana_client import KibanaClient
+c = KibanaClient.for_env("stage")
+rv = c.search({"size": 0, "query": {"bool": {"must": [
+    {"range": {"@timestamp": {"gte": "2026-09-17T13:00:00+08:00",
+                              "lte": "2026-09-17T13:30:00+08:00"}}},
+    {"term": {"log_label.keyword": "RESPONSE"}},
+    {"term": {"request.route.keyword": "api/v2/token/refresh"}}]}},
+    "aggs": {"s": {"terms": {"field": "response.http_status", "size": 10}}}})
+print([(b["key"], b["doc_count"]) for b in rv["aggregations"]["s"]["buckets"]])
+PY
+```
+
+### 🚨 時間窗開窄一點 —— Kibana 會被打掛
+
+這座 Kibana 是**大家共用的**，`new-kklog-*` 又是全站 API 的 log。時間窗開太寬（跨天、跨週）
+的查詢會把整個 cluster 拖垮，受害的是所有在查 log 的人，不是只有自己等久一點。
+
+- 預設就用**幾十分鐘**的窗，先把形狀問出來。
+- 真的要看趨勢再放大，而且放大時**一律 `size: 0` + aggs**（`terms` / `date_histogram`），
+  讓 ES 在自己那邊數完只回統計值。**絕對不要**用寬時間窗配 `size: 200` 去拉 hits 回本地自己數。
+- 一支 route、一個帳號這種條件先加好再送 —— 條件愈早收斂，掃到的 shard 愈少。
+
+### 欄位
+
+| 欄位 | 用途 |
+| --- | --- |
+| `custom_api-b2c.source.keyword` | `ANDROID` / `iOS` / `IOS` …（**比 platform 有用**，拿來比對雙平台） |
+| `custom_api-b2c.platform.keyword` | `APP` / web |
+| `custom_api-b2c.member_uuid.keyword` | 會員，只有會員域 endpoint 有 |
+| `request.route.keyword` | 完整 route（`term` 用這個；`match_phrase` 才用不帶 `.keyword` 的） |
+| `response.http_status` | 數值，直接 `terms` agg |
+
+⚠️ **agg 的欄位一定要帶 `.keyword`。** `custom_api-b2c.source` 拿去做 terms agg 回的是**空
+bucket 清單**，不是報錯 —— 跟「這段時間沒流量」長得一模一樣，很容易就據此下錯結論。
+
+### 常用形狀
+
+- **雙平台對照**：同一組 query 換 `{"terms": {"custom_api-b2c.source.keyword": [...]}}`，
+  iOS 要列 `["iOS","IOS","ios"]` 三種拼法。實測有「某支 API 只有 Android 在打」這種事，
+  這時 iOS 不是沒壞而是**根本沒走那條路**，別當成「只有 Android 有 bug」。
+- **時間軸**：`{"size": 200, "sort": [{"@timestamp": "asc"}]}` 撈 REQUEST，把
+  `request.headers` 那串 JSON（單 key dict 的 array）攤平成 dict 取 `ad-id` / `member-uuid`，
+  再用 `request.uuid` 回撈 RESPONSE 對狀態。
+- **token / 敏感值**：不要印出來，一律 `hashlib.sha1(v.encode()).hexdigest()[:8]` 當指紋。
+  指紋足以回答「換了沒／是不是同一張」，而那通常就是真正要問的事。
+
 ## 注意
 
 - `token` / `b2c-token1` / `authorization` / `password` 這類 header 與欄位輸出前會被 `<redacted>`。
