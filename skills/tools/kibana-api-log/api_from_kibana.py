@@ -500,7 +500,8 @@ def indent_block(text, spaces):
 
 def clip(value, limit):
     """預設印全文。被截斷時一定要講，省略號混在 body 自己的內容裡看不出來。"""
-    s = str(value)
+    # log 裡是 JSON null 的欄位，str() 會變成 Python 的 "None"，看起來像字串值。
+    s = "null" if value is None else str(value)
     if not limit or len(s) <= limit:
         return s
     return f"{s[:limit]}…（截斷，共 {len(s)} 字；拿掉 --truncate 看全文）"
@@ -684,7 +685,7 @@ def main():
         print(f"\n━━━ {req.get('method')} {req.get('url')}")
         print(f"    time         : {local_time(src.get('@timestamp'))}  (本地時間)")
         print(f"    route        : {req.get('route')}")
-        print(f"    request.uuid : {req.get('uuid')}   <- 用這個串 REQUEST/RESPONSE")
+        print(f"    request.uuid : {req.get('uuid')}")
         hdrs = redact(parse_headers(req.get("headers")))
         print("    ── request headers")
         for line in format_headers(hdrs, args.truncate):
