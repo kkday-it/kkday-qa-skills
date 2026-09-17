@@ -38,7 +38,8 @@ email、電話、訂單、金流。sit / stage 撈錯頂多白忙一場；prod �
 2. 同意之後才加 `--allow-prod`（沒有這個 flag，script 會直接擋下並退出；`--env auto` 也永遠
    不會自己選到 prod）。自己手寫 ES query 時這道關卡不存在，規矩一樣要遵守。
 3. 撈的時候：時間窗壓到**分鐘級**、能用 aggs 就不要拉 hits、不要順手 `--detail`
-   （`--detail` 現在會把 headers / body 原文整串印出來，prod 那是真的客戶資料）。
+   （`--detail` 把 headers / body **原文不遮罩**整串印出來——token、金流密鑰、客戶姓名電話
+   都在裡面）。
 4. 撈完：**不要把 headers / body 原文貼進報告、PR、Slack**。要引用就只留結論與統計，
    需要指認特定 token／帳號時用指紋（sha1 前 8 碼），不要貼原值。
 
@@ -70,7 +71,7 @@ python3 "$S" --env stage --platform android \
        mixpanel-id       : be0f311e-…
        device-model      : SM-A5560
        member-uuid       : be0f311e-…
-       token             : <redacted>
+       token             : eyJpdiI6IkpJdlB4aUtq…（原文，不遮）
        x-req-source      : ANDROID
        …（照 log 裡的原順序全印，一個不漏）
     ── request body
@@ -187,12 +188,18 @@ bucket 清單**，不是報錯 —— 跟「這段時間沒流量」長得一模
 - **時間軸**：`{"size": 200, "sort": [{"@timestamp": "asc"}]}` 撈 REQUEST，把
   `request.headers` 那串 JSON（單 key dict 的 array）攤平成 dict 取 `ad-id` / `member-uuid`，
   再用 `request.uuid` 回撈 RESPONSE 對狀態。
-- **token / 敏感值**：不要印出來，一律 `hashlib.sha1(v.encode()).hexdigest()[:8]` 當指紋。
-  指紋足以回答「換了沒／是不是同一張」，而那通常就是真正要問的事。
+- **token 這種長字串**：sit / stage 直接印原值就好（那些值在 App／網頁端本來就看得到）。
+  只是排一串時間軸時，六百字的 token 逐筆印下去根本比不出哪筆換過——這時改印
+  `hashlib.sha1(v.encode()).hexdigest()[:8]` 當指紋，一眼就看得出「換了沒／是不是同一張」。
+  這是為了看得懂，不是為了遮；**prod 才是真的不能貼原值**（見上面「prod」段）。
 
 ## 注意
 
-- `token` / `b2c-token1` / `authorization` / `password` 這類 header 與欄位輸出前會被 `<redacted>`。
+- **輸出是原文，沒有遮罩**：`token` / `b2c-token1` 以及 body 裡的金流設定（`setting.gmo.hash_key`、
+  `stripe.public_key` 這些）都照實印。原本有一份關鍵字遮罩清單，拿掉了——它只遮得到 header 與
+  頂層欄位名，埋在 `data.available_channels[].setting` 底下的一樣會露出來，留著反而讓人誤以為
+  輸出已經乾淨。這些值在 App／網頁端本來就看得到，sit / stage 沒有遮的必要；**prod 則是撈完
+  不要外流**（見上面「prod」段）。
 - `request.headers` 是字串，只能全文比對 → `--device` / `--ad-id` 這兩個過濾**只留得住 REQUEST**
   （RESPONSE 沒有 headers）。要串回應就用輸出裡那個 `request.uuid`。
 - ⚠️ **`request.uuid` 是整條 trace 的 id，不是單一請求的**。同一個 uuid 底下會有前端那支，

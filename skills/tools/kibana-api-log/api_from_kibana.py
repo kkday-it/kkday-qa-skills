@@ -62,7 +62,6 @@ if _FW:
 PLATFORM_FIELD = "custom_api-b2c.platform"
 MEMBER_FIELD = "custom_api-b2c.member_uuid"
 SOURCE_FIELD = "custom_api-b2c.source"
-SECRET = re.compile(r'(?i)(authorization|token\d?|password|secret|cookie)')
 
 # ⚠️ log 裡大小寫不一致（實測 sit：iOS 3039 / IOS 642 / ANDROID 1974 / Android 4）。
 # 只比對單一拼法會靜默漏掉一半流量，所以每個平台都要列出全部變體。
@@ -401,14 +400,6 @@ def list_devices(client, must, index_size=300):
         print(f"    {n:>4}  {model!r}  locale={locale!r}  {src}  v{ver}")
 
 
-def redact(obj):
-    if isinstance(obj, dict):
-        return {k: ("<redacted>" if SECRET.search(k) else redact(v)) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [redact(x) for x in obj]
-    return obj
-
-
 def parse_headers(raw):
     """headers 是 [{k:v},{k:v}] 形式的 JSON string。"""
     if not raw:
@@ -686,7 +677,7 @@ def main():
         print(f"    time         : {local_time(src.get('@timestamp'))}  (本地時間)")
         print(f"    route        : {req.get('route')}")
         print(f"    request.uuid : {req.get('uuid')}")
-        hdrs = redact(parse_headers(req.get("headers")))
+        hdrs = parse_headers(req.get("headers"))
         print("    ── request headers")
         for line in format_headers(hdrs, args.truncate):
             print(f"       {line}")
@@ -699,7 +690,7 @@ def main():
         if resp:
             took = f" {resp.get('time')}ms" if resp.get("time") is not None else ""
             print(f"    ── response  HTTP {resp.get('http_status')}{took}  {meta_status(resp)}")
-            print(indent_block(clip(pretty_json(redact(resp).get("body")), args.truncate), 7))
+            print(indent_block(clip(pretty_json(resp.get("body")), args.truncate), 7))
         else:
             print("    ── response  (配對不到——回應可能落在時間窗外，或這筆請求沒有回應)")
 
