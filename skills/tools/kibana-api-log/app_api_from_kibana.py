@@ -465,6 +465,14 @@ def time_range(args):
     return {"gte": f"now-{args.minutes}m", "lte": "now"}
 
 
+def clip(value, limit):
+    """預設印全文。被截斷時一定要講，省略號混在 body 自己的內容裡看不出來。"""
+    s = str(value)
+    if not limit or len(s) <= limit:
+        return s
+    return f"{s[:limit]}…（截斷，共 {len(s)} 字；拿掉 --truncate 看全文）"
+
+
 def meta_status(resp):
     """回應 body 裡的業務狀態（`0000` 才是成功）。HTTP 200 配 M001 這種事很常見。"""
     try:
@@ -551,6 +559,8 @@ def main():
     ap.add_argument("--route")
     ap.add_argument("--platform", choices=sorted(SOURCE_VARIANTS))
     ap.add_argument("--detail", action="store_true")
+    ap.add_argument("--truncate", type=int, default=0, metavar="N",
+                    help="把 headers / body / response 各截到 N 字（預設 0＝印全文）")
     args = ap.parse_args()
 
     args.udid = None
@@ -642,8 +652,8 @@ def main():
         print(f"    route      : {req.get('route')}")
         print(f"    request.uuid: {req.get('uuid')}   <- 用這個串 REQUEST/RESPONSE")
         hdrs = redact(parse_headers(req.get("headers")))
-        print(f"    headers    : {json.dumps(hdrs, ensure_ascii=False)[:600]}")
-        print(f"    body       : {str(req.get('body'))[:600]}")
+        print(f"    headers    : {clip(json.dumps(hdrs, ensure_ascii=False), args.truncate)}")
+        print(f"    body       : {clip(req.get('body'), args.truncate)}")
         # 取樣取的是 REQUEST（要有 headers / body 才叫 contract），而 REQUEST 這筆身上沒有
         # response 欄位——回應是另一筆文件。所以這裡要自己去配對，不能等 src 裡有。
         if not resp:
@@ -653,7 +663,7 @@ def main():
             meta = meta_status(resp)
             took = f" {resp.get('time')}ms" if resp.get("time") is not None else ""
             print(f"    response   : {status}{took}  {meta}")
-            print(f"                 {str(redact(resp).get('body'))[:600]}")
+            print(f"                 {clip(redact(resp).get('body'), args.truncate)}")
         else:
             print("    response   : (配對不到——回應可能落在時間窗外，或這筆請求沒有回應)")
 
