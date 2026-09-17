@@ -23,16 +23,18 @@ description: |
 
 ## 怎麼跑
 
-`app_api_from_kibana.py` 就在這個 skill 資料夾裡（`device_registry.py` 是它的相依，同一層），
-但**必須用 QA framework 的 venv 跑**（要 import 框架裡的 `KibanaClient`）：
+整套都在這個 skill 資料夾裡（`app_api_from_kibana.py` ＋ 它的兩個同層相依
+`kibana_client.py` / `device_registry.py`），**不需要 QA framework clone，也不用它的 venv**，
+`python3` ＋ `requests` 就能跑，在哪個目錄跑都行：
 
 ```bash
-FW=/Users/eden.lai/Downloads/qa_test/web/kkday-QA-automation   # app/ test/ 那兩個 clone 也行
-S=~/.claude/skills/kibana-api-log/app_api_from_kibana.py       # = kkday-qa-skills/skills/tools/kibana-api-log/
-cd "$FW" && QA_FRAMEWORK_PATH="$FW" ./venv/bin/python "$S" \
-  --env stage --platform android --route v2.2/payment/booking/channels \
-  --minutes 3 --device none --detail
+S=~/.claude/skills/kibana-api-log/app_api_from_kibana.py
+python3 "$S" --env stage --platform android \
+  --route v2.2/payment/booking/channels --minutes 3 --device none --detail
 ```
+
+唯一要 framework 的是 `--email auto`（那把帳號設定在框架裡）。有 clone 的話設
+`QA_FRAMEWORK_PATH=<clone>` 就會自動接上；沒有就改用 `--email <addr>` 明寫。
 
 輸出（`--detail`，最近 3 筆）：
 
@@ -85,10 +87,9 @@ script 只回「最近 N 筆的 contract」。要問的是「這支 API 今天�
 token 什麼時候換的」「iOS 有沒有一樣的症狀」時，直接拿同一個 `KibanaClient` 下 ES query：
 
 ```bash
-FW=/Users/eden.lai/Downloads/qa_test/web/kkday-QA-automation
-cd "$FW" && QA_FRAMEWORK_PATH="$FW" ./venv/bin/python - <<'PY'
-import sys; sys.path.insert(0, "QATest/src")
-from lib.helpers.kibana_client import KibanaClient
+python3 - <<'PY'
+import sys; sys.path.insert(0, "/Users/eden.lai/.claude/skills/kibana-api-log")
+from kibana_client import KibanaClient
 c = KibanaClient.for_env("stage")
 rv = c.search({"size": 0, "query": {"bool": {"must": [
     {"range": {"@timestamp": {"gte": "2026-09-17T13:00:00+08:00",

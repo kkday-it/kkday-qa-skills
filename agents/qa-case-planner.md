@@ -146,12 +146,11 @@ native app 沒 DevTools、有 SSL pinning，抓封包本來就走不通——但
 照 §142 的判準就不該列待確認。純 UI case 跳過本層。
 
 ```bash
-cd <framework clone> && source venv/bin/activate
-S=<kkday-qa-skills>/skills/tools/kibana-api-log/app_api_from_kibana.py
-python $S --platform ios --minutes 30                 # 這台實機打過哪些 endpoint
-python $S --platform ios --email auto                 # 再收斂到該平台預設測試帳號
-python $S --platform ios --route <route> --detail     # 單支完整 contract
-python $S --platform ios --list-devices               # 該時段實際有哪些裝置在打
+S=<kkday-qa-skills>/skills/tools/kibana-api-log/app_api_from_kibana.py   # 不需要 framework clone
+python3 $S --platform ios --minutes 30                 # 這台實機打過哪些 endpoint
+python3 $S --platform ios --email auto                 # 再收斂到該平台預設測試帳號
+python3 $S --platform ios --route <route> --detail     # 單支完整 contract
+python3 $S --platform ios --list-devices               # 該時段實際有哪些裝置在打
 ```
 
 ⚠️ 分平台一律用 `--platform`，別自己對 `custom_api-b2c.source` 下 term——log 大小寫不一致

@@ -25,7 +25,11 @@ def _is_framework(p):
 
 
 def _resolve_framework():
-    """1) QA_FRAMEWORK_PATH  2) cwd 往上找  3) 掃 clone；多個候選就要求明確指定。"""
+    """1) QA_FRAMEWORK_PATH  2) cwd 往上找。找不到回 None —— framework 是選配。
+
+    這支唯一非得靠 framework 的功能是 `--email auto`（要它的帳號設定檔）。撈 log 本身
+    走同層的 `kibana_client.py`，所以沒有 clone 的人也用得起來。
+    """
     env_path = os.environ.get("QA_FRAMEWORK_PATH")
     if env_path:
         p = os.path.abspath(os.path.expanduser(env_path))
@@ -39,28 +43,21 @@ def _resolve_framework():
             return cur
         parent = os.path.dirname(cur)
         if parent == cur:
-            break
+            return None
         cur = parent
 
-    sys.exit(
-        "不在 framework repo 內，且未設 QA_FRAMEWORK_PATH。\n"
-        "請在你要用的那個 clone 裡執行（cd 進去再跑），或明確指定 QA_FRAMEWORK_PATH。"
-    )
-
-
-_FW = _resolve_framework()
-sys.path.insert(0, os.path.join(_FW, "QATest", "src"))
-try:
-    from lib.helpers.kibana_client import KibanaClient
-except ImportError as e:
-    sys.exit(
-        f"無法 import KibanaClient（{e}）。\n"
-        f"framework={_FW}\n"
-        f"要用該 clone 自己的 venv 跑：source {_FW}/venv/bin/activate"
-    )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from kibana_client import KibanaClient  # noqa: E402  同層，獨立版（只需要 requests）
+except ImportError as e:
+    sys.exit(f"無法 import kibana_client（{e}）。它應該跟這支放在同一層。缺的話：pip install requests")
+
 import device_registry  # noqa: E402  ai_studio 裝置註冊庫（udid → ad-id）
+
+_FW = _resolve_framework()
+if _FW:
+    sys.path.insert(0, os.path.join(_FW, "QATest", "src"))
 
 PLATFORM_FIELD = "custom_api-b2c.platform"
 MEMBER_FIELD = "custom_api-b2c.member_uuid"
@@ -143,6 +140,9 @@ ACCOUNT_KEY = {"ios": ("app", "ios_login_id"), "android": ("app", "android_login
 def default_email(platform, env):
     """照 framework 既有做法拿該平台的預設測試帳號（跟 login_with_email_account 同一把 key）。"""
     service, key = ACCOUNT_KEY.get(platform, ACCOUNT_KEY["ios"])
+    if not _FW:
+        print("(--email auto 需要 framework clone：設 QA_FRAMEWORK_PATH，或改用 --email <addr>)")
+        return None
     try:
         from lib import util
         account, _ = util.get_account_and_password(env, service, key)

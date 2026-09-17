@@ -117,14 +117,13 @@ python3 ~/.claude/skills/tcms-fetch-cases/scripts/fetch_cases.py \
 `log_label: REQUEST` 帶 `request.url` / `route` / `method` / `headers` / `body`，等於封包該給你的東西。
 
 ```bash
-cd <你正在用的那個 framework clone> && source venv/bin/activate
-S=<kkday-qa-skills>/skills/tools/kibana-api-log/app_api_from_kibana.py
+S=<kkday-qa-skills>/skills/tools/kibana-api-log/app_api_from_kibana.py   # 不需要 framework clone
 
-python $S --platform ios                                # 這台實機剛打了哪些 endpoint（近 15 分鐘）
-python $S --platform ios --email auto                   # 再收斂到該平台預設測試帳號
-python $S --platform ios --route api/v2.2/orders --detail   # 單支完整 contract
-python $S --platform ios --from 14:30 --to 14:45        # 指定時段（隔一陣子才回來撈時用）
-python $S --platform ios --list-devices                 # 該時段實際有哪些裝置在打
+python3 $S --platform ios                                # 這台實機剛打了哪些 endpoint（近 15 分鐘）
+python3 $S --platform ios --email auto                   # 再收斂到該平台預設測試帳號
+python3 $S --platform ios --route api/v2.2/orders --detail   # 單支完整 contract
+python3 $S --platform ios --from 14:30 --to 14:45        # 指定時段（隔一陣子才回來撈時用）
+python3 $S --platform ios --list-devices                 # 該時段實際有哪些裝置在打
 ```
 
 🔴 **不要自己填 `--env` / `--device` / `--member-uuid` / `--ad-id`，預設全自動——這幾個是猜錯最貴的參數。**
